@@ -60,3 +60,7 @@ Read our [contributing guide](CONTRIBUTING.md) to learn about our development pr
 ### License
 
 Hermes is [MIT licensed](./LICENSE).
+
+### Bytecode analysis
+
+hbctool by [bongtrop](https://github.com/bongtrop/hbctool)
