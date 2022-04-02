@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -33,30 +33,28 @@ class Environment final
   AtomicIfConcurrentGC<uint32_t> size_;
 
  public:
-#ifdef HERMESVM_SERIALIZE
-  friend void EnvironmentSerialize(Serializer &s, const GCCell *cell);
-  friend void EnvironmentDeserialize(Deserializer &d, CellKind kind);
-#endif
-
   static const VTable vt;
 
+  static constexpr CellKind getCellKind() {
+    return CellKind::EnvironmentKind;
+  }
   static bool classof(const GCCell *cell) {
     return cell->getKind() == CellKind::EnvironmentKind;
   }
 
   /// Create a new Environment.
   static CallResult<HermesValue> create(
-      Runtime *runtime,
+      Runtime &runtime,
       Handle<Environment> parentEnvironment,
       uint32_t size) {
-    auto *cell = runtime->makeAVariable<Environment>(
+    auto *cell = runtime.makeAVariable<Environment>(
         allocationSize(size), runtime, parentEnvironment, size);
     return HermesValue::encodeObjectValue(cell);
   }
 
   /// \return the parent lexical environment. This value will be nullptr if the
   /// parent is the global scope.
-  Environment *getParentEnvironment(Runtime *runtime) const {
+  Environment *getParentEnvironment(Runtime &runtime) const {
     return parentEnvironment_.get(runtime);
   }
 
@@ -80,30 +78,21 @@ class Environment final
   ///   parent is the global scope.
   /// \param size the number of entries in the environment.
   Environment(
-      Runtime *runtime,
+      Runtime &runtime,
       Handle<Environment> parentEnvironment,
       uint32_t size)
-      : VariableSizeRuntimeCell(&runtime->getHeap(), &vt, allocationSize(size)),
-        parentEnvironment_(
+      : parentEnvironment_(
             runtime,
             parentEnvironment.get(),
-            &runtime->getHeap()),
+            &runtime.getHeap()),
         size_(size) {
     // Initialize all slots to 'undefined'.
     GCHermesValue::uninitialized_fill(
         getSlots(),
         getSlots() + size,
         HermesValue::encodeUndefinedValue(),
-        &runtime->getHeap());
+        &runtime.getHeap());
   }
-
-#ifdef HERMESVM_SERIALIZE
-  /// Fast constructor used by Deserializer, do not take \p parentEnvironment as
-  /// an argument. Don't initialize slots.
-  Environment(Runtime *runtime, uint32_t size)
-      : VariableSizeRuntimeCell(&runtime->getHeap(), &vt, allocationSize(size)),
-        size_(size) {}
-#endif
 
  private:
   /// \return a pointer to the array of HermesValue.
@@ -115,20 +104,18 @@ class Environment final
   }
 };
 
-struct CallableVTable {
-  ObjectVTable base;
-
+struct CallableVTable : public ObjectVTable {
   /// Create a new object instance to be passed as the 'this' argument when
   /// invoking the constructor. Overriding this method allows creation of
   /// different underlying native objects.
   CallResult<PseudoHandle<JSObject>> (*newObject)(
       Handle<Callable> selfHandle,
-      Runtime *runtime,
+      Runtime &runtime,
       Handle<JSObject> parentHandle);
 
   /// Call the callable with arguments already on the stack.
   CallResult<PseudoHandle<>> (
-      *call)(Handle<Callable> selfHandle, Runtime *runtime);
+      *call)(Handle<Callable> selfHandle, Runtime &runtime);
 };
 
 /// The abstract base for callable entities, specifically NativeFunction and
@@ -143,16 +130,6 @@ class Callable : public JSObject {
   GCPointer<Environment> environment_{};
 
  public:
-#ifdef HERMESVM_SERIALIZE
-  /// Fast constructor used by deserializer.
-  Callable(Deserializer &d, const VTable *vt);
-
-  friend void serializeCallableImpl(
-      Serializer &s,
-      const GCCell *cell,
-      unsigned overlapSlots);
-#endif
-
   static bool classof(const GCCell *cell) {
     return kindInRange(
         cell->getKind(),
@@ -161,11 +138,11 @@ class Callable : public JSObject {
   }
 
   const CallableVTable *getVT() const {
-    return reinterpret_cast<const CallableVTable *>(GCCell::getVT());
+    return static_cast<const CallableVTable *>(GCCell::getVT());
   }
 
   /// \return the environment associated with this callable.
-  Environment *getEnvironment(Runtime *runtime) const {
+  Environment *getEnvironment(Runtime &runtime) const {
     return environment_.get(runtime);
   }
 
@@ -189,7 +166,7 @@ class Callable : public JSObject {
   ///   populate the .arguments and .caller field correctly.
   static ExecutionStatus defineNameLengthAndPrototype(
       Handle<Callable> selfHandle,
-      Runtime *runtime,
+      Runtime &runtime,
       SymbolID name,
       unsigned paramCount,
       Handle<JSObject> prototypeObjectHandle,
@@ -200,7 +177,7 @@ class Callable : public JSObject {
   /// helper method; it actually invokes the interpreter recursively.
   static CallResult<PseudoHandle<>> executeCall0(
       Handle<Callable> selfHandle,
-      Runtime *runtime,
+      Runtime &runtime,
       Handle<> thisArgHandle,
       bool construct = false);
 
@@ -208,7 +185,7 @@ class Callable : public JSObject {
   /// helper method; it actually invokes the interpreter recursively.
   static CallResult<PseudoHandle<>> executeCall1(
       Handle<Callable> selfHandle,
-      Runtime *runtime,
+      Runtime &runtime,
       Handle<> thisArgHandle,
       HermesValue param1,
       bool construct = false);
@@ -217,7 +194,7 @@ class Callable : public JSObject {
   /// helper method; it actually invokes the interpreter recursively.
   static CallResult<PseudoHandle<>> executeCall2(
       Handle<Callable> selfHandle,
-      Runtime *runtime,
+      Runtime &runtime,
       Handle<> thisArgHandle,
       HermesValue param1,
       HermesValue param2,
@@ -227,7 +204,7 @@ class Callable : public JSObject {
   /// helper method; it actually invokes the interpreter recursively.
   static CallResult<PseudoHandle<>> executeCall3(
       Handle<Callable> selfHandle,
-      Runtime *runtime,
+      Runtime &runtime,
       Handle<> thisArgHandle,
       HermesValue param1,
       HermesValue param2,
@@ -238,7 +215,7 @@ class Callable : public JSObject {
   /// helper method; it actually invokes the interpreter recursively.
   static CallResult<PseudoHandle<>> executeCall4(
       Handle<Callable> selfHandle,
-      Runtime *runtime,
+      Runtime &runtime,
       Handle<> thisArgHandle,
       HermesValue param1,
       HermesValue param2,
@@ -251,7 +228,7 @@ class Callable : public JSObject {
   /// the interpreter recursively.
   static CallResult<PseudoHandle<>> executeCall(
       Handle<Callable> selfHandle,
-      Runtime *runtime,
+      Runtime &runtime,
       Handle<> newTarget,
       Handle<> thisArgument,
       Handle<JSObject> arrayLike);
@@ -259,7 +236,7 @@ class Callable : public JSObject {
   /// Calls CallableVTable::newObject.
   static CallResult<PseudoHandle<JSObject>> newObject(
       Handle<Callable> selfHandle,
-      Runtime *runtime,
+      Runtime &runtime,
       Handle<JSObject> parentHandle) {
     return selfHandle->getVT()->newObject(selfHandle, runtime, parentHandle);
   }
@@ -267,19 +244,19 @@ class Callable : public JSObject {
   /// Calls CallableVTable::call.
   static CallResult<PseudoHandle<>> call(
       Handle<Callable> selfHandle,
-      Runtime *runtime) {
+      Runtime &runtime) {
     // Any call to a native or JS function could potentially allocate.
     // Move the heap to force raw pointer errors to come out whenever a call is
     // made.
-    runtime->potentiallyMoveHeap();
+    runtime.potentiallyMoveHeap();
     return selfHandle->getVT()->call(selfHandle, runtime);
   }
 
-  /// Call the callable in contruct mode with arguments already on the stack.
+  /// Call the callable in construct mode with arguments already on the stack.
   /// Checks the return value of the called function. If it is an object, then
   /// it is returned, else the `this` value is returned.
   static CallResult<PseudoHandle<>>
-  construct(Handle<Callable> selfHandle, Runtime *runtime, Handle<> thisVal) {
+  construct(Handle<Callable> selfHandle, Runtime &runtime, Handle<> thisVal) {
     auto result = call(selfHandle, runtime);
     if (LLVM_UNLIKELY(result == ExecutionStatus::EXCEPTION)) {
       return ExecutionStatus::EXCEPTION;
@@ -294,7 +271,7 @@ class Callable : public JSObject {
   /// \param selfHandle the Callable from which to construct the new object.
   static CallResult<PseudoHandle<>> executeConstruct0(
       Handle<Callable> selfHandle,
-      Runtime *runtime);
+      Runtime &runtime);
 
   /// Create a new object and construct the new object of the given type
   /// by invoking \p selfHandle with construct=true.
@@ -302,7 +279,7 @@ class Callable : public JSObject {
   /// \param param1 the first argument to the constructor.
   static CallResult<PseudoHandle<>> executeConstruct1(
       Handle<Callable> selfHandle,
-      Runtime *runtime,
+      Runtime &runtime,
       Handle<> param1);
 
   /// If the own property ".length" is present and is a number, convert it to
@@ -311,11 +288,11 @@ class Callable : public JSObject {
   /// Follows ES2018 19.2.3.2 5 and 6.
   static CallResult<double> extractOwnLengthProperty_RJS(
       Handle<Callable> selfHandle,
-      Runtime *runtime);
+      Runtime &runtime);
 
   /// Define the length, name, prototype of this function, used when the
   /// creation has been delayed by lazy objects.
-  static void defineLazyProperties(Handle<Callable> fn, Runtime *runtime);
+  static void defineLazyProperties(Handle<Callable> fn, Runtime &runtime);
 
   /// Create an object by calling newObject on \p selfHandle.
   /// The object can then be used as the "this" argument when calling
@@ -325,23 +302,18 @@ class Callable : public JSObject {
   /// else calls newObject() on the built-in Object prototype object.
   static CallResult<PseudoHandle<JSObject>> createThisForConstruct(
       Handle<Callable> selfHandle,
-      Runtime *runtime);
+      Runtime &runtime);
 
  protected:
   Callable(
-      Runtime *runtime,
-      const VTable *vt,
+      Runtime &runtime,
       JSObject *parent,
       HiddenClass *clazz,
       Handle<Environment> env)
-      : JSObject(runtime, vt, parent, clazz),
-        environment_(runtime, *env, &runtime->getHeap()) {}
-  Callable(
-      Runtime *runtime,
-      const VTable *vt,
-      JSObject *parent,
-      HiddenClass *clazz)
-      : JSObject(runtime, vt, parent, clazz), environment_() {}
+      : JSObject(runtime, parent, clazz),
+        environment_(runtime, *env, &runtime.getHeap()) {}
+  Callable(Runtime &runtime, JSObject *parent, HiddenClass *clazz)
+      : JSObject(runtime, parent, clazz), environment_() {}
 
   static std::string _snapshotNameImpl(GCCell *cell, GC *gc);
 
@@ -349,7 +321,7 @@ class Callable : public JSObject {
   /// invoking the constructor.
   static CallResult<PseudoHandle<JSObject>> _newObjectImpl(
       Handle<Callable> selfHandle,
-      Runtime *runtime,
+      Runtime &runtime,
       Handle<JSObject> parentHandle);
 };
 
@@ -368,12 +340,15 @@ class BoundFunction final : public Callable {
   using Super = Callable;
   static const CallableVTable vt;
 
+  static constexpr CellKind getCellKind() {
+    return CellKind::BoundFunctionKind;
+  }
   static bool classof(const GCCell *cell) {
     return cell->getKind() == CellKind::BoundFunctionKind;
   }
 
   /// \return the target function.
-  Callable *getTarget(Runtime *runtime) const {
+  Callable *getTarget(Runtime &runtime) const {
     return target_.get(runtime);
   }
 
@@ -383,10 +358,10 @@ class BoundFunction final : public Callable {
   ///     0 in which case there is no \c this.
   /// \param argsWithThis the arguments, \c this at index 0.
   static CallResult<HermesValue> create(
-      Runtime *runtime,
+      Runtime &runtime,
       Handle<Callable> target,
       unsigned argCountWithThis,
-      const PinnedHermesValue *argsWithThis);
+      ConstArgIterator argsWithThis);
 
   /// Perform the actual call. This is a light-weight handler which is part of
   /// the private API - it is only used internally and by the interpreter.
@@ -394,61 +369,54 @@ class BoundFunction final : public Callable {
   /// \param ip the caller's IP at the point of the call (used for preserving
   /// stack traces).
   static CallResult<PseudoHandle<>>
-  _boundCall(BoundFunction *self, const Inst *ip, Runtime *runtime);
+  _boundCall(BoundFunction *self, const Inst *ip, Runtime &runtime);
 
-  /// Intialize the length and name and property of a lazily created bound
+  /// Initialize the length and name and property of a lazily created bound
   /// function.
   static ExecutionStatus initializeLengthAndName(
       Handle<Callable> selfHandle,
-      Runtime *runtime,
+      Runtime &runtime,
       Handle<Callable> target,
       unsigned argCount);
 
   /// \return the number of arguments, including the 'this' param.
-  unsigned getArgCountWithThis(Runtime *runtime) const {
-    return argStorage_.get(runtime)->size();
+  unsigned getArgCountWithThis(Runtime &runtime) const {
+    return argStorage_.getNonNull(runtime)->size();
   }
 
  public:
-#ifdef HERMESVM_SERIALIZE
-  explicit BoundFunction(Deserializer &d);
-
-  friend void BoundFunctionSerialize(Serializer &s, const GCCell *cell);
-  friend void BoundFunctionDeserialize(Deserializer &d, CellKind kind);
-#endif
-
   BoundFunction(
-      Runtime *runtime,
+      Runtime &runtime,
       Handle<JSObject> parent,
       Handle<HiddenClass> clazz,
       Handle<Callable> target,
       Handle<ArrayStorage> argStorage)
-      : Callable(runtime, &vt.base.base, *parent, *clazz),
-        target_(runtime, *target, &runtime->getHeap()),
-        argStorage_(runtime, *argStorage, &runtime->getHeap()) {}
+      : Callable(runtime, *parent, *clazz),
+        target_(runtime, *target, &runtime.getHeap()),
+        argStorage_(runtime, *argStorage, &runtime.getHeap()) {}
 
  private:
   /// Return a pointer to the stored arguments, including \c this. \c this is
   /// at index 0, followed by the rest.
-  GCHermesValue *getArgsWithThis(Runtime *runtime) {
-    return argStorage_.get(runtime)->begin();
+  GCHermesValue *getArgsWithThis(Runtime &runtime) {
+    return argStorage_.getNonNull(runtime)->begin();
   }
 
   /// Create an instance of the object using the bound constructor.
   static CallResult<PseudoHandle<JSObject>> _newObjectImpl(
       Handle<Callable> selfHandle,
-      Runtime *runtime,
+      Runtime &runtime,
       Handle<JSObject> parentHandle);
 
   /// Call the callable with arguments already on the stack.
   static CallResult<PseudoHandle<>> _callImpl(
       Handle<Callable> selfHandle,
-      Runtime *runtime);
+      Runtime &runtime);
 };
 
 /// A pointer to native function.
 typedef CallResult<HermesValue> (
-    *NativeFunctionPtr)(void *context, Runtime *runtime, NativeArgs args);
+    *NativeFunctionPtr)(void *context, Runtime &runtime, NativeArgs args);
 
 /// This class represents a native function callable from JavaScript with
 /// context and the JavaScript arguments.
@@ -467,23 +435,12 @@ class NativeFunction : public Callable {
 #endif
 
  public:
-#ifdef HERMESVM_SERIALIZE
-  NativeFunction(
-      Deserializer &d,
-      const VTable *vt,
-      void *context,
-      NativeFunctionPtr functionPtr);
-
-  static void serializeNativeFunctionImpl(
-      Serializer &s,
-      const GCCell *cell,
-      unsigned overlapSlots);
-  friend void NativeFunctionSerialize(Serializer &s, const GCCell *cell);
-#endif
-
   using Super = Callable;
   static const CallableVTable vt;
 
+  static constexpr CellKind getCellKind() {
+    return CellKind::NativeFunctionKind;
+  }
   static bool classof(const GCCell *cell) {
     return kindInRange(
         cell->getKind(),
@@ -520,22 +477,22 @@ class NativeFunction : public Callable {
   /// fields.
   static CallResult<PseudoHandle<>> _nativeCall(
       NativeFunction *self,
-      Runtime *runtime) {
+      Runtime &runtime) {
     ScopedNativeDepthTracker depthTracker{runtime};
     if (LLVM_UNLIKELY(depthTracker.overflowed())) {
-      return runtime->raiseStackOverflow(
+      return runtime.raiseStackOverflow(
           Runtime::StackOverflowKind::NativeStack);
     }
 
-    auto newFrame = runtime->setCurrentFrameToTopOfStack();
-    runtime->saveCallerIPInStackFrame();
+    auto newFrame = runtime.setCurrentFrameToTopOfStack();
+    runtime.saveCallerIPInStackFrame();
     // Allocate the "reserved" registers in the new frame.
-    if (LLVM_UNLIKELY(!runtime->checkAndAllocStack(
+    if (LLVM_UNLIKELY(!runtime.checkAndAllocStack(
             StackFrameLayout::CalleeExtraRegistersAtStart,
             HermesValue::encodeUndefinedValue()))) {
       // Restore the stack before raising the overflow.
-      runtime->restoreStackAndPreviousFrame(newFrame);
-      return runtime->raiseStackOverflow(
+      runtime.restoreStackAndPreviousFrame(newFrame);
+      return runtime.raiseStackOverflow(
           Runtime::StackOverflowKind::JSRegisterStack);
     }
 
@@ -550,7 +507,7 @@ class NativeFunction : public Callable {
     self->callDuration_ = HERMESVM_RDTSC() - t1;
     ++self->callCount_;
 #endif
-    runtime->restoreStackAndPreviousFrame(newFrame);
+    runtime.restoreStackAndPreviousFrame(newFrame);
     if (LLVM_UNLIKELY(res == ExecutionStatus::EXCEPTION)) {
       return ExecutionStatus::EXCEPTION;
     }
@@ -567,7 +524,7 @@ class NativeFunction : public Callable {
   /// \param additionalSlotCount internal slots to reserve within the
   /// object (defaults to zero).
   static Handle<NativeFunction> create(
-      Runtime *runtime,
+      Runtime &runtime,
       Handle<JSObject> parentHandle,
       void *context,
       NativeFunctionPtr functionPtr,
@@ -587,7 +544,7 @@ class NativeFunction : public Callable {
   /// \param additionalSlotCount internal slots to reserve within the
   /// object (defaults to zero).
   static Handle<NativeFunction> create(
-      Runtime *runtime,
+      Runtime &runtime,
       Handle<JSObject> parentHandle,
       Handle<Environment> parentEnvHandle,
       void *context,
@@ -607,7 +564,7 @@ class NativeFunction : public Callable {
   /// \param additionalSlotCount internal slots to reserve within the
   /// object (defaults to zero).
   static Handle<NativeFunction> createWithoutPrototype(
-      Runtime *runtime,
+      Runtime &runtime,
       Handle<JSObject> parentHandle,
       void *context,
       NativeFunctionPtr functionPtr,
@@ -621,7 +578,7 @@ class NativeFunction : public Callable {
         functionPtr,
         name,
         paramCount,
-        Handle<JSObject>(runtime),
+        runtime.makeNullHandle<JSObject>(),
         additionalSlotCount);
   }
 
@@ -635,7 +592,7 @@ class NativeFunction : public Callable {
   /// \param additionalSlotCount internal slots to reserve within the
   /// object (defaults to zero).
   static Handle<NativeFunction> createWithoutPrototype(
-      Runtime *runtime,
+      Runtime &runtime,
       void *context,
       NativeFunctionPtr functionPtr,
       SymbolID name,
@@ -643,7 +600,7 @@ class NativeFunction : public Callable {
       unsigned additionalSlotCount = 0) {
     return createWithoutPrototype(
         runtime,
-        Handle<JSObject>::vmcast(&runtime->functionPrototype),
+        Handle<JSObject>::vmcast(&runtime.functionPrototype),
         context,
         functionPtr,
         name,
@@ -656,12 +613,10 @@ class NativeFunction : public Callable {
   /// the create method.
   static SmallHermesValue getAdditionalSlotValue(
       NativeFunction *self,
-      Runtime *runtime,
+      Runtime &runtime,
       unsigned index) {
     return JSObject::getInternalProperty(
-        self,
-        runtime,
-        numOverlapSlots<NativeFunction>() + ANONYMOUS_PROPERTY_SLOTS + index);
+        self, runtime, numOverlapSlots<NativeFunction>() + index);
   }
 
   /// Set the value in an additional slot.
@@ -669,36 +624,31 @@ class NativeFunction : public Callable {
   /// the create method.
   static void setAdditionalSlotValue(
       NativeFunction *self,
-      Runtime *runtime,
+      Runtime &runtime,
       unsigned index,
       SmallHermesValue value) {
     JSObject::setInternalProperty(
-        self,
-        runtime,
-        numOverlapSlots<NativeFunction>() + ANONYMOUS_PROPERTY_SLOTS + index,
-        value);
+        self, runtime, numOverlapSlots<NativeFunction>() + index, value);
   }
 
  public:
   NativeFunction(
-      Runtime *runtime,
-      const VTable *vtp,
+      Runtime &runtime,
       Handle<JSObject> parent,
       Handle<HiddenClass> clazz,
       void *context,
       NativeFunctionPtr functionPtr)
-      : Callable(runtime, vtp, *parent, *clazz),
+      : Callable(runtime, *parent, *clazz),
         context_(context),
         functionPtr_(functionPtr) {}
   NativeFunction(
-      Runtime *runtime,
-      const VTable *vtp,
+      Runtime &runtime,
       Handle<JSObject> parent,
       Handle<HiddenClass> clazz,
       Handle<Environment> environment,
       void *context,
       NativeFunctionPtr functionPtr)
-      : Callable(runtime, vtp, *parent, *clazz, environment),
+      : Callable(runtime, *parent, *clazz, environment),
         context_(context),
         functionPtr_(functionPtr) {}
 
@@ -708,14 +658,14 @@ class NativeFunction : public Callable {
   /// Call the native function with arguments already on the stack.
   static CallResult<PseudoHandle<>> _callImpl(
       Handle<Callable> selfHandle,
-      Runtime *runtime);
+      Runtime &runtime);
 
   /// We have to override this method because NativeFunction should not be
   /// used as constructor.
   /// Note: this may change in the future, in that case, we should create
   /// a subclass of NativeFunction for this restriction.
   static CallResult<PseudoHandle<JSObject>>
-  _newObjectImpl(Handle<Callable>, Runtime *runtime, Handle<JSObject>);
+  _newObjectImpl(Handle<Callable>, Runtime &runtime, Handle<JSObject>);
 };
 
 /// A NativeFunction to be used as a constructor for native objects other than
@@ -728,7 +678,7 @@ class NativeConstructor final : public NativeFunction {
   /// as the __proto__ for the nascent object.
   /// \p context is the context pointer provided to the NativeConstructor.
   using CreatorFunction = CallResult<PseudoHandle<JSObject>>(
-      Runtime *,
+      Runtime &,
       Handle<JSObject> proto,
       void *context);
 
@@ -738,25 +688,13 @@ class NativeConstructor final : public NativeFunction {
   /// types to CallResult<PseudoHandle<JSObject>>.
   template <class NativeClass>
   static CallResult<PseudoHandle<JSObject>>
-  creatorFunction(Runtime *runtime, Handle<JSObject> prototype, void *context) {
-    (void)context;
-    return toCallResultPseudoHandleJSObject(
-        NativeClass::create(runtime, prototype));
-  }
-
-#ifdef HERMESVM_SERIALIZE
-  NativeConstructor(
-      Deserializer &d,
-      void *context,
-      NativeFunctionPtr functionPtr,
-      CellKind targetKind,
-      CreatorFunction *creatorFunction);
-
-  friend void NativeConstructorSerialize(Serializer &s, const GCCell *cell);
-#endif
+  creatorFunction(Runtime &runtime, Handle<JSObject> prototype, void *context);
 
   static const CallableVTable vt;
 
+  static constexpr CellKind getCellKind() {
+    return CellKind::NativeConstructorKind;
+  }
   static bool classof(const GCCell *cell) {
     return cell->getKind() == CellKind::NativeConstructorKind;
   }
@@ -772,19 +710,18 @@ class NativeConstructor final : public NativeFunction {
   /// \param targetKind the expected CellKind of objects produced by the
   /// constructor
   static PseudoHandle<NativeConstructor> create(
-      Runtime *runtime,
+      Runtime &runtime,
       Handle<JSObject> parentHandle,
       void *context,
       NativeFunctionPtr functionPtr,
       unsigned paramCount,
       CreatorFunction *creator,
       CellKind targetKind) {
-    auto *cell = runtime->makeAFixed<NativeConstructor>(
+    auto *cell = runtime.makeAFixed<NativeConstructor>(
         runtime,
         parentHandle,
-        runtime->getHiddenClassForPrototype(
-            *parentHandle,
-            numOverlapSlots<NativeConstructor>() + ANONYMOUS_PROPERTY_SLOTS),
+        runtime.getHiddenClassForPrototype(
+            *parentHandle, numOverlapSlots<NativeConstructor>()),
         context,
         functionPtr,
         creator,
@@ -798,19 +735,18 @@ class NativeConstructor final : public NativeFunction {
   /// \param context the context to be passed to the function
   /// \param functionPtr the native function
   static PseudoHandle<NativeConstructor> create(
-      Runtime *runtime,
+      Runtime &runtime,
       Handle<JSObject> parentHandle,
       Handle<Environment> parentEnvHandle,
       void *context,
       NativeFunctionPtr functionPtr,
       CreatorFunction *creator,
       CellKind targetKind) {
-    auto *cell = runtime->makeAFixed<NativeConstructor>(
+    auto *cell = runtime.makeAFixed<NativeConstructor>(
         runtime,
         parentHandle,
-        runtime->getHiddenClassForPrototype(
-            *parentHandle,
-            numOverlapSlots<NativeConstructor>() + ANONYMOUS_PROPERTY_SLOTS),
+        runtime.getHiddenClassForPrototype(
+            *parentHandle, numOverlapSlots<NativeConstructor>()),
         parentEnvHandle,
         context,
         functionPtr,
@@ -831,20 +767,14 @@ class NativeConstructor final : public NativeFunction {
 
  public:
   NativeConstructor(
-      Runtime *runtime,
+      Runtime &runtime,
       Handle<JSObject> parent,
       Handle<HiddenClass> clazz,
       void *context,
       NativeFunctionPtr functionPtr,
       CreatorFunction *creator,
       CellKind targetKind)
-      : NativeFunction(
-            runtime,
-            &vt.base.base,
-            parent,
-            clazz,
-            context,
-            functionPtr),
+      : NativeFunction(runtime, parent, clazz, context, functionPtr),
 #ifndef NDEBUG
         targetKind_(targetKind),
 #endif
@@ -852,7 +782,7 @@ class NativeConstructor final : public NativeFunction {
   }
 
   NativeConstructor(
-      Runtime *runtime,
+      Runtime &runtime,
       Handle<JSObject> parent,
       Handle<HiddenClass> clazz,
       Handle<Environment> parentEnvHandle,
@@ -862,7 +792,6 @@ class NativeConstructor final : public NativeFunction {
       CellKind targetKind)
       : NativeFunction(
             runtime,
-            &vt.base.base,
             parent,
             clazz,
             parentEnvHandle,
@@ -879,7 +808,7 @@ class NativeConstructor final : public NativeFunction {
   /// 'this' argument when invoking the constructor.
   static CallResult<PseudoHandle<JSObject>> _newObjectImpl(
       Handle<Callable> selfHandle,
-      Runtime *runtime,
+      Runtime &runtime,
       Handle<JSObject> parentHandle) {
     auto nativeConsHandle = Handle<NativeConstructor>::vmcast(selfHandle);
     return nativeConsHandle->creator_(
@@ -891,41 +820,14 @@ class NativeConstructor final : public NativeFunction {
   /// of the correct type.
   static CallResult<PseudoHandle<>> _callImpl(
       Handle<Callable> selfHandle,
-      Runtime *runtime);
+      Runtime &runtime);
 #endif
-
-  template <class From>
-  static CallResult<PseudoHandle<JSObject>> toCallResultPseudoHandleJSObject(
-      PseudoHandle<From> &&other) {
-    return PseudoHandle<JSObject>{std::move(other)};
-  }
-
-  template <class From>
-  static CallResult<PseudoHandle<JSObject>> toCallResultPseudoHandleJSObject(
-      CallResult<PseudoHandle<From>> &&other) {
-    return std::move(other);
-  }
-
-  template <class From>
-  static CallResult<PseudoHandle<JSObject>> toCallResultPseudoHandleJSObject(
-      CallResult<Handle<From>> other) {
-    if (LLVM_UNLIKELY(other == ExecutionStatus::EXCEPTION)) {
-      return ExecutionStatus::EXCEPTION;
-    }
-    return PseudoHandle<JSObject>{*other};
-  }
-
-  template <class From>
-  static CallResult<PseudoHandle<JSObject>> toCallResultPseudoHandleJSObject(
-      Handle<From> other) {
-    return PseudoHandle<JSObject>{other};
-  }
 };
 
 /// An interpreted callable function with environment.
 class JSFunction : public Callable {
   using Super = Callable;
-  friend void FunctionBuildMeta(const GCCell *cell, Metadata::Builder &mb);
+  friend void JSFunctionBuildMeta(const GCCell *cell, Metadata::Builder &mb);
 
   /// CodeBlock to execute when called.
   CodeBlock *codeBlock_;
@@ -936,51 +838,27 @@ class JSFunction : public Callable {
   GCPointer<Domain> domain_;
 
  public:
-#ifdef HERMESVM_SERIALIZE
-  JSFunction(Deserializer &d, const VTable *vt);
-
-  friend void serializeFunctionImpl(
-      Serializer &s,
-      const GCCell *cell,
-      unsigned overlapSlots);
-  friend void FunctionDeserialize(Deserializer &d, CellKind kind);
-#endif
-
   JSFunction(
-      Runtime *runtime,
-      const VTable *vtp,
+      Runtime &runtime,
       Handle<Domain> domain,
       Handle<JSObject> parent,
       Handle<HiddenClass> clazz,
       Handle<Environment> environment,
       CodeBlock *codeBlock)
-      : Callable(runtime, vtp, *parent, *clazz, environment),
+      : Callable(runtime, *parent, *clazz, environment),
         codeBlock_(codeBlock),
-        domain_(runtime, *domain, &runtime->getHeap()) {
+        domain_(runtime, *domain, &runtime.getHeap()) {
     assert(
-        !vt.base.base.finalize_ == (kHasFinalizer != HasFinalizer::Yes) &&
+        !vt.finalize_ == (kHasFinalizer != HasFinalizer::Yes) &&
         "kHasFinalizer invalid value");
   }
-
-  JSFunction(
-      Runtime *runtime,
-      Handle<Domain> domain,
-      Handle<JSObject> parent,
-      Handle<HiddenClass> clazz,
-      Handle<Environment> environment,
-      CodeBlock *codeBlock)
-      : JSFunction(
-            runtime,
-            &vt.base.base,
-            domain,
-            parent,
-            clazz,
-            environment,
-            codeBlock) {}
 
  public:
   static const CallableVTable vt;
 
+  static constexpr CellKind getCellKind() {
+    return CellKind::JSFunctionKind;
+  }
   static bool classof(const GCCell *cell) {
     return kindInRange(
         cell->getKind(),
@@ -990,7 +868,7 @@ class JSFunction : public Callable {
 
   /// Create a Function with the prototype property set to new Object().
   static PseudoHandle<JSFunction> create(
-      Runtime *runtime,
+      Runtime &runtime,
       Handle<Domain> domain,
       Handle<JSObject> parentHandle,
       Handle<Environment> envHandle,
@@ -999,7 +877,7 @@ class JSFunction : public Callable {
   /// Create a Function with no environment and a CodeBlock simply returning
   /// undefined, with the prototype property auto-initialized to new Object().
   static PseudoHandle<JSFunction> create(
-      Runtime *runtime,
+      Runtime &runtime,
       Handle<Domain> domain,
       Handle<JSObject> parentHandle) {
     return create(
@@ -1007,16 +885,16 @@ class JSFunction : public Callable {
         domain,
         parentHandle,
         Runtime::makeNullHandle<Environment>(),
-        runtime->getEmptyCodeBlock());
+        runtime.getEmptyCodeBlock());
   }
 
   /// Create a Function with no environment and a CodeBlock simply returning
   /// undefined, with the prototype property auto-initialized to new Object().
   static PseudoHandle<JSFunction> create(
-      Runtime *runtime,
+      Runtime &runtime,
       Handle<JSObject> parentHandle) {
     return create(
-        runtime, runtime->makeHandle(Domain::create(runtime)), parentHandle);
+        runtime, runtime.makeHandle(Domain::create(runtime)), parentHandle);
   }
 
   /// \return the code block containing the function code.
@@ -1037,7 +915,7 @@ class JSFunction : public Callable {
   /// Call the JavaScript function with arguments already on the stack.
   static CallResult<PseudoHandle<>> _callImpl(
       Handle<Callable> selfHandle,
-      Runtime *runtime);
+      Runtime &runtime);
 
   static std::string _snapshotNameImpl(GCCell *cell, GC *gc);
   static void
@@ -1058,7 +936,7 @@ class JSAsyncFunction final : public JSFunction {
 
   /// Create a AsyncFunction.
   static PseudoHandle<JSAsyncFunction> create(
-      Runtime *runtime,
+      Runtime &runtime,
       Handle<Domain> domain,
       Handle<JSObject> parentHandle,
       Handle<Environment> envHandle,
@@ -1068,55 +946,35 @@ class JSAsyncFunction final : public JSFunction {
   /// returning undefined, with the prototype property auto-initialized to new
   /// Object().
   static PseudoHandle<JSAsyncFunction> create(
-      Runtime *runtime,
+      Runtime &runtime,
       Handle<JSObject> parentHandle) {
     return create(
         runtime,
-        runtime->makeHandle(Domain::create(runtime)),
+        runtime.makeHandle(Domain::create(runtime)),
         parentHandle,
-        runtime->makeNullHandle<Environment>(),
-        runtime->getEmptyCodeBlock());
+        runtime.makeNullHandle<Environment>(),
+        runtime.getEmptyCodeBlock());
   }
 
+  static constexpr CellKind getCellKind() {
+    return CellKind::JSAsyncFunctionKind;
+  }
   static bool classof(const GCCell *cell) {
-    return cell->getKind() == CellKind::AsyncFunctionKind;
+    return cell->getKind() == CellKind::JSAsyncFunctionKind;
   }
-
-#ifdef HERMESVM_SERIALIZE
-  explicit JSAsyncFunction(Deserializer &d);
-
-  friend void AsyncFunctionDeserialize(Deserializer &d, CellKind kind);
-#endif
 
   JSAsyncFunction(
-      Runtime *runtime,
-      const VTable *vtp,
+      Runtime &runtime,
       Handle<Domain> domain,
       Handle<JSObject> parent,
       Handle<HiddenClass> clazz,
       Handle<Environment> environment,
       CodeBlock *codeBlock)
-      : Super(runtime, vtp, domain, parent, clazz, environment, codeBlock) {
+      : Super(runtime, domain, parent, clazz, environment, codeBlock) {
     assert(
-        !vt.base.base.finalize_ == (kHasFinalizer != HasFinalizer::Yes) &&
+        !vt.finalize_ == (kHasFinalizer != HasFinalizer::Yes) &&
         "kHasFinalizer invalid value");
   }
-
-  JSAsyncFunction(
-      Runtime *runtime,
-      Handle<Domain> domain,
-      Handle<JSObject> parent,
-      Handle<HiddenClass> clazz,
-      Handle<Environment> environment,
-      CodeBlock *codeBlock)
-      : JSFunction(
-            runtime,
-            &vt.base.base,
-            domain,
-            parent,
-            clazz,
-            environment,
-            codeBlock) {}
 };
 
 /// A function which interprets code and returns a Generator when called.
@@ -1132,7 +990,7 @@ class JSGeneratorFunction final : public JSFunction {
 
   /// Create a GeneratorFunction.
   static PseudoHandle<JSGeneratorFunction> create(
-      Runtime *runtime,
+      Runtime &runtime,
       Handle<Domain> domain,
       Handle<JSObject> parentHandle,
       Handle<Environment> envHandle,
@@ -1142,56 +1000,36 @@ class JSGeneratorFunction final : public JSFunction {
   /// returning undefined, with the prototype property auto-initialized to new
   /// Object().
   static PseudoHandle<JSGeneratorFunction> create(
-      Runtime *runtime,
+      Runtime &runtime,
       Handle<JSObject> parentHandle) {
     return create(
         runtime,
-        runtime->makeHandle(Domain::create(runtime)),
+        runtime.makeHandle(Domain::create(runtime)),
         parentHandle,
-        runtime->makeNullHandle<Environment>(),
-        runtime->getEmptyCodeBlock());
+        runtime.makeNullHandle<Environment>(),
+        runtime.getEmptyCodeBlock());
   }
 
+  static constexpr CellKind getCellKind() {
+    return CellKind::JSGeneratorFunctionKind;
+  }
   static bool classof(const GCCell *cell) {
-    return cell->getKind() == CellKind::GeneratorFunctionKind;
+    return cell->getKind() == CellKind::JSGeneratorFunctionKind;
   }
 
  public:
-#ifdef HERMESVM_SERIALIZE
-  explicit JSGeneratorFunction(Deserializer &d);
-
-  friend void GeneratorFunctionDeserialize(Deserializer &d, CellKind kind);
-#endif
-
   JSGeneratorFunction(
-      Runtime *runtime,
-      const VTable *vtp,
+      Runtime &runtime,
       Handle<Domain> domain,
       Handle<JSObject> parent,
       Handle<HiddenClass> clazz,
       Handle<Environment> environment,
       CodeBlock *codeBlock)
-      : Super(runtime, vtp, domain, parent, clazz, environment, codeBlock) {
+      : Super(runtime, domain, parent, clazz, environment, codeBlock) {
     assert(
-        !vt.base.base.finalize_ == (kHasFinalizer != HasFinalizer::Yes) &&
+        !vt.finalize_ == (kHasFinalizer != HasFinalizer::Yes) &&
         "kHasFinalizer invalid value");
   }
-
-  JSGeneratorFunction(
-      Runtime *runtime,
-      Handle<Domain> domain,
-      Handle<JSObject> parent,
-      Handle<HiddenClass> clazz,
-      Handle<Environment> environment,
-      CodeBlock *codeBlock)
-      : JSFunction(
-            runtime,
-            &vt.base.base,
-            domain,
-            parent,
-            clazz,
-            environment,
-            codeBlock) {}
 };
 
 /// A function which can save its state and yield execution to the caller.
@@ -1223,6 +1061,9 @@ class GeneratorInnerFunction final : public JSFunction {
  public:
   static const CallableVTable vt;
 
+  static constexpr CellKind getCellKind() {
+    return CellKind::GeneratorInnerFunctionKind;
+  }
   static bool classof(const GCCell *cell) {
     return cell->getKind() == CellKind::GeneratorInnerFunctionKind;
   }
@@ -1244,7 +1085,7 @@ class GeneratorInnerFunction final : public JSFunction {
   };
 
   static CallResult<Handle<GeneratorInnerFunction>> create(
-      Runtime *runtime,
+      Runtime &runtime,
       Handle<Domain> domain,
       Handle<JSObject> parentHandle,
       Handle<Environment> envHandle,
@@ -1259,7 +1100,7 @@ class GeneratorInnerFunction final : public JSFunction {
   /// function.
   static CallResult<PseudoHandle<>> callInnerFunction(
       Handle<GeneratorInnerFunction> selfHandle,
-      Runtime *runtime,
+      Runtime &runtime,
       Handle<> arg,
       Action action);
 
@@ -1267,8 +1108,8 @@ class GeneratorInnerFunction final : public JSFunction {
   /// directly by VM code only.
   static CallResult<PseudoHandle<>> _callImpl(
       Handle<Callable> selfHandle,
-      Runtime *runtime) {
-    return runtime->raiseTypeError(
+      Runtime &runtime) {
+    return runtime.raiseTypeError(
         "Generator inner functions may not be called directly by user code");
   }
 
@@ -1292,9 +1133,8 @@ class GeneratorInnerFunction final : public JSFunction {
 
   /// Clear the stored result_ field to prevent memory leaks.
   /// Should be called after getResult() by the ResumeGenerator instruction.
-  void clearResult(Runtime *runtime) {
-    result_.setNonPtr(
-        SmallHermesValue::encodeEmptyValue(), &runtime->getHeap());
+  void clearResult(Runtime &runtime) {
+    result_.setNonPtr(SmallHermesValue::encodeEmptyValue(), &runtime.getHeap());
   }
 
   SmallHermesValue getResult() const {
@@ -1311,11 +1151,11 @@ class GeneratorInnerFunction final : public JSFunction {
 
   /// Restores the stack variables needed to resume execution from a
   /// SuspendedYield state.
-  void restoreStack(Runtime *runtime);
+  void restoreStack(Runtime &runtime);
 
   /// Saves the stack variables needed to resume execution from a SuspendedYield
   /// state, and places them in an internal property.
-  void saveStack(Runtime *runtime);
+  void saveStack(Runtime &runtime);
 
   void setNextIP(const Inst *ip) {
     nextIPOffset_ = getCodeBlock()->getOffsetOf(ip);
@@ -1326,34 +1166,18 @@ class GeneratorInnerFunction final : public JSFunction {
   }
 
  public:
-#ifdef HERMESVM_SERIALIZE
-  explicit GeneratorInnerFunction(Deserializer &d);
-
-  friend void GeneratorInnerFunctionSerialize(
-      Serializer &s,
-      const GCCell *cell);
-  friend void GeneratorInnerFunctionDeserialize(Deserializer &d, CellKind kind);
-#endif
-
   GeneratorInnerFunction(
-      Runtime *runtime,
+      Runtime &runtime,
       Handle<Domain> domain,
       Handle<JSObject> parent,
       Handle<HiddenClass> clazz,
       Handle<Environment> environment,
       CodeBlock *codeBlock,
       uint32_t argCount)
-      : JSFunction(
-            runtime,
-            &vt.base.base,
-            domain,
-            parent,
-            clazz,
-            environment,
-            codeBlock),
+      : JSFunction(runtime, domain, parent, clazz, environment, codeBlock),
         argCount_(argCount) {
     assert(
-        !vt.base.base.finalize_ == (kHasFinalizer != HasFinalizer::Yes) &&
+        !vt.finalize_ == (kHasFinalizer != HasFinalizer::Yes) &&
         "kHasFinalizer invalid value");
   }
 
@@ -1411,9 +1235,9 @@ class GeneratorInnerFunction final : public JSFunction {
   }
 
   /// \return the number of frame registers in the stored context.
-  uint32_t getFrameSizeInContext(Runtime *runtime) const {
+  uint32_t getFrameSizeInContext(Runtime &runtime) const {
     uint32_t frameOffset = getFrameOffsetInContext();
-    return savedContext_.get(runtime)->size() - frameOffset;
+    return savedContext_.getNonNull(runtime)->size() - frameOffset;
   }
 };
 

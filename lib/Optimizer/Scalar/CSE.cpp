@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -102,7 +102,7 @@ using ScopedHTType = llvh::ScopedHashTable<
 // children do not need to be store spearately.
 class StackNode : public DomTreeDFS::StackNode<CSEContext> {
  public:
-  inline StackNode(CSEContext *ctx, DominanceInfoNode *n);
+  inline StackNode(CSEContext *ctx, const DominanceInfoNode *n);
 
  private:
   /// RAII to create and pop a scope when the stack node is created and
@@ -114,7 +114,7 @@ class StackNode : public DomTreeDFS::StackNode<CSEContext> {
 /// tree, eliminating trivially redundant instructions.
 class CSEContext : public DomTreeDFS::Visitor<CSEContext, StackNode> {
  public:
-  CSEContext(DominanceInfo &DT)
+  CSEContext(const DominanceInfo &DT)
       : DomTreeDFS::Visitor<CSEContext, StackNode>(DT) {}
 
   bool run() {
@@ -134,7 +134,7 @@ class CSEContext : public DomTreeDFS::Visitor<CSEContext, StackNode> {
   ScopedHTType availableValues_{};
 };
 
-inline StackNode::StackNode(CSEContext *ctx, DominanceInfoNode *n)
+inline StackNode::StackNode(CSEContext *ctx, const DominanceInfoNode *n)
     : DomTreeDFS::StackNode<CSEContext>(ctx, n),
       scope_{ctx->availableValues_} {}
 } // end anonymous namespace

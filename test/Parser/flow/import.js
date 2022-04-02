@@ -1,5 +1,5 @@
 /**
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -27,6 +27,7 @@ import typeof x from 'foo';
 // CHECK-NEXT:           "type": "StringLiteral",
 // CHECK-NEXT:           "value": "foo"
 // CHECK-NEXT:         },
+// CHECK-NEXT:         "assertions": [],
 // CHECK-NEXT:         "importKind": "typeof"
 // CHECK-NEXT:       },
 
@@ -46,6 +47,7 @@ import type x from 'foo';
 // CHECK-NEXT:           "type": "StringLiteral",
 // CHECK-NEXT:           "value": "foo"
 // CHECK-NEXT:         },
+// CHECK-NEXT:         "assertions": [],
 // CHECK-NEXT:         "importKind": "type"
 // CHECK-NEXT:       },
 
@@ -70,6 +72,7 @@ import { type type } from 'foo';
 // CHECK-NEXT:           "type": "StringLiteral",
 // CHECK-NEXT:           "value": "foo"
 // CHECK-NEXT:         },
+// CHECK-NEXT:         "assertions": [],
 // CHECK-NEXT:         "importKind": "value"
 // CHECK-NEXT:       },
 
@@ -94,6 +97,7 @@ import { type type as type } from 'foo';
 // CHECK-NEXT:           "type": "StringLiteral",
 // CHECK-NEXT:           "value": "foo"
 // CHECK-NEXT:         },
+// CHECK-NEXT:         "assertions": [],
 // CHECK-NEXT:         "importKind": "value"
 // CHECK-NEXT:       },
 
@@ -118,6 +122,7 @@ import { type T as U } from 'foo';
 // CHECK-NEXT:         "type": "StringLiteral",
 // CHECK-NEXT:         "value": "foo"
 // CHECK-NEXT:       },
+// CHECK-NEXT:       "assertions": [],
 // CHECK-NEXT:       "importKind": "value"
 // CHECK-NEXT:     },
 
@@ -137,5 +142,6 @@ import type from 'foo';
 // CHECK-NEXT:           "type": "StringLiteral",
 // CHECK-NEXT:           "value": "foo"
 // CHECK-NEXT:         },
+// CHECK-NEXT:         "assertions": [],
 // CHECK-NEXT:         "importKind": "value"
 // CHECK-NEXT:       }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -28,8 +28,8 @@ MATHFUNC_1ARG(floor, std::floor)
 MATHFUNC_1ARG(log, std::log)
 MATHFUNC_1ARG(log10, std::log10)
 MATHFUNC_1ARG(log1p, ::log1p)
-MATHFUNC_1ARG(log2, oscompat::log2)
-MATHFUNC_1ARG(trunc, oscompat::trunc)
+MATHFUNC_1ARG(log2, std::log2)
+MATHFUNC_1ARG(trunc, std::trunc)
 MATHFUNC_1ARG(round, roundHalfwaysTowardsInfinity)
 MATHFUNC_1ARG(sin, std::sin)
 MATHFUNC_1ARG(sinh, ::sinh)

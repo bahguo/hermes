@@ -1,5 +1,5 @@
 #!/bin/bash
-# Copyright (c) Facebook, Inc. and its affiliates.
+# Copyright (c) Meta Platforms, Inc. and affiliates.
 #
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
@@ -46,7 +46,8 @@ function build_host_hermesc {
 # Utility function to configure an Apple framework
 function configure_apple_framework {
   local build_cli_tools enable_bitcode
-  if [[ $1 == iphoneos ]]; then
+
+  if [[ $1 == iphoneos || $1 == catalyst ]]; then
     enable_bitcode="true"
   else
     enable_bitcode="false"
@@ -93,27 +94,26 @@ function build_apple_framework {
 }
 
 # Accepts an array of frameworks and will place all of
-# the architectures into the first one in the list
+# the architectures into an universal folder and then remove
+# the merged frameworks from destroot
 function create_universal_framework {
   cd ./destroot/Library/Frameworks || exit 1
 
   local platforms=("$@")
+  local args=""
 
   echo "Creating universal framework for platforms: ${platforms[*]}"
 
   for i in "${!platforms[@]}"; do
-    platforms[$i]="${platforms[$i]}/hermes.framework/hermes"
+    args+="-framework ${platforms[$i]}/hermes.framework "
   done
 
-  lipo -create -output "${platforms[0]}" "${platforms[@]}"
+  mkdir universal
+  xcodebuild -create-xcframework $args -output "universal/hermes.xcframework"
 
-  # Once all was linked into a single framework, clean destroot
-  # from unused frameworks
-  for platform in "${@:2}"; do
+  for platform in $@; do
     rm -r "$platform"
   done
-
-  lipo -info "${platforms[0]}"
 
   cd - || exit 1
 }

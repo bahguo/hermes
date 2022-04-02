@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -14,7 +14,6 @@
 #include "hermes/AST/Context.h"
 #include "hermes/IR/IR.h"
 #include "hermes/IR/Instrs.h"
-#include "hermes/Support/OSCompat.h"
 #include "hermes/Utils/Dumper.h"
 
 #include <set>
@@ -24,7 +23,6 @@
 
 using namespace hermes;
 
-using hermes::oscompat::to_string;
 using llvh::cast;
 using llvh::dyn_cast;
 
@@ -163,6 +161,7 @@ Function::Function(
     Identifier originalName,
     DefinitionKind definitionKind,
     bool strictMode,
+    SourceVisibility sourceVisibility,
     bool isGlobal,
     SMRange sourceRange,
     Function *insertBefore)
@@ -175,6 +174,7 @@ Function::Function(
       definitionKind_(definitionKind),
       strictMode_(strictMode),
       SourceRange(sourceRange),
+      sourceVisibility_(sourceVisibility),
       internalName_(parent->deriveUniqueInternalName(originalName)) {
   if (insertBefore) {
     assert(insertBefore != this && "Cannot insert a function before itself!");
@@ -221,6 +221,40 @@ std::string Function::getDescriptiveDefinitionKindStr() const {
   return (isAnonymous() ? "anonymous " : "") + getDefinitionKindStr(true);
 }
 
+llvh::Optional<llvh::StringRef> Function::getSourceRepresentationStr() const {
+  switch (getSourceVisibility()) {
+    case SourceVisibility::ShowSource: {
+      // Return the actual source code string.
+      auto sourceRange = getSourceRange();
+      assert(
+          sourceRange.isValid() && "Function does not have source available");
+      const auto sourceStart = sourceRange.Start.getPointer();
+      llvh::StringRef strBuf{
+          sourceStart, (size_t)(sourceRange.End.getPointer() - sourceStart)};
+      return strBuf;
+    }
+    case SourceVisibility::HideSource:
+    case SourceVisibility::Sensitive: {
+      // For implementation-hiding functions, the spec requires the source code
+      // representation of them "must have the syntax of a NativeFunction".
+      //
+      // Naively adding 'function <name>() { [ native code ] }' to string table
+      // for each function would be a huge waste of space in the generated hbc.
+      // Instead, we associate all such functions with an empty string to
+      // effectively "mark" them. (the assumption is that an real function
+      // source can't be empty). This reduced the constant factor of the space
+      // cost to only 8 bytes (one FunctionSourceTable entry) per function.
+      return llvh::StringRef("");
+    }
+    case SourceVisibility::Default:
+    default: {
+      // No need of special source representation for these cases, their
+      // 'toString' will return `{ [ bytecode ] }` as the default.
+      return llvh::None;
+    }
+  }
+}
+
 BasicBlock::BasicBlock(Function *parent)
     : Value(ValueKind::BasicBlockKind), Parent(parent) {
   assert(Parent && "Invalid parent function");
@@ -235,7 +269,7 @@ void BasicBlock::dump() {
 void BasicBlock::printAsOperand(llvh::raw_ostream &OS, bool) const {
   // Use the address of the basic block when LLVM prints the CFG.
   size_t Num = (size_t)this;
-  OS << "BB#" << to_string(Num);
+  OS << "BB#" << std::to_string(Num);
 }
 
 void Instruction::dump(llvh::raw_ostream &os) {

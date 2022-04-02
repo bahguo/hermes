@@ -1,5 +1,5 @@
 /**
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -557,7 +557,7 @@ cons.forEach(function(c, i) {
       }
     });
     return c.from(ta);
-  }, TypeError);
+  }, RangeError);
 });
 
 /// @}
@@ -779,6 +779,43 @@ cons.forEach(function(TypedArray) {
 });
 /// @}
 
+/// @name TypedArray.prototype.findLast/.findLastIndex
+/// @{
+cons.forEach(function(TypedArray) {
+  var arr = new TypedArray([0, 1, 2, 3]);
+
+  var cb = function(elem, i, view) {
+    assert.equal(view, arr);
+    assert.equal(elem, i);
+    return i === arr.length - 1;
+  };
+  assert.equal(arr.findLast(cb), arr.length - 1);
+  assert.equal(arr.findLastIndex(cb), arr.length - 1);
+  var numcalls = 0;
+  cb = function() {
+    ++numcalls;
+    return true;
+  };
+  assert.equal(arr.findLast(cb), 3);
+  assert.equal(arr.findLastIndex(cb), 3);
+  assert.equal(numcalls, 2);
+
+  cb = function() {
+    return false;
+  };
+  assert.equal(arr.findLast(cb), undefined);
+  assert.equal(arr.findLastIndex(cb), -1);
+
+  var state = [];
+  cb = function(elem, i, view) {
+    state.push(elem);
+    return elem === 2;
+  };
+  assert.equal(arr.findLast(cb), 2);
+  assert.arrayEqual(state, [3, 2]);
+});
+/// @}
+
 /// @name TypedArray.prototype.find/.findIndex
 /// @{
 cons.forEach(function(TypedArray) {
@@ -805,6 +842,13 @@ cons.forEach(function(TypedArray) {
   };
   assert.equal(arr.find(cb), undefined);
   assert.equal(arr.findIndex(cb), -1);
+  var state = [];
+  cb = function(elem, i, view) {
+    state.push(elem);
+    return elem === 2;
+  };
+  assert.equal(arr.find(cb), 2);
+  assert.arrayEqual(state, [0, 1, 2]);
 });
 /// @}
 
@@ -946,6 +990,19 @@ cons.forEach(function(ta) {
   assert.equal(x[0], 3);
   assert.equal(x[1], 2);
   assert.equal(x[2], 1);
+
+  // Check stable.
+  x = new ta([1, 111, 11, 22, 2, 33, 3]);
+  x.sort(function(a, b) {
+    return (a + "").length - (b + "").length;
+  });
+  assert.equal(x[0], 1);
+  assert.equal(x[1], 2);
+  assert.equal(x[2], 3);
+  assert.equal(x[3], 11);
+  assert.equal(x[4], 22);
+  assert.equal(x[5], 33);
+  assert.equal(x[6], 111);
 
   assert.throws(function() {
     x.sort(null);

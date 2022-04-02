@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -10,9 +10,6 @@
 #include "hermes/VM/BuildMetadata.h"
 #include "hermes/VM/Callable.h"
 
-#include "llvh/Support/Debug.h"
-#define DEBUG_TYPE "serialize"
-
 namespace hermes {
 namespace vm {
 
@@ -20,14 +17,12 @@ namespace vm {
 /// @{
 
 JSTypedArrayBase::JSTypedArrayBase(
-    Runtime *runtime,
-    const VTable *vt,
+    Runtime &runtime,
     Handle<JSObject> parent,
     Handle<HiddenClass> clazz)
-    : JSObject(runtime, vt, *parent, *clazz),
+    : JSObject(runtime, *parent, *clazz),
       buffer_(nullptr),
       length_(0),
-      byteWidth_(0),
       offset_(0) {
   flags_.indexedStorage = true;
   flags_.fastIndexProperties = true;
@@ -35,41 +30,21 @@ JSTypedArrayBase::JSTypedArrayBase(
 
 void TypedArrayBaseBuildMeta(const GCCell *cell, Metadata::Builder &mb) {
   mb.addJSObjectOverlapSlots(JSObject::numOverlapSlots<JSTypedArrayBase>());
-  ObjectBuildMeta(cell, mb);
+  JSObjectBuildMeta(cell, mb);
   const auto *self = static_cast<const JSTypedArrayBase *>(cell);
   mb.addField("buffer", &self->buffer_);
 }
 
 std::pair<uint32_t, uint32_t> JSTypedArrayBase::_getOwnIndexedRangeImpl(
     JSObject *selfObj,
-    Runtime *) {
+    Runtime &) {
   auto *self = vmcast<JSTypedArrayBase>(selfObj);
   return {0, self->getLength()};
 }
 
-#ifdef HERMESVM_SERIALIZE
-JSTypedArrayBase::JSTypedArrayBase(Deserializer &d, const VTable *vt)
-    : JSObject(d, vt) {
-  d.readRelocation(&buffer_, RelocationKind::GCPointer);
-  length_ = d.readInt<JSTypedArrayBase::size_type>();
-  byteWidth_ = d.readInt<uint8_t>();
-  offset_ = d.readInt<size_type>();
-}
-
-void serializeTypedArrayBase(Serializer &s, const GCCell *cell) {
-  auto *self = vmcast<const JSTypedArrayBase>(cell);
-  JSObject::serializeObjectImpl(
-      s, cell, JSObject::numOverlapSlots<JSTypedArrayBase>());
-  s.writeRelocation(self->buffer_.get(s.getRuntime()));
-  s.writeInt<JSTypedArrayBase::size_type>(self->length_);
-  s.writeInt<uint8_t>(self->byteWidth_);
-  s.writeInt<JSTypedArrayBase::size_type>(self->offset_);
-}
-#endif
-
 bool JSTypedArrayBase::_haveOwnIndexedImpl(
     JSObject *selfObj,
-    Runtime *,
+    Runtime &,
     uint32_t index) {
   auto *self = vmcast<JSTypedArrayBase>(selfObj);
   // Check whether the index is within the storage.
@@ -78,7 +53,7 @@ bool JSTypedArrayBase::_haveOwnIndexedImpl(
 
 OptValue<PropertyFlags> JSTypedArrayBase::_getOwnIndexedPropertyFlagsImpl(
     JSObject *selfObj,
-    Runtime *runtime,
+    Runtime &runtime,
     uint32_t index) {
   auto *self = vmcast<JSTypedArrayBase>(selfObj);
   // Check whether the index is within the storage.
@@ -101,7 +76,7 @@ OptValue<PropertyFlags> JSTypedArrayBase::_getOwnIndexedPropertyFlagsImpl(
 
 bool JSTypedArrayBase::_deleteOwnIndexedImpl(
     Handle<JSObject> selfHandle,
-    Runtime *runtime,
+    Runtime &runtime,
     uint32_t index) {
   // Opposite of _haveOwnIndexedImpl.  This is not specified as such,
   // but is a consequence of 9.1.10.1 OrdinaryDelete on TypedArrays.
@@ -113,7 +88,7 @@ bool JSTypedArrayBase::_deleteOwnIndexedImpl(
 
 bool JSTypedArrayBase::_checkAllOwnIndexedImpl(
     JSObject *selfObj,
-    Runtime *,
+    Runtime &,
     ObjectVTable::CheckAllOwnIndexedMode /*mode*/) {
   auto *self = vmcast<JSTypedArrayBase>(selfObj);
 
@@ -123,23 +98,49 @@ bool JSTypedArrayBase::_checkAllOwnIndexedImpl(
 }
 
 ExecutionStatus JSTypedArrayBase::validateTypedArray(
-    Runtime *runtime,
+    Runtime &runtime,
     Handle<> thisArg,
     bool checkAttached) {
   auto self = Handle<JSTypedArrayBase>::dyn_vmcast(thisArg);
   if (!self) {
-    return runtime->raiseTypeError(
+    return runtime.raiseTypeError(
         "A TypedArray function was called on a non TypedArray");
   }
   if (checkAttached && !self->attached(runtime)) {
-    return runtime->raiseTypeError(
+    return runtime.raiseTypeError(
         "A TypedArray function was called on a detached TypedArray");
   }
   return ExecutionStatus::RETURNED;
 }
 
+uint8_t JSTypedArrayBase::getByteWidth() const {
+  static constexpr uint8_t widths[] = {
+#define TYPED_ARRAY(name, type) sizeof(type),
+#include "hermes/VM/TypedArrays.def"
+#undef TYPED_ARRAY
+  };
+  static constexpr size_t firstKind =
+      static_cast<size_t>(CellKind::TypedArrayBaseKind_first);
+  return widths[static_cast<size_t>(getKind()) - firstKind];
+}
+
+CallResult<Handle<JSTypedArrayBase>> JSTypedArrayBase::allocate(
+    Runtime &runtime,
+    size_type length) {
+  using AllocateFn = CallResult<Handle<JSTypedArrayBase>>(Runtime &, size_type);
+  static constexpr AllocateFn *allocateFns[] = {
+#define TYPED_ARRAY(name, type) name##Array::allocate,
+#include "hermes/VM/TypedArrays.def"
+#undef TYPED_ARRAY
+  };
+  static constexpr size_t firstKind =
+      static_cast<size_t>(CellKind::TypedArrayBaseKind_first);
+  return allocateFns[static_cast<size_t>(getKind()) - firstKind](
+      runtime, length);
+}
+
 CallResult<Handle<JSTypedArrayBase>> JSTypedArrayBase::allocateToSameBuffer(
-    Runtime *runtime,
+    Runtime &runtime,
     Handle<JSTypedArrayBase> src,
     size_type beginIndex,
     size_type endIndex) {
@@ -152,8 +153,7 @@ CallResult<Handle<JSTypedArrayBase>> JSTypedArrayBase::allocateToSameBuffer(
   auto beginScaled = beginIndex * src->getByteWidth();
   auto endScaled = endIndex * src->getByteWidth();
   if (!src->attached(runtime)) {
-    return runtime->raiseTypeError(
-        "Cannot allocate from a detached TypedArray");
+    return runtime.raiseTypeError("Cannot allocate from a detached TypedArray");
   }
   setBuffer(
       runtime,
@@ -165,16 +165,40 @@ CallResult<Handle<JSTypedArrayBase>> JSTypedArrayBase::allocateToSameBuffer(
   return Handle<JSTypedArrayBase>::vmcast(newArr);
 }
 
-ExecutionStatus JSTypedArrayBase::createBuffer(
-    Runtime *runtime,
-    Handle<JSTypedArrayBase> selfObj,
+CallResult<Handle<JSTypedArrayBase>> JSTypedArrayBase::allocateSpecies(
+    Runtime &runtime,
+    Handle<JSTypedArrayBase> self,
     size_type length) {
-  assert(runtime && selfObj);
+  using AllocateSpeciesFn = CallResult<Handle<JSTypedArrayBase>>(
+      Handle<JSTypedArrayBase>, Runtime &, size_type);
+  static constexpr AllocateSpeciesFn *allocateFns[] = {
+#define TYPED_ARRAY(name, type) name##Array::allocateSpecies,
+#include "hermes/VM/TypedArrays.def"
+#undef TYPED_ARRAY
+  };
+  static constexpr size_t firstKind =
+      static_cast<size_t>(CellKind::TypedArrayBaseKind_first);
+  return allocateFns[static_cast<size_t>(self->getKind()) - firstKind](
+      self, runtime, length);
+}
 
-  auto tmpbuf = runtime->makeHandle(JSArrayBuffer::create(
-      runtime, Handle<JSObject>::vmcast(&runtime->arrayBufferPrototype)));
+ExecutionStatus JSTypedArrayBase::createBuffer(
+    Runtime &runtime,
+    Handle<JSTypedArrayBase> selfObj,
+    uint64_t length) {
+  assert(selfObj);
 
-  auto bufferSize = length * selfObj->getByteWidth();
+  auto tmpbuf = runtime.makeHandle(JSArrayBuffer::create(
+      runtime, Handle<JSObject>::vmcast(&runtime.arrayBufferPrototype)));
+
+  // Ensure that the buffer size in bytes will not overflow
+  // JSArrayBuffer::size_type (maybe not same as JSTypedArrayBase::size_type).
+  if (length > (std::numeric_limits<JSArrayBuffer::size_type>::max() /
+                selfObj->getByteWidth())) {
+    return runtime.raiseRangeError(
+        "Cannot allocate a data block for the ArrayBuffer");
+  }
+  JSArrayBuffer::size_type bufferSize = length * selfObj->getByteWidth();
   if (tmpbuf->createDataBlock(runtime, bufferSize) ==
       ExecutionStatus::EXCEPTION) {
     // Failed to allocate, don't modify what it currently points to.
@@ -186,7 +210,7 @@ ExecutionStatus JSTypedArrayBase::createBuffer(
 }
 
 ExecutionStatus JSTypedArrayBase::setToCopyOfBuffer(
-    Runtime *runtime,
+    Runtime &runtime,
     Handle<JSTypedArrayBase> dst,
     JSArrayBuffer::size_type dstByteOffset,
     Handle<JSArrayBuffer> src,
@@ -205,7 +229,7 @@ ExecutionStatus JSTypedArrayBase::setToCopyOfBuffer(
 }
 
 ExecutionStatus JSTypedArrayBase::setToCopyOfTypedArray(
-    Runtime *runtime,
+    Runtime &runtime,
     Handle<JSTypedArrayBase> dst,
     size_type dstIndex,
     Handle<JSTypedArrayBase> src,
@@ -239,7 +263,7 @@ ExecutionStatus JSTypedArrayBase::setToCopyOfTypedArray(
 }
 
 void JSTypedArrayBase::setToCopyOfBytes(
-    Runtime *runtime,
+    Runtime &runtime,
     Handle<JSTypedArrayBase> dst,
     size_type dstIndex,
     Handle<JSTypedArrayBase> src,
@@ -265,7 +289,7 @@ void JSTypedArrayBase::setToCopyOfBytes(
 }
 
 void JSTypedArrayBase::setBuffer(
-    Runtime *runtime,
+    Runtime &runtime,
     JSTypedArrayBase *self,
     JSArrayBuffer *buf,
     size_type offset,
@@ -279,7 +303,7 @@ void JSTypedArrayBase::setBuffer(
   assert(
       self->getByteWidth() == byteWidth &&
       "Cannot set to a buffer of a different byte width");
-  self->buffer_.set(runtime, buf, &runtime->getHeap());
+  self->buffer_.setNonNull(runtime, buf, &runtime.getHeap());
   self->offset_ = offset;
   self->length_ = size / byteWidth;
 }
@@ -287,68 +311,42 @@ void JSTypedArrayBase::setBuffer(
 /// @}
 
 template <typename T, CellKind C>
-JSTypedArrayBase::JSTypedArrayVTable JSTypedArray<T, C>::vt{
-    {
-        VTable(C, cellSize<JSTypedArray<T, C>>()),
-        _getOwnIndexedRangeImpl,
-        _haveOwnIndexedImpl,
-        _getOwnIndexedPropertyFlagsImpl,
-        _getOwnIndexedImpl,
-        _setOwnIndexedImpl,
-        _deleteOwnIndexedImpl,
-        _checkAllOwnIndexedImpl,
-    },
-    allocate,
-    _allocateSpeciesImpl};
-
-#ifdef HERMESVM_SERIALIZE
-template <typename T, CellKind C>
-JSTypedArray<T, C>::JSTypedArray(Deserializer &d)
-    : JSTypedArrayBase(d, &vt.base.base) {}
-
-template <typename T, CellKind C>
-void deserializeTypedArray(Deserializer &d, CellKind kind) {
-  auto *cell = d.getRuntime()->makeAFixed<JSTypedArray<T, C>>(d);
-  d.endObject(cell);
-}
+const ObjectVTable JSTypedArray<T, C>::vt{
+    VTable(C, cellSize<JSTypedArray<T, C>>()),
+    _getOwnIndexedRangeImpl,
+    _haveOwnIndexedImpl,
+    _getOwnIndexedPropertyFlagsImpl,
+    _getOwnIndexedImpl,
+    _setOwnIndexedImpl,
+    _deleteOwnIndexedImpl,
+    _checkAllOwnIndexedImpl,
+};
 
 #define TYPED_ARRAY(name, type)                                          \
   void name##ArrayBuildMeta(const GCCell *cell, Metadata::Builder &mb) { \
     TypedArrayBaseBuildMeta(cell, mb);                                   \
-  }                                                                      \
-  void name##ArraySerialize(Serializer &s, const GCCell *cell) {         \
-    serializeTypedArrayBase(s, cell);                                    \
-    s.endObject(cell);                                                   \
-  }                                                                      \
-  void name##ArrayDeserialize(Deserializer &d, CellKind kind) {          \
-    deserializeTypedArray<type, CellKind::name##ArrayKind>(d, kind);     \
+    mb.setVTable(&name##Array::vt);                                      \
   }
-#else
-#define TYPED_ARRAY(name, type)                                          \
-  void name##ArrayBuildMeta(const GCCell *cell, Metadata::Builder &mb) { \
-    TypedArrayBaseBuildMeta(cell, mb);                                   \
-  }
-#endif // HERMESVM_SERIALIZE
 #include "hermes/VM/TypedArrays.def"
+#undef TYPED_ARRAY
 
 template <typename T, CellKind C>
 CallResult<Handle<JSTypedArrayBase>> JSTypedArray<T, C>::allocate(
-    Runtime *runtime,
+    Runtime &runtime,
     size_type length) {
-  Handle<JSTypedArray<T, C>> ta =
-      runtime->makeHandle<JSTypedArray<T, C>>(JSTypedArray<T, C>::create(
-          runtime, JSTypedArray<T, C>::getPrototype(runtime)));
+  Handle<JSTypedArrayBase> ta = runtime.makeHandle(JSTypedArray<T, C>::create(
+      runtime, JSTypedArray<T, C>::getPrototype(runtime)));
   if (JSTypedArrayBase::createBuffer(runtime, ta, length) ==
       ExecutionStatus::EXCEPTION) {
     return ExecutionStatus::EXCEPTION;
   }
-  return Handle<JSTypedArrayBase>::vmcast(ta);
+  return ta;
 }
 
 template <typename T, CellKind C>
-CallResult<Handle<JSTypedArrayBase>> JSTypedArray<T, C>::_allocateSpeciesImpl(
+CallResult<Handle<JSTypedArrayBase>> JSTypedArray<T, C>::allocateSpecies(
     Handle<JSTypedArrayBase> self,
-    Runtime *runtime,
+    Runtime &runtime,
     size_type length) {
   auto defaultConstructor = JSTypedArray<T, C>::getConstructor(runtime);
   auto possibleCons = speciesConstructor(self, runtime, defaultConstructor);
@@ -358,11 +356,11 @@ CallResult<Handle<JSTypedArrayBase>> JSTypedArray<T, C>::_allocateSpeciesImpl(
   auto callRes = Callable::executeConstruct1(
       *possibleCons,
       runtime,
-      runtime->makeHandle(HermesValue::encodeNumberValue(length)));
+      runtime.makeHandle(HermesValue::encodeNumberValue(length)));
   if (callRes == ExecutionStatus::EXCEPTION) {
     return ExecutionStatus::EXCEPTION;
   }
-  auto obj = runtime->makeHandle<JSObject>(callRes->get());
+  auto obj = runtime.makeHandle<JSObject>(callRes->get());
   // validate that the constructed object is a TypedArray.
   if (JSTypedArrayBase::validateTypedArray(runtime, obj) ==
       ExecutionStatus::EXCEPTION) {
@@ -373,14 +371,13 @@ CallResult<Handle<JSTypedArrayBase>> JSTypedArray<T, C>::_allocateSpeciesImpl(
 
 template <typename T, CellKind C>
 PseudoHandle<JSTypedArray<T, C>> JSTypedArray<T, C>::create(
-    Runtime *runtime,
+    Runtime &runtime,
     Handle<JSObject> parentHandle) {
-  auto *cell = runtime->makeAFixed<JSTypedArray<T, C>>(
+  auto *cell = runtime.makeAFixed<JSTypedArray<T, C>>(
       runtime,
       parentHandle,
-      runtime->getHiddenClassForPrototype(
-          *parentHandle,
-          numOverlapSlots<JSTypedArray>() + ANONYMOUS_PROPERTY_SLOTS));
+      runtime.getHiddenClassForPrototype(
+          *parentHandle, numOverlapSlots<JSTypedArray>()));
   return JSObjectInit::initToPseudoHandle(runtime, cell);
   // NOTE: If any fields are ever added beyond the base class, then the
   // *BuildMeta functions must be updated to call addJSObjectOverlapSlots.
@@ -395,26 +392,26 @@ PseudoHandle<JSTypedArray<T, C>> JSTypedArray<T, C>::create(
 #define TYPED_ARRAY(name, type)                                    \
   template <>                                                      \
   SymbolID JSTypedArray<type, CellKind::name##ArrayKind>::getName( \
-      Runtime *runtime) {                                          \
+      Runtime &runtime) {                                          \
     return Predefined::getSymbolID(Predefined::name##Array);       \
   }
 #include "hermes/VM/TypedArrays.def"
 
-#define TYPED_ARRAY(name, type)                                      \
-  template <>                                                        \
-  Handle<JSObject>                                                   \
-  JSTypedArray<type, CellKind::name##ArrayKind>::getPrototype(       \
-      const Runtime *runtime) {                                      \
-    return Handle<JSObject>::vmcast(&runtime->name##ArrayPrototype); \
+#define TYPED_ARRAY(name, type)                                     \
+  template <>                                                       \
+  Handle<JSObject>                                                  \
+  JSTypedArray<type, CellKind::name##ArrayKind>::getPrototype(      \
+      const Runtime &runtime) {                                     \
+    return Handle<JSObject>::vmcast(&runtime.name##ArrayPrototype); \
   }
 #include "hermes/VM/TypedArrays.def"
 
-#define TYPED_ARRAY(name, type)                                        \
-  template <>                                                          \
-  Handle<Callable>                                                     \
-  JSTypedArray<type, CellKind::name##ArrayKind>::getConstructor(       \
-      const Runtime *runtime) {                                        \
-    return Handle<Callable>::vmcast(&runtime->name##ArrayConstructor); \
+#define TYPED_ARRAY(name, type)                                       \
+  template <>                                                         \
+  Handle<Callable>                                                    \
+  JSTypedArray<type, CellKind::name##ArrayKind>::getConstructor(      \
+      const Runtime &runtime) {                                       \
+    return Handle<Callable>::vmcast(&runtime.name##ArrayConstructor); \
   }
 #include "hermes/VM/TypedArrays.def"
 
@@ -422,17 +419,15 @@ PseudoHandle<JSTypedArray<T, C>> JSTypedArray<T, C>::create(
 
 template <typename T, CellKind C>
 JSTypedArray<T, C>::JSTypedArray(
-    Runtime *runtime,
+    Runtime &runtime,
     Handle<JSObject> parent,
     Handle<HiddenClass> clazz)
-    : JSTypedArrayBase(runtime, &vt.base.base, parent, clazz) {
-  byteWidth_ = sizeof(T);
-}
+    : JSTypedArrayBase(runtime, parent, clazz) {}
 
 template <typename T, CellKind C>
 HermesValue JSTypedArray<T, C>::_getOwnIndexedImpl(
     JSObject *selfObj,
-    Runtime *runtime,
+    Runtime &runtime,
     uint32_t index) {
   auto *self = vmcast<JSTypedArray>(selfObj);
   if (LLVM_UNLIKELY(!self->attached(runtime))) {
@@ -449,7 +444,7 @@ HermesValue JSTypedArray<T, C>::_getOwnIndexedImpl(
 template <typename T, CellKind C>
 CallResult<bool> JSTypedArray<T, C>::_setOwnIndexedImpl(
     Handle<JSObject> selfHandle,
-    Runtime *runtime,
+    Runtime &runtime,
     uint32_t index,
     Handle<> value) {
   auto typedArrayHandle = Handle<JSTypedArray>::vmcast(selfHandle);
@@ -463,7 +458,7 @@ CallResult<bool> JSTypedArray<T, C>::_setOwnIndexedImpl(
     x = value->getNumber();
   }
   if (LLVM_UNLIKELY(!typedArrayHandle->attached(runtime))) {
-    return runtime->raiseTypeError(
+    return runtime.raiseTypeError(
         "Cannot set a value into a detached ArrayBuffer");
   }
   if (LLVM_LIKELY(index < typedArrayHandle->getLength())) {
@@ -480,5 +475,3 @@ CallResult<bool> JSTypedArray<T, C>::_setOwnIndexedImpl(
 
 } // namespace vm
 } // namespace hermes
-
-#undef DEBUG_TYPE

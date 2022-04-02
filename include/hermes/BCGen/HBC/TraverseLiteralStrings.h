@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -26,12 +26,14 @@ namespace hbc {
 /// ID for a string that has not been traversed in this way (if assertions have
 /// been enabled).
 
-/// Calls \p traversal with the function name of every function in bytecode
-/// module \p M that passes the predicate \p shouldVisitFunction.
-void traverseFunctionNames(
+/// Walk every function in the bytecode module \p M that passes the predicate \p
+/// shouldVisitFunction, calling \p traversal for their source code
+/// representations and, if not \p stripFunctionNames, names.
+void traverseFunctions(
     Module *M,
     std::function<bool(Function *)> shouldVisitFunction,
-    std::function<void(llvh::StringRef)> traversal);
+    std::function<void(llvh::StringRef)> traversal,
+    bool stripFunctionNames);
 
 /// Calls \p traversal with the name of the CommonJS module of every function
 /// in bytecode module \p M that passes the predicate \p shouldVisitFunction.

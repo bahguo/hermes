@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -9,8 +9,6 @@
 #define HERMES_VM_PROPERTYDESCRIPTOR_H
 
 #include <cstdint>
-
-#include "hermes/VM/Deserializer.h"
 
 namespace hermes {
 namespace vm {
@@ -71,13 +69,6 @@ struct PropertyFlags {
   PropertyFlags() {
     _flags = 0;
   }
-
-#ifdef HERMESVM_SERIALIZE
-  /// Fast constructor used by Deserializer. Read data from the stream directly.
-  PropertyFlags(Deserializer &d) {
-    d.readData(&_flags, sizeof(PropertyFlags));
-  }
-#endif
 
   void clear() {
     _flags = 0;

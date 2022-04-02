@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -307,11 +307,6 @@ opt<bool> EmitAsyncBreakCheck(
     init(false),
     cat(CompilerCategory));
 
-opt<bool> AllowFunctionToString(
-    "allow-function-to-string",
-    init(false),
-    desc("Enables Function.toString() to return source-code when available"));
-
 opt<bool> OptimizedEval(
     "optimized-eval",
     desc("Turn on compiler optimizations in eval."),
@@ -452,6 +447,14 @@ static opt<bool> ParseFlow(
     cat(CompilerCategory));
 #endif
 
+#if HERMES_PARSE_TS
+static opt<bool> ParseTS(
+    "parse-ts",
+    desc("Parse TypeScript"),
+    init(false),
+    cat(CompilerCategory));
+#endif
+
 static CLFlag StaticRequire(
     'f',
     "static-require",
@@ -504,13 +507,6 @@ static opt<bool> ReusePropCache(
 static CLFlag
     Inline('f', "inline", true, "inlining of functions", CompilerCategory);
 
-static CLFlag Outline(
-    'f',
-    "outline",
-    false,
-    "IR outlining to reduce code size",
-    CompilerCategory);
-
 static CLFlag StripFunctionNames(
     'f',
     "strip-function-names",
@@ -518,12 +514,12 @@ static CLFlag StripFunctionNames(
     "Strip function names to reduce string table size",
     CompilerCategory);
 
-static CLFlag EnableTDZ(
-    'f',
-    "enable-tdz",
-    true,
-    "Enable TDZ checks for let/const",
-    CompilerCategory);
+static opt<bool> EnableTDZ(
+    "Xenable-tdz",
+    init(false),
+    Hidden,
+    desc("UNSUPPORTED: Enable TDZ checks for let/const"),
+    cat(CompilerCategory));
 
 #define WARNING_CATEGORY(name, specifier, description) \
   static CLFlag name##Warning(                         \
@@ -550,6 +546,13 @@ static opt<bool> InstrumentIR(
     init(false),
     Hidden,
     cat(CompilerCategory));
+
+static CLFlag UseUnsafeIntrinsics(
+    'f',
+    "unsafe-intrinsics",
+    false,
+    "Recognize and lower Asm.js/Wasm unsafe compiler intrinsics.",
+    CompilerCategory);
 } // namespace cl
 
 namespace {
@@ -1040,8 +1043,6 @@ std::shared_ptr<Context> createContext(
 
   optimizationOpts.inlining = cl::OptimizationLevel != cl::OptLevel::O0 &&
       cl::BytecodeFormat == cl::BytecodeFormatKind::HBC && cl::Inline;
-  optimizationOpts.outlining =
-      cl::OptimizationLevel != cl::OptLevel::O0 && cl::Outline;
 
   optimizationOpts.reusePropCache = cl::ReusePropCache;
 
@@ -1050,6 +1051,8 @@ std::shared_ptr<Context> createContext(
   optimizationOpts.staticBuiltins =
       cl::StaticBuiltins == cl::StaticBuiltinSetting::ForceOn;
   optimizationOpts.staticRequire = cl::StaticRequire;
+
+  optimizationOpts.useUnsafeIntrinsics = cl::UseUnsafeIntrinsics;
 
   auto context = std::make_shared<Context>(
       codeGenOpts,
@@ -1110,6 +1113,12 @@ std::shared_ptr<Context> createContext(
 #if HERMES_PARSE_FLOW
   if (cl::ParseFlow) {
     context->setParseFlow(ParseFlowSetting::ALL);
+  }
+#endif
+
+#if HERMES_PARSE_TS
+  if (cl::ParseTS) {
+    context->setParseTS(true);
   }
 #endif
 
@@ -1805,10 +1814,6 @@ CompileResult processSourceFiles(
     }
   }
 
-  // Allows Function.toString() to return original source code. As with lazy
-  // compilation this requires source buffers to be retained after compilation.
-  context->setAllowFunctionToStringWithRuntimeSource(cl::AllowFunctionToString);
-
   // Create the source map if requested.
   llvh::Optional<SourceMapGenerator> sourceMapGen{};
   if (cl::OutputSourceMap) {
@@ -1993,9 +1998,9 @@ CompileResult processSourceFiles(
     for (const auto segment : context->getSegments()) {
       std::string filename = base.str();
       if (segment != 0) {
-        filename += "." + oscompat::to_string(segment);
+        filename += "." + std::to_string(segment);
       }
-      std::string flavor = "hbc-seg-" + oscompat::to_string(segment);
+      std::string flavor = "hbc-seg-" + std::to_string(segment);
 
       OutputStream fileOS{llvh::outs()};
       if (!base.empty() && !fileOS.open(filename, F_None)) {

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -18,70 +18,39 @@ inline Handle<HermesValue> HandleRootOwner::makeHandle(HermesValue value) {
   // This is the same as Handle<HermesValue>(getTopGCScope(), value), but it's
   // this way for historical reasons.  The source could be updated for clarity
   // if the generated code doesn't change.
-  return Handle<HermesValue>(this, value);
+  return Handle<HermesValue>(*this, value);
 }
 template <class T>
 inline Handle<T> HandleRootOwner::makeHandle(T *p) {
-  return Handle<T>(this, p);
+  return Handle<T>(*this, p);
 }
 template <class T>
 inline Handle<T> HandleRootOwner::makeHandle(HermesValue value) {
-  return Handle<T>(this, vmcast<T>(value));
+  return Handle<T>(*this, vmcast<T>(value));
 }
 inline Handle<SymbolID> HandleRootOwner::makeHandle(SymbolID value) {
-  return Handle<SymbolID>(this, value);
+  return Handle<SymbolID>(*this, value);
 }
 template <class T>
 inline Handle<T> HandleRootOwner::makeHandle(PseudoHandle<T> &&pseudo) {
-  Handle<T> res{this, pseudo.get()};
+  Handle<T> res{*this, pseudo.get()};
   pseudo.invalidate();
   return res;
 }
 template <class T>
 inline Handle<T> HandleRootOwner::makeHandle(
     PseudoHandle<HermesValue> &&pseudo) {
-  Handle<T> res{this, PseudoHandle<T>::vmcast(std::move(pseudo)).get()};
-  return res;
-}
-
-inline Handle<HermesValue> HandleRootOwner::makeHandleInParentScope(
-    HermesValue value) {
-  return Handle<HermesValue>(getTopGCScopesParent(), value);
-}
-template <class T>
-inline Handle<T> HandleRootOwner::makeHandleInParentScope(T *p) {
-  return Handle<T>(getTopGCScopesParent(), p);
-}
-template <class T>
-inline Handle<T> HandleRootOwner::makeHandleInParentScope(HermesValue value) {
-  return Handle<T>(getTopGCScopesParent(), vmcast<T>(value));
-}
-inline Handle<SymbolID> HandleRootOwner::makeHandleInParentScope(
-    SymbolID value) {
-  return Handle<SymbolID>(getTopGCScopesParent(), value);
-}
-template <class T>
-inline Handle<T> HandleRootOwner::makeHandleInParentScope(
-    PseudoHandle<T> &&pseudo) {
-  Handle<T> res{getTopGCScopesParent(), pseudo.get()};
-  pseudo.invalidate();
-  return res;
-}
-template <class T>
-inline Handle<T> HandleRootOwner::makeHandleInParentScope(
-    PseudoHandle<HermesValue> &&pseudo) {
-  Handle<T> res{
-      getTopGCScopesParent(), PseudoHandle<T>::vmcast(std::move(pseudo)).get()};
+  Handle<T> res{*this, PseudoHandle<T>::vmcast(std::move(pseudo)).get()};
   return res;
 }
 
 inline MutableHandle<HermesValue> HandleRootOwner::makeMutableHandle(
     HermesValue value) {
-  return MutableHandle<HermesValue>(this, value);
+  return MutableHandle<HermesValue>(*this, value);
 }
 template <class T>
 inline MutableHandle<T> HandleRootOwner::makeMutableHandle(T *p) {
-  return MutableHandle<T>(this, p);
+  return MutableHandle<T>(*this, p);
 }
 
 template <class T>
@@ -119,10 +88,6 @@ inline Handle<HermesValue> HandleRootOwner::getNegOneValue() {
 
 inline GCScope *HandleRootOwner::getTopGCScope() {
   return topGCScope_;
-}
-inline GCScope *HandleRootOwner::getTopGCScopesParent() {
-  assert(topGCScope_ && "trying to obtain the parent of NULL scope");
-  return topGCScope_->getParentScope();
 }
 
 inline PinnedHermesValue *HandleRootOwner::newPinnedHermesValue(

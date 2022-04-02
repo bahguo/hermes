@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -103,7 +103,7 @@ TEST_F(SynthTraceParserTest, RuntimeConfigDefaults) {
 
   EXPECT_EQ(rtconf.getGCConfig().getMinHeapSize(), 0);
   EXPECT_EQ(rtconf.getGCConfig().getInitHeapSize(), 33554432);
-  EXPECT_EQ(rtconf.getGCConfig().getMaxHeapSize(), 536870912);
+  EXPECT_EQ(rtconf.getGCConfig().getMaxHeapSize(), 3221225472);
   EXPECT_FALSE(rtconf.getEnableSampledStats());
 }
 

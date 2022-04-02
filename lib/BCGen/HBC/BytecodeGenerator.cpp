@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -7,19 +7,12 @@
 
 #include "hermes/BCGen/HBC/BytecodeGenerator.h"
 
-#include "hermes/BCGen/HBC/ConsecutiveStringStorage.h"
 #include "hermes/FrontEndDefs/Builtins.h"
-#include "hermes/Support/OSCompat.h"
-#include "hermes/Support/UTF8.h"
 
 #include "llvh/ADT/SmallString.h"
 #include "llvh/Support/Format.h"
-#include "llvh/Support/raw_ostream.h"
 
-#include <locale>
 #include <unordered_map>
-
-using hermes::oscompat::to_string;
 
 namespace hermes {
 namespace hbc {
@@ -103,20 +96,48 @@ BytecodeFunctionGenerator::generateBytecodeFunction(
   if (!complete_) {
     bytecodeGenerationComplete();
   }
-  return std::unique_ptr<BytecodeFunction>(new BytecodeFunction(
-      std::move(opcodes_),
-      definitionKind,
-      valueKind,
-      strictMode,
-      FunctionHeader(
-          bytecodeSize_,
-          paramCount,
-          frameSize_,
-          environmentSize,
-          nameID,
-          highestReadCacheIndex_,
-          highestWriteCacheIndex_),
-      std::move(exceptionHandlers_)));
+
+  FunctionHeader header{
+      bytecodeSize_,
+      paramCount,
+      frameSize_,
+      environmentSize,
+      nameID,
+      highestReadCacheIndex_,
+      highestWriteCacheIndex_};
+
+  switch (definitionKind) {
+    case Function::DefinitionKind::ES6Arrow:
+    case Function::DefinitionKind::ES6Method:
+      header.flags.prohibitInvoke = FunctionHeaderFlag::ProhibitConstruct;
+      break;
+    case Function::DefinitionKind::ES6Constructor:
+      header.flags.prohibitInvoke = FunctionHeaderFlag::ProhibitCall;
+      break;
+    default:
+      // ES9.0 9.2.3 step 4 states that generator functions and async
+      // functions cannot be constructed.
+      // We place this check outside the `DefinitionKind` because generator
+      // functions may also be ES6 methods, for example, and are not included
+      // in the DefinitionKind enum.
+      // Note that we only have to check for GeneratorFunctionKind in this
+      // case, because ES6 methods are already checked above, and ES6
+      // constructors are prohibited from being generator functions.
+      // As such, this is the only case in which we must change the
+      // prohibitInvoke flag based on valueKind.
+      header.flags.prohibitInvoke =
+          (valueKind == ValueKind::GeneratorFunctionKind ||
+           valueKind == ValueKind::AsyncFunctionKind)
+          ? FunctionHeaderFlag::ProhibitConstruct
+          : FunctionHeaderFlag::ProhibitNone;
+      break;
+  }
+
+  header.flags.strictMode = strictMode;
+  header.flags.hasExceptionHandler = exceptionHandlers_.size();
+
+  return std::make_unique<BytecodeFunction>(
+      std::move(opcodes_), std::move(header), std::move(exceptionHandlers_));
 }
 
 unsigned BytecodeFunctionGenerator::getFunctionID(Function *F) {
@@ -126,12 +147,7 @@ unsigned BytecodeFunctionGenerator::getFunctionID(Function *F) {
 void BytecodeFunctionGenerator::shrinkJump(offset_t loc) {
   // We are shrinking a long jump into a short jump.
   // The size of operand reduces from 4 bytes to 1 byte, a delta of 3.
-  const static int ShrinkOffset = 3;
-  std::rotate(
-      opcodes_.begin() + loc,
-      opcodes_.begin() + loc + ShrinkOffset,
-      opcodes_.end());
-  opcodes_.resize(opcodes_.size() - ShrinkOffset);
+  opcodes_.erase(opcodes_.begin() + loc, opcodes_.begin() + loc + 3);
 
   // Change this instruction from long jump to short jump.
   longToShortJump(loc - 1);
@@ -235,6 +251,12 @@ void BytecodeModuleGenerator::addCJSModuleStatic(
   cjsModulesStatic_.push_back({moduleID, functionID});
 }
 
+void BytecodeModuleGenerator::addFunctionSource(
+    uint32_t functionID,
+    uint32_t stringID) {
+  functionSourceTable_.push_back({functionID, stringID});
+}
+
 std::unique_ptr<BytecodeModule> BytecodeModuleGenerator::generate() {
   assert(
       valid_ &&
@@ -267,6 +289,7 @@ std::unique_ptr<BytecodeModule> BytecodeModuleGenerator::generate() {
       segmentID_,
       std::move(cjsModules_),
       std::move(cjsModulesStatic_),
+      std::move(functionSourceTable_),
       bytecodeOptions)};
 
   DebugInfoGenerator debugInfoGen{std::move(filenameTable_)};
@@ -274,7 +297,6 @@ std::unique_ptr<BytecodeModule> BytecodeModuleGenerator::generate() {
   const uint32_t strippedFunctionNameId =
       options_.stripFunctionNames ? getStringID(kStrippedFunctionName) : 0;
   auto functions = functionIDMap_.getElements();
-  std::shared_ptr<Context> contextIfNeeded;
   for (unsigned i = 0, e = functions.size(); i < e; ++i) {
     auto *F = functions[i];
     auto &BFG = *functionGenerators_[F];
@@ -291,26 +313,11 @@ std::unique_ptr<BytecodeModule> BytecodeModuleGenerator::generate() {
         F->getFunctionScope()->getVariables().size(),
         functionNameId);
 
-#ifndef HERMESVM_LEAN
-    if (F->getParent()
-            ->shareContext()
-            ->allowFunctionToStringWithRuntimeSource() ||
-        F->isLazy()) {
-      auto context = F->getParent()->shareContext();
-      assert(
-          (!contextIfNeeded || contextIfNeeded.get() == context.get()) &&
-          "Different instances of Context seen");
-      contextIfNeeded = context;
-      BM->setFunctionSourceRange(i, F->getSourceRange());
-    }
-#endif
-
     if (F->isLazy()) {
-#ifdef HERMESVM_LEAN
-      llvm_unreachable("Lazy support compiled out");
-#else
       auto lazyData = std::make_unique<LazyCompilationData>();
+      lazyData->context = F->getParent()->shareContext();
       lazyData->parentScope = F->getLazyScope();
+      lazyData->span = F->getLazySource().functionRange;
       lazyData->nodeKind = F->getLazySource().nodeKind;
       lazyData->paramYield = F->getLazySource().paramYield;
       lazyData->paramAwait = F->getLazySource().paramAwait;
@@ -321,7 +328,6 @@ std::unique_ptr<BytecodeModule> BytecodeModuleGenerator::generate() {
           : Identifier();
       lazyData->strictMode = F->isStrictMode();
       func->setLazyCompilationData(std::move(lazyData));
-#endif
     }
 
     if (BFG.hasDebugInfo()) {
@@ -333,8 +339,6 @@ std::unique_ptr<BytecodeModule> BytecodeModuleGenerator::generate() {
     }
     BM->setFunction(i, std::move(func));
   }
-
-  BM->setContext(contextIfNeeded);
 
   BM->setDebugInfo(debugInfoGen.serializeWithMove());
   return BM;

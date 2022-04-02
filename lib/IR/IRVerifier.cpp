@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -343,9 +343,7 @@ void Verifier::visitAsInt32Inst(const AsInt32Inst &Inst) {
   Assert(
       !isTerminator(&Inst),
       "Non-terminator cannot be the last instruction of a basic block");
-  Assert(
-      Inst.getType() == Type::createNumber(),
-      "AsInt32Inst must return a number type");
+  Assert(Inst.getType().isInt32Type(), "AsInt32Inst must return an Int32 type");
 }
 
 void Verifier::visitAddEmptyStringInst(const AddEmptyStringInst &Inst) {
@@ -455,6 +453,14 @@ void Verifier::visitGetBuiltinClosureInst(GetBuiltinClosureInst const &Inst) {
       Inst.getBuiltinIndex() < BuiltinMethod::_count &&
       "Out of bound BuiltinMethod index.");
 }
+
+#ifdef HERMES_RUN_WASM
+void Verifier::visitCallIntrinsicInst(CallIntrinsicInst const &Inst) {
+  assert(
+      Inst.getIntrinsicsIndex() < WasmIntrinsics::_count &&
+      "Out of bound Unsafe Compiler Intrinsics Index.");
+}
+#endif
 
 void Verifier::visitHBCCallDirectInst(HBCCallDirectInst const &Inst) {
   Assert(
@@ -752,6 +758,13 @@ void Verifier::visitHBCAllocObjectFromBufferInst(
   Assert(
       Inst.getKeyValuePairCount() > 0,
       "Cannot allocate an empty HBCAllocObjectFromBufferInst");
+}
+
+void Verifier::visitAllocObjectLiteralInst(
+    const hermes::AllocObjectLiteralInst &Inst) {
+  Assert(
+      Inst.getKeyValuePairCount() > 0,
+      "Cannot allocate an empty AllocObjectLiteralInst");
 }
 
 void Verifier::visitHBCGetGlobalObjectInst(const HBCGetGlobalObjectInst &Inst) {

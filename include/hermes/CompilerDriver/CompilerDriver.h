@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -96,7 +96,6 @@ extern llvh::cl::opt<bool> BasicBlockProfiling;
 extern llvh::cl::opt<bool> EnableEval;
 extern llvh::cl::opt<bool> VerifyIR;
 extern llvh::cl::opt<bool> EmitAsyncBreakCheck;
-extern llvh::cl::opt<bool> AllowFunctionToString;
 extern llvh::cl::list<std::string> InputFilenames;
 extern llvh::cl::opt<bool> OptimizedEval;
 extern llvh::cl::opt<bool> EmitAsyncBreakCheck;

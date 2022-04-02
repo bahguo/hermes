@@ -1,4 +1,4 @@
-# Copyright (c) Facebook, Inc. and its affiliates.
+# Copyright (c) Meta Platforms, Inc. and affiliates.
 #
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
@@ -31,12 +31,9 @@ add_hermes_library(hermesSupport
         SNPrintfBuf.cpp
         SourceErrorManager.cpp
         SimpleDiagHandler.cpp
-        StringKind.cpp
         StringTable.cpp
         UTF8.cpp
         UTF16Stream.cpp
         LEB128.cpp
         LINK_LIBS ${link_libs}
 )
-
-hermes_link_icu(hermesSupport)

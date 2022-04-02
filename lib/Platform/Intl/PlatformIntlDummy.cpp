@@ -1,13 +1,11 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
  */
 
 #include "hermes/Platform/Intl/PlatformIntl.h"
-
-#if HERMES_PLATFORM_INTL == HERMES_PLATFORM_INTL_DUMMY
 
 #include <deque>
 #include <string>
@@ -20,19 +18,19 @@ namespace hermes {
 namespace platform_intl {
 
 vm::CallResult<std::vector<std::u16string>> getCanonicalLocales(
-    vm::Runtime *runtime,
+    vm::Runtime &runtime,
     const std::vector<std::u16string> &locales) {
   return std::vector<std::u16string>{u"fr-FR", u"es-ES"};
 }
 
 vm::CallResult<std::u16string> toLocaleLowerCase(
-    vm::Runtime *runtime,
+    vm::Runtime &runtime,
     const std::vector<std::u16string> &locales,
     const std::u16string &str) {
   return std::u16string(u"lowered");
 }
 vm::CallResult<std::u16string> toLocaleUpperCase(
-    vm::Runtime *runtime,
+    vm::Runtime &runtime,
     const std::vector<std::u16string> &locales,
     const std::u16string &str) {
   return std::u16string(u"uppered");
@@ -46,14 +44,14 @@ Collator::Collator() : impl_(std::make_unique<Impl>()) {}
 Collator::~Collator() {}
 
 vm::CallResult<std::vector<std::u16string>> Collator::supportedLocalesOf(
-    vm::Runtime *runtime,
+    vm::Runtime &runtime,
     const std::vector<std::u16string> &locales,
     const Options &options) noexcept {
   return std::vector<std::u16string>{u"en-CA", u"de-DE"};
 }
 
 vm::ExecutionStatus Collator::initialize(
-    vm::Runtime *runtime,
+    vm::Runtime &runtime,
     const std::vector<std::u16string> &locales,
     const Options &options) noexcept {
   impl_->locale = u"en-US";
@@ -81,14 +79,14 @@ DateTimeFormat::DateTimeFormat() : impl_(std::make_unique<Impl>()) {}
 DateTimeFormat::~DateTimeFormat() {}
 
 vm::CallResult<std::vector<std::u16string>> DateTimeFormat::supportedLocalesOf(
-    vm::Runtime *runtime,
+    vm::Runtime &runtime,
     const std::vector<std::u16string> &locales,
     const Options &options) noexcept {
   return std::vector<std::u16string>{u"en-CA", u"de-DE"};
 }
 
 vm::ExecutionStatus DateTimeFormat::initialize(
-    vm::Runtime *runtime,
+    vm::Runtime &runtime,
     const std::vector<std::u16string> &locales,
     const Options &options) noexcept {
   impl_->locale = u"en-US";
@@ -125,14 +123,14 @@ NumberFormat::NumberFormat() : impl_(std::make_unique<Impl>()) {}
 NumberFormat::~NumberFormat() {}
 
 vm::CallResult<std::vector<std::u16string>> NumberFormat::supportedLocalesOf(
-    vm::Runtime *runtime,
+    vm::Runtime &runtime,
     const std::vector<std::u16string> &locales,
     const Options &options) noexcept {
   return std::vector<std::u16string>{u"en-CA", u"de-DE"};
 }
 
 vm::ExecutionStatus NumberFormat::initialize(
-    vm::Runtime *runtime,
+    vm::Runtime &runtime,
     const std::vector<std::u16string> &locales,
     const Options &options) noexcept {
   impl_->locale = u"en-US";
@@ -163,5 +161,3 @@ NumberFormat::formatToParts(double number) noexcept {
 
 } // namespace platform_intl
 } // namespace hermes
-
-#endif

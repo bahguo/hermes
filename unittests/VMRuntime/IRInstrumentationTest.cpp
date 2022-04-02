@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -28,7 +28,6 @@ class IRInstrumentationTest : public ::testing::Test {
   CallResult<HermesValue> run(llvh::StringRef ref, bool instrument) {
     CompileFlags flags;
     flags.instrumentIR = instrument;
-    flags.optimize = false;
     auto result = runtime_->run(ref, "IRInstrumentationTest.cpp", flags);
     EXPECT_EQ(ExecutionStatus::RETURNED, result.getStatus());
     return result;

@@ -1,4 +1,4 @@
-# Copyright (c) Facebook, Inc. and its affiliates.
+# Copyright (c) Meta Platforms, Inc. and affiliates.
 #
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
@@ -21,8 +21,6 @@ target_link_libraries(hermesc
   hermesParser
   hermesSupport
 )
-
-hermes_link_icu(hermesc)
 
 # The Hermes compiler is used as part of the build of the VM.
 # During cross-compilation, the compiler needs to be built for the host system,

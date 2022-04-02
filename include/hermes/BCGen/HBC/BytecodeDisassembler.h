@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -37,7 +37,7 @@ void decodeOperand(const uint8_t *operandBuf, T *val) {
   }
 
   if (std::is_same<T, double>::value) {
-    *val = safeTypeCast<param_t, double>(ret);
+    *val = llvh::BitsToDouble(ret);
   } else {
     *val = ret;
   }
@@ -301,6 +301,10 @@ class BytecodeDisassembler {
   /// Print the contents of the CJS module table to \p OS,
   /// if it contains any entries.
   void disassembleCJSModuleTable(raw_ostream &OS);
+
+  /// Print the contents of the function source table to \p OS,
+  /// if it contains any entries.
+  void disassembleFunctionSourceTable(raw_ostream &OS);
 
   /// Print the content of the exception handler table into \p OS.
   void disassembleExceptionHandlers(unsigned funcId, raw_ostream &OS);

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -35,13 +35,24 @@ using llvh::SMLoc;
 using llvh::SMRange;
 
 class Node;
+/// This is a string which is guaranteed to contain only valid Unicode
+/// characters when decoded. In particular no mismatched surrogate pairs.
+/// It is encoded with our "modified" utf-8 encoding, where parts of surrogate
+/// pairs are encoded as separate characters. So, it does NOT represent valid
+/// utf-8. To turn it into valid utf-8 it must be reencoded.
 using NodeLabel = UniqueString *;
+/// This is a JS string, which is a sequence of arbitrary 16-bit values, which
+/// may or may not represent a valid utf-16 string.
+/// It is encoded with our "modified" utf-8 encoding, where each separate 16-bit
+/// value is encoded as a separate character. There are no guarantees about the
+/// validity.
+using NodeString = UniqueString *;
 using NodeBoolean = bool;
 using NodeNumber = double;
 using NodePtr = Node *;
 using NodeList = llvh::simple_ilist<Node>;
 
-enum class NodeKind {
+enum class NodeKind : uint32_t {
 #define ESTREE_FIRST(NAME, ...) _##NAME##_First,
 #define ESTREE_LAST(NAME) _##NAME##_Last,
 #define ESTREE_NODE_0_ARGS(NAME, ...) NAME,
@@ -247,9 +258,12 @@ class FunctionLikeDecoration {
 
  public:
   Strictness strictness{Strictness::NotSet};
-  /// Whether this function was a method definiton rather than using 'function'.
-  /// Note that getters and setters are also considered method definitions,
-  /// as they do not use the keyword 'function'.
+  SourceVisibility sourceVisibility{SourceVisibility::Default};
+
+  /// Whether this function was a method definition rather than using
+  /// 'function'. Note that getters and setters are also considered method
+  /// definitions, as they do not use the keyword 'function'.
+  /// This is used for lazy reparsing of the function.
   bool isMethodDefinition{false};
 
   void setSemInfo(sem::FunctionInfo *semInfo) {
@@ -925,6 +939,78 @@ struct NodeKindInfo : llvh::DenseMapInfo<NodeKind> {
 };
 
 using NodeKindSet = llvh::DenseSet<ESTree::NodeKind, NodeKindInfo>;
+
+/// An arbitrary limit to nested assignments. We handle them non-recursively, so
+/// this can be very large, but we don't want to let it consume all our memory.
+constexpr unsigned MAX_NESTED_ASSIGNMENTS = 30000;
+
+/// An arbitrary limit to nested "+/-" binary expressions. We handle them
+/// non-recursively, so this can be very large, but we don't want to let it
+/// consume all our memory.
+constexpr unsigned MAX_NESTED_BINARY = 30000;
+
+/// Check if an AST node is of the specified type and its `_operator`
+/// attribute is within the set of allowed operators.
+template <class N>
+static N *checkExprOperator(ESTree::Node *e, llvh::ArrayRef<StringRef> ops) {
+  if (auto *n = llvh::dyn_cast<N>(e)) {
+    if (std::find(ops.begin(), ops.end(), n->_operator->str()) != ops.end())
+      return n;
+  }
+  return nullptr;
+}
+
+/// Convert a recursive expression of the form ((a + b) + c) + d) into a list
+/// `a, b, c, d`. This description of the list is for exposition purposes, but
+/// the actual list contains pointers to each binop node:
+///    `list = [(a + b), (list[0] + c), (list[1] + d)`.
+/// Note that the list is only three elements long and the first element is
+/// accessible through the `_left` pointer of `list[0]`.
+///
+/// \param ops - the acceptable values for the `_operator` attribute of the
+///     expression. Ideally it should contain all operators with the same
+///     precedence: ["+", "-"] or ["*", "/", "%"], etc.
+template <class N>
+static llvh::SmallVector<N *, 1> linearizeLeft(
+    N *e,
+    llvh::ArrayRef<StringRef> ops) {
+  llvh::SmallVector<N *, 1> vec;
+
+  vec.push_back(e);
+  while (auto *left = checkExprOperator<N>(e->_left, ops)) {
+    e = left;
+    vec.push_back(e);
+  }
+
+  std::reverse(vec.begin(), vec.end());
+  return vec;
+}
+
+/// Convert a recursive expression of the form (a = (b = (c = d))) into a list
+/// `a, b, c, d`. This description of the list is for exposition purposes, but
+/// the actual list contains pointers to each node:
+///    `list = [(a = list[1]), (b = list[2]), (c = d)]`.
+/// Note that the list is only three elements long and the last element is
+/// accessible through the `_right` pointer of `list[2]`.
+///
+/// \param ops - the acceptable values for the `_operator` attribute of the
+///     expression. Ideally it should contain all operators with the same
+///     precedence, but can also be a single operator like ["="], if the caller
+///     doesn't want to deal with the complexity.
+template <class N>
+static llvh::SmallVector<N *, 1> linearizeRight(
+    N *e,
+    llvh::ArrayRef<StringRef> ops) {
+  llvh::SmallVector<N *, 1> vec;
+
+  vec.push_back(e);
+  while (auto *right = checkExprOperator<N>(e->_right, ops)) {
+    e = right;
+    vec.push_back(e);
+  }
+
+  return vec;
+}
 
 } // namespace ESTree
 } // namespace hermes

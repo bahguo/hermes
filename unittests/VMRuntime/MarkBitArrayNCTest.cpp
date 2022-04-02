@@ -1,11 +1,11 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
  */
 
-#ifdef HERMESVM_GC_NONCONTIG_GENERATIONAL
+#ifndef HERMESVM_GC_MALLOC
 
 #include "gtest/gtest.h"
 
@@ -241,4 +241,4 @@ TEST_F(MarkBitArrayNCTest, PrevUnmarkedBit) {
 
 } // namespace
 
-#endif // HERMESVM_GC_NONCONTIG_GENERATIONAL
+#endif // !HERMESVM_GC_MALLOC

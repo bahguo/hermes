@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -35,7 +35,7 @@ struct SlotAcceptor {
   virtual void accept(GCPointerBase &ptr) = 0;
   virtual void accept(GCHermesValue &hv) = 0;
   virtual void accept(GCSmallHermesValue &hv) = 0;
-  virtual void accept(GCSymbolID sym) = 0;
+  virtual void accept(const GCSymbolID &sym) = 0;
 };
 
 /// Weak references are typically slower to find, and need to be done separately
@@ -63,7 +63,9 @@ struct RootSectionAcceptor {
 struct RootAcceptor : public RootSectionAcceptor {
   virtual void accept(GCCell *&ptr) = 0;
   virtual void accept(PinnedHermesValue &hv) = 0;
-  virtual void accept(RootSymbolID sym) = 0;
+  /// Same as the above, but allows the HermesValue to store a nullptr value.
+  virtual void acceptNullable(PinnedHermesValue &hv) = 0;
+  virtual void accept(const RootSymbolID &sym) = 0;
 
   /// When we want to call an acceptor on "raw" root pointers of
   /// some JSObject subtype T, this method does the necessary
@@ -89,12 +91,16 @@ struct RootAndSlotAcceptorWithNames : public RootAndSlotAcceptor {
   void accept(PinnedHermesValue &hv) final {
     accept(hv, nullptr);
   }
+  void acceptNullable(PinnedHermesValue &hv) final {
+    acceptNullable(hv, nullptr);
+  }
   virtual void accept(PinnedHermesValue &hv, const char *name) = 0;
+  virtual void acceptNullable(PinnedHermesValue &hv, const char *name) = 0;
 
-  void accept(RootSymbolID sym) final {
+  void accept(const RootSymbolID &sym) final {
     accept(sym, nullptr);
   }
-  virtual void accept(RootSymbolID sym, const char *name) = 0;
+  virtual void accept(const RootSymbolID &sym, const char *name) = 0;
 
   using RootAndSlotAcceptor::acceptPtr;
   template <typename T>
@@ -117,17 +123,17 @@ struct RootAndSlotAcceptorWithNames : public RootAndSlotAcceptor {
   }
   virtual void accept(GCSmallHermesValue &hv, const char *name) = 0;
 
-  void accept(GCSymbolID sym) final {
+  void accept(const GCSymbolID &sym) final {
     accept(sym, nullptr);
   }
-  virtual void accept(GCSymbolID sym, const char *name) = 0;
+  virtual void accept(const GCSymbolID &sym, const char *name) = 0;
 
   /// Initiate the callback if this acceptor is part of heap snapshots.
   virtual void provideSnapshot(
       const std::function<void(HeapSnapshot &)> &func) {}
 };
 
-struct WeakRootAcceptor : public WeakRefAcceptor, RootSectionAcceptor {
+struct WeakRootAcceptor : RootSectionAcceptor {
   ~WeakRootAcceptor() override = default;
 
   /// NOTE: This is called acceptWeak in order to avoid clashing with accept
@@ -157,6 +163,9 @@ struct DroppingAcceptor final : public RootAndSlotAcceptorWithNames {
   void accept(PinnedHermesValue &hv, const char *) override {
     acceptor.accept(hv);
   }
+  void acceptNullable(PinnedHermesValue &hv, const char *) override {
+    acceptor.acceptNullable(hv);
+  }
 
   void accept(GCHermesValue &hv, const char *) override {
     acceptor.accept(hv);
@@ -166,11 +175,11 @@ struct DroppingAcceptor final : public RootAndSlotAcceptorWithNames {
     acceptor.accept(hv);
   }
 
-  void accept(RootSymbolID sym, const char *) override {
+  void accept(const RootSymbolID &sym, const char *) override {
     acceptor.accept(sym);
   }
 
-  void accept(GCSymbolID sym, const char *) override {
+  void accept(const GCSymbolID &sym, const char *) override {
     acceptor.accept(sym);
   }
 };

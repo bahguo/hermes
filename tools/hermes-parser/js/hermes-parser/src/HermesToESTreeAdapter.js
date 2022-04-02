@@ -1,23 +1,38 @@
 /**
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
  *
+ * @flow
  * @format
  */
 
-'use strict';
+/*
+This class does some very "javascripty" things in the name of
+performance which are ultimately impossible to soundly type.
 
-const HermesASTAdapter = require('./HermesASTAdapter');
+So instead of adding strict types and a large number of suppression
+comments, instead it is left untyped and subclasses are strictly
+typed via a separate flow declaration file.
+*/
 
-class HermesToESTreeAdapter extends HermesASTAdapter {
-  constructor(options, code) {
+import type {HermesNode} from './HermesAST';
+import type {ParserOptions} from './ParserOptions';
+
+import HermesASTAdapter from './HermesASTAdapter';
+
+declare var BigInt: ?(value: $FlowFixMe) => mixed;
+
+export default class HermesToESTreeAdapter extends HermesASTAdapter {
+  +code: string;
+
+  constructor(options: ParserOptions, code: string) {
     super(options);
     this.code = code;
   }
 
-  fixSourceLocation(node) {
+  fixSourceLocation(node: HermesNode): void {
     const loc = node.loc;
     if (loc == null) {
       return;
@@ -32,7 +47,7 @@ class HermesToESTreeAdapter extends HermesASTAdapter {
     node.range = [loc.rangeStart, loc.rangeEnd];
   }
 
-  mapNode(node) {
+  mapNode(node: HermesNode): HermesNode {
     this.fixSourceLocation(node);
     switch (node.type) {
       case 'Program':
@@ -42,13 +57,18 @@ class HermesToESTreeAdapter extends HermesASTAdapter {
       case 'BooleanLiteral':
       case 'StringLiteral':
       case 'NumericLiteral':
+      case 'JSXStringLiteral':
         return this.mapSimpleLiteral(node);
+      case 'BigIntLiteral':
+        return this.mapBigIntLiteral(node);
       case 'RegExpLiteral':
         return this.mapRegExpLiteral(node);
       case 'Empty':
         return this.mapEmpty(node);
       case 'TemplateElement':
         return this.mapTemplateElement(node);
+      case 'BigIntLiteralTypeAnnotation':
+        return this.mapBigIntLiteralTypeAnnotation(node);
       case 'GenericTypeAnnotation':
         return this.mapGenericTypeAnnotation(node);
       case 'ImportDeclaration':
@@ -64,34 +84,77 @@ class HermesToESTreeAdapter extends HermesASTAdapter {
       case 'PrivateName':
       case 'ClassPrivateProperty':
         return this.mapPrivateProperty(node);
+      case 'Property':
+        return this.mapProperty(node);
       default:
         return this.mapNodeDefault(node);
     }
   }
 
-  mapProgram(node) {
+  mapProgram(node: HermesNode): HermesNode {
     node = this.mapNodeDefault(node);
     node.sourceType = this.getSourceType();
 
     return node;
   }
 
-  mapSimpleLiteral(node) {
-    node.type = 'Literal';
-    node.raw = this.code.slice(node.range[0], node.range[1]);
+  mapSimpleLiteral(node: HermesNode): HermesNode {
+    return {
+      type: 'Literal',
+      loc: node.loc,
+      range: node.range,
+      value: node.value,
+      raw: this.code.slice(node.range[0], node.range[1]),
+      literalType: (() => {
+        switch (node.type) {
+          case 'NullLiteral':
+            return 'null';
 
-    return node;
+          case 'BooleanLiteral':
+            return 'boolean';
+
+          case 'StringLiteral':
+          case 'JSXStringLiteral':
+            return 'string';
+
+          case 'NumericLiteral':
+            return 'numeric';
+
+          case 'BigIntLiteral':
+            return 'bigint';
+
+          case 'RegExpLiteral':
+            return 'regexp';
+        }
+        return null;
+      })(),
+    };
   }
 
-  mapNullLiteral(node) {
-    node.type = 'Literal';
-    node.value = null;
-    node.raw = this.code.slice(node.range[0], node.range[1]);
-
-    return node;
+  mapBigIntLiteral(node: HermesNode): HermesNode {
+    const newNode = this.mapSimpleLiteral(node);
+    const bigint = node.bigint
+      // estree spec is to not have a trailing `n` on this property
+      // https://github.com/estree/estree/blob/db962bb417a97effcfe9892f87fbb93c81a68584/es2020.md#bigintliteral
+      .replace(/n$/, '')
+      // `BigInt` doesn't accept numeric separator and `bigint` property should not include numeric separator
+      .replace(/_/, '');
+    return {
+      ...newNode,
+      // coerce the string to a bigint value if supported by the environment
+      value: typeof BigInt === 'function' ? BigInt(bigint) : null,
+      bigint,
+    };
   }
 
-  mapRegExpLiteral(node) {
+  mapNullLiteral(node: HermesNode): HermesNode {
+    return {
+      ...this.mapSimpleLiteral(node),
+      value: null,
+    };
+  }
+
+  mapRegExpLiteral(node: HermesNode): HermesNode {
     const {pattern, flags} = node;
 
     // Create RegExp value if possible. This can fail when the flags are invalid.
@@ -103,11 +166,8 @@ class HermesToESTreeAdapter extends HermesASTAdapter {
     }
 
     return {
-      type: 'Literal',
-      loc: node.loc,
-      range: node.range,
+      ...this.mapSimpleLiteral(node),
       value,
-      raw: this.code.slice(node.range[0], node.range[1]),
       regex: {
         pattern,
         flags,
@@ -115,7 +175,12 @@ class HermesToESTreeAdapter extends HermesASTAdapter {
     };
   }
 
-  mapTemplateElement(node) {
+  mapBigIntLiteralTypeAnnotation(node: HermesNode): HermesNode {
+    node.value = null;
+    return node;
+  }
+
+  mapTemplateElement(node: HermesNode): HermesNode {
     return {
       type: 'TemplateElement',
       loc: node.loc,
@@ -128,10 +193,10 @@ class HermesToESTreeAdapter extends HermesASTAdapter {
     };
   }
 
-  mapGenericTypeAnnotation(node) {
+  mapGenericTypeAnnotation(node: HermesNode): HermesNode {
     // Convert simple `this` generic type to ThisTypeAnnotation
     if (
-      node.typeParameters === null &&
+      node.typeParameters == null &&
       node.id.type === 'Identifier' &&
       node.id.name === 'this'
     ) {
@@ -145,7 +210,18 @@ class HermesToESTreeAdapter extends HermesASTAdapter {
     return this.mapNodeDefault(node);
   }
 
-  mapComment(node) {
+  mapProperty(nodeUnprocessed: HermesNode): HermesNode {
+    const node = this.mapNodeDefault(nodeUnprocessed);
+
+    if (node.value.type === 'FunctionExpression') {
+      node.value.loc.start = node.key.loc.end;
+      node.value.range[0] = node.key.range[1];
+    }
+
+    return node;
+  }
+
+  mapComment(node: HermesNode): HermesNode {
     if (node.type === 'CommentBlock') {
       node.type = 'Block';
     } else if (node.type === 'CommentLine') {
@@ -155,5 +231,3 @@ class HermesToESTreeAdapter extends HermesASTAdapter {
     return node;
   }
 }
-
-module.exports = HermesToESTreeAdapter;

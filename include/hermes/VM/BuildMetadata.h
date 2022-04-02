@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -35,12 +35,12 @@ using BuildMetadataCallback = void(const GCCell *, Metadata::Builder &);
 using MetadataTable = llvh::ArrayRef<Metadata>;
 
 static_assert(
-    IsTriviallyCopyable<MetadataTable, true>::value,
+    std::is_trivially_copyable<MetadataTable>::value,
     "MetadataTable should be trivially copyable to keep it cheap to copy");
 
 Metadata buildMetadata(CellKind kind, BuildMetadataCallback *builder);
 
-MetadataTable getMetadataTable();
+void buildMetadataTable();
 
 } // namespace vm
 } // namespace hermes

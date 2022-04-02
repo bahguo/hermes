@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -8,11 +8,7 @@
 #ifndef HERMES_PLATFORMINTL_PLATFORMINTL_H
 #define HERMES_PLATFORMINTL_PLATFORMINTL_H
 
-// Intl implementation options
-#define HERMES_PLATFORM_INTL_DUMMY 1
-#define HERMES_PLATFORM_INTL_ANDROID 2
-
-#ifdef HERMES_PLATFORM_INTL
+#ifdef HERMES_ENABLE_INTL
 #include "hermes/VM/CallResult.h"
 #include "hermes/VM/DecoratedObject.h"
 #include "hermes/VM/Handle.h"
@@ -86,29 +82,39 @@ using Part = std::unordered_map<std::u16string, std::u16string>;
 /// as anybody depending on it is trying too hard.
 
 vm::CallResult<std::vector<std::u16string>> getCanonicalLocales(
-    vm::Runtime *runtime,
+    vm::Runtime &runtime,
     const std::vector<std::u16string> &locales);
 vm::CallResult<std::u16string> toLocaleLowerCase(
-    vm::Runtime *runtime,
+    vm::Runtime &runtime,
     const std::vector<std::u16string> &locales,
     const std::u16string &str);
 vm::CallResult<std::u16string> toLocaleUpperCase(
-    vm::Runtime *runtime,
+    vm::Runtime &runtime,
     const std::vector<std::u16string> &locales,
     const std::u16string &str);
+
+enum class NativeType {
+  Collator,
+  DateTimeFormat,
+  NumberFormat,
+};
 
 class Collator : public vm::DecoratedObject::Decoration {
  public:
   Collator();
   ~Collator();
 
+  static constexpr NativeType getNativeType() {
+    return NativeType::Collator;
+  }
+
   static vm::CallResult<std::vector<std::u16string>> supportedLocalesOf(
-      vm::Runtime *runtime,
+      vm::Runtime &runtime,
       const std::vector<std::u16string> &locales,
       const Options &options) noexcept;
 
   vm::ExecutionStatus initialize(
-      vm::Runtime *runtime,
+      vm::Runtime &runtime,
       const std::vector<std::u16string> &locales,
       const Options &options) noexcept;
   Options resolvedOptions() noexcept;
@@ -125,13 +131,17 @@ class DateTimeFormat : public vm::DecoratedObject::Decoration {
   DateTimeFormat();
   ~DateTimeFormat();
 
+  static constexpr NativeType getNativeType() {
+    return NativeType::DateTimeFormat;
+  }
+
   static vm::CallResult<std::vector<std::u16string>> supportedLocalesOf(
-      vm::Runtime *runtime,
+      vm::Runtime &runtime,
       const std::vector<std::u16string> &locales,
       const Options &options) noexcept;
 
   vm::ExecutionStatus initialize(
-      vm::Runtime *runtime,
+      vm::Runtime &runtime,
       const std::vector<std::u16string> &locales,
       const Options &options) noexcept;
   Options resolvedOptions() noexcept;
@@ -149,13 +159,17 @@ class NumberFormat : public vm::DecoratedObject::Decoration {
   NumberFormat();
   ~NumberFormat();
 
+  static constexpr NativeType getNativeType() {
+    return NativeType::NumberFormat;
+  }
+
   static vm::CallResult<std::vector<std::u16string>> supportedLocalesOf(
-      vm::Runtime *runtime,
+      vm::Runtime &runtime,
       const std::vector<std::u16string> &locales,
       const Options &options) noexcept;
 
   vm::ExecutionStatus initialize(
-      vm::Runtime *runtime,
+      vm::Runtime &runtime,
       const std::vector<std::u16string> &locales,
       const Options &options) noexcept;
   Options resolvedOptions() noexcept;

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -8,7 +8,6 @@
 #include <cctype>
 #include <string>
 
-#include "llvh/ADT/DenseMap.h"
 #include "llvh/ADT/DenseSet.h"
 #include "llvh/ADT/SmallVector.h"
 #include "llvh/Support/Casting.h"
@@ -22,13 +21,12 @@
 #include "hermes/IR/IR.h"
 #include "hermes/IR/IRVisitor.h"
 #include "hermes/IR/Instrs.h"
-#include "hermes/Support/OSCompat.h"
+#include "hermes/Optimizer/Wasm/WasmIntrinsics.h"
 #include "hermes/Support/Statistic.h"
 #include "hermes/Utils/Dumper.h"
 
 using namespace hermes;
 
-using hermes::oscompat::to_string;
 using llvh::cast;
 using llvh::dyn_cast;
 using llvh::isa;
@@ -107,6 +105,13 @@ void IRPrinter::printValueLabel(Instruction *I, Value *V, unsigned opIndex) {
     os << "["
        << getBuiltinMethodName(cast<CallBuiltinInst>(I)->getBuiltinIndex())
        << "]";
+#ifdef HERMES_RUN_WASM
+  } else if (isa<CallIntrinsicInst>(I) && opIndex == 0) {
+    os << "["
+       << getWasmIntrinsicsName(
+              cast<CallIntrinsicInst>(I)->getIntrinsicsIndex())
+       << "]";
+#endif
   } else if (isa<GetBuiltinClosureInst>(I) && opIndex == 0) {
     os << "["
        << getBuiltinMethodName(
@@ -379,7 +384,7 @@ struct DottyPrinter : public IRVisitor<DottyPrinter, void> {
   /// Convert pointers into unique textual ids.
   static std::string toString(BasicBlock *ptr) {
     auto Num = (size_t)ptr;
-    return to_string(Num);
+    return std::to_string(Num);
   }
 
   /// Reimplement the visitFunction in IRVisitor.
@@ -429,7 +434,7 @@ struct DottyPrinter : public IRVisitor<DottyPrinter, void> {
     }
 
     for (auto I = succ_begin(BB), E = succ_end(BB); I != E; ++I) {
-      auto From = toString(BB) + ":L" + to_string(counter);
+      auto From = toString(BB) + ":L" + std::to_string(counter);
       Edges.push_back({From, toString(*I) + (*I == BB ? ":self" : ":head")});
     }
 

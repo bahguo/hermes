@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -115,6 +115,8 @@ class TwineChar16 {
         rightSize_(0) {
     assert(isValid());
   }
+
+  TwineChar16(const TwineChar16 &other) = default;
 
   TwineChar16(const char *str) : TwineChar16(llvh::StringRef(str)) {}
 

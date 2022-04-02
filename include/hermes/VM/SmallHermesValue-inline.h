@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -28,7 +28,7 @@ void HermesValue32::setInGC(HermesValue32 hv, GC *gc) {
   assert(gc->calledByGC());
 }
 
-HermesValue HermesValue32::unboxToHV(PointerBase *pb) const {
+HermesValue HermesValue32::unboxToHV(PointerBase &pb) const {
   switch (getETag()) {
     case ETag::Object1:
     case ETag::Object2:
@@ -59,36 +59,18 @@ HermesValue HermesValue32::unboxToHV(PointerBase *pb) const {
   }
 }
 
-HermesValue HermesValue32::toHV(PointerBase *pb) const {
+HermesValue HermesValue32::toHV(PointerBase &pb) const {
   if (getTag() == Tag::BoxedDouble)
     return HermesValue::encodeObjectValue(getPointer(pb));
   return unboxToHV(pb);
 }
 
-GCCell *HermesValue32::getPointer(PointerBase *pb) const {
-  assert(isPointer());
-  RawType rawPtr = raw_ & llvh::maskLeadingOnes<RawType>(kNumValueBits);
-  return GCPointerBase::storageTypeToPointer(
-      GCPointerBase::rawToStorageType(rawPtr), pb);
-}
-
-GCCell *HermesValue32::getObject(PointerBase *pb) const {
-  assert(isObject());
-  // Since object pointers are the most common type, we have them as the
-  // zero-tag and can decode them without needing to remove the tag.
-  static_assert(
-      static_cast<uint8_t>(Tag::Object) == 0,
-      "Object tag must be zero for fast path.");
-  return GCPointerBase::storageTypeToPointer(
-      GCPointerBase::rawToStorageType(raw_), pb);
-}
-
-StringPrimitive *HermesValue32::getString(PointerBase *pb) const {
+StringPrimitive *HermesValue32::getString(PointerBase &pb) const {
   assert(isString());
   return vmcast<StringPrimitive>(getPointer(pb));
 }
 
-double HermesValue32::getNumber(PointerBase *pb) const {
+double HermesValue32::getNumber(PointerBase &pb) const {
   assert(isNumber());
   if (LLVM_LIKELY(getTag() == Tag::SmallInt))
     return getSmallInt();
@@ -97,7 +79,7 @@ double HermesValue32::getNumber(PointerBase *pb) const {
 
 /* static */ HermesValue32 HermesValue32::encodeHermesValue(
     HermesValue hv,
-    Runtime *runtime) {
+    Runtime &runtime) {
 #ifdef HERMESVM_SANITIZE_HANDLES
   // When Handle-SAN is on, make a double so that this function always
   // allocates. Note we can't do this for pointer values since they would get
@@ -131,52 +113,27 @@ double HermesValue32::getNumber(PointerBase *pb) const {
 
 /* static */ HermesValue32 HermesValue32::encodeNumberValue(
     double d,
-    Runtime *runtime) {
+    Runtime &runtime) {
   // Always box values when Handle-SAN is on so we can catch any mistakes.
 #ifndef HERMESVM_SANITIZE_HANDLES
   const SmiType i = doubleToSmi(d);
   if (LLVM_LIKELY(
-          i == d && llvh::isInt<kNumSmiBits>(i) &&
-          llvh::DoubleToBits(d) != llvh::DoubleToBits(-0.0)))
+          llvh::DoubleToBits(d) == llvh::DoubleToBits(i) &&
+          llvh::isInt<kNumSmiBits>(i)))
     return fromTagAndValue(Tag::SmallInt, i);
 #endif
   return encodePointerImpl(
       BoxedDouble::create(d, runtime), Tag::BoxedDouble, runtime);
 }
 
-/* static */ HermesValue32
-HermesValue32::encodePointerImpl(GCCell *ptr, Tag tag, PointerBase *pb) {
-  static_assert(
-      sizeof(RawType) == sizeof(GCPointerBase::StorageType),
-      "Raw storage must fit a GCPointer");
-  RawType p = GCPointerBase::storageTypeToRaw(
-      GCPointerBase::pointerToStorageType(ptr, pb));
-  validatePointer(p);
-  return fromRaw(p | static_cast<RawType>(tag));
-}
-
-HermesValue32 HermesValue32::updatePointer(GCCell *ptr, PointerBase *pb) const {
-  return encodePointerImpl(ptr, getTag(), pb);
-}
-
-void HermesValue32::unsafeUpdatePointer(GCCell *ptr, PointerBase *pb) {
-  setNoBarrier(encodePointerImpl(ptr, getTag(), pb));
-}
-
 /* static */ HermesValue32 HermesValue32::encodeObjectValue(
     GCCell *ptr,
-    PointerBase *pb) {
+    PointerBase &pb) {
   assert(
       (!ptr || !vmisa<StringPrimitive>(ptr)) &&
       "Strings must use encodeStringValue");
   return encodePointerImpl(ptr, Tag::Object, pb);
 }
-/* static */ HermesValue32 HermesValue32::encodeStringValue(
-    StringPrimitive *ptr,
-    PointerBase *pb) {
-  return encodePointerImpl(static_cast<GCCell *>(ptr), Tag::String, pb);
-}
-
 } // namespace vm
 } // namespace hermes
 

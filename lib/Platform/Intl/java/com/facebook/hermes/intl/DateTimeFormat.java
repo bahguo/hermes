@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -18,17 +18,18 @@ import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.TimeZone;
 
 /**
  * This class represents the Java part of the Android Intl.DateTimeFormat implementation. The
- * interaction with the Hermes JaveScript internals are implemented in C++ and should not generally
+ * interaction with the Hermes JavaScript internals are implemented in C++ and should not generally
  * need to be changed. Implementers' notes here will describe what parts of the ECMA 402 spec remain
  * to be implemented.
  *
  * <p>Implementer notes:
  *
  * <p>Internal slots: In the ECMA 402 spec, there are a number of references to internal slots.
- * These are gneerally expressed in terms of JavaScript objects, but the semantics do not generally
+ * These are generally expressed in terms of JavaScript objects, but the semantics do not generally
  * depend on this. For example, where the spec says "Intl.DateTimeFormat instances have an
  * [[InitializedDateTimeFormat]] internal slot", this would not be a literal artifact of the
  * implementation. Internal slots, where necessary, should be represented as members of this java
@@ -138,6 +139,29 @@ public class DateTimeFormat {
     return options;
   }
 
+  public String normalizeTimeZoneName(String timeZoneName) {
+    StringBuilder normalized = new StringBuilder(timeZoneName.length());
+    int offset = 'a' - 'A';
+    for (int idx = 0; idx < timeZoneName.length(); idx++) {
+      char c = timeZoneName.charAt(idx);
+      if (c >= 'A' && c <= 'Z') {
+        normalized.append((char) (c + offset));
+      } else {
+        normalized.append(c);
+      }
+    }
+    return normalized.toString();
+  }
+
+  public String normalizeTimeZone(String timeZone) throws JSRangeErrorException {
+    for (String id : TimeZone.getAvailableIDs()) {
+      if (normalizeTimeZoneName(id).equals(normalizeTimeZoneName(timeZone))) {
+        return id;
+      }
+    }
+    throw new JSRangeErrorException("Invalid timezone name!");
+  }
+
   private Object DefaultTimeZone() throws JSRangeErrorException {
     return mPlatformDateTimeFormatter.getDefaultTimeZone(mResolvedLocaleObject);
   }
@@ -244,10 +268,7 @@ public class DateTimeFormat {
     if (JSObjects.isUndefined(timeZone)) {
       timeZone = DefaultTimeZone();
     } else {
-      String normalizedTimeZone = normalizeTimeZoneName(JSObjects.getJavaString(timeZone));
-      if (!isValidTimeZoneName(normalizedTimeZone)) {
-        throw new JSRangeErrorException("Invalid timezone name!");
-      }
+      timeZone = normalizeTimeZone(timeZone.toString());
     }
     mTimeZone = timeZone;
 
@@ -377,27 +398,6 @@ public class DateTimeFormat {
 
       mHourCycle = hc;
     }
-  }
-
-  private String normalizeTimeZoneName(String timeZoneName) {
-    // https://tc39.es/ecma402/#sec-case-sensitivity-and-case-mapping
-    // Note that we should convert only upper case translation in ASCII range.
-    StringBuilder normalized = new StringBuilder(timeZoneName.length());
-    int offset = 'a' - 'A';
-    for (int idx = 0; idx < timeZoneName.length(); idx++) {
-      char c = timeZoneName.charAt(idx);
-      if (c >= 'a' && c <= 'z') {
-        normalized.append((char) (c - offset));
-      } else {
-        normalized.append(c);
-      }
-    }
-
-    return normalized.toString();
-  }
-
-  private boolean isValidTimeZoneName(String timeZone) {
-    return mPlatformDateTimeFormatter.isValidTimeZone(timeZone);
   }
 
   @DoNotStrip

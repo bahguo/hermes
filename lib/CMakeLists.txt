@@ -1,4 +1,4 @@
-# Copyright (c) Facebook, Inc. and its affiliates.
+# Copyright (c) Meta Platforms, Inc. and affiliates.
 #
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
@@ -17,6 +17,7 @@ add_hermes_library(hermesOptimizer
   Optimizer/Scalar/StackPromotion.cpp
   Optimizer/Scalar/InstSimplify.cpp
   Optimizer/Scalar/Auditor.cpp
+  Optimizer/Wasm/WasmSimplify.cpp
   Optimizer/Scalar/SimpleCallGraphProvider.cpp
   Optimizer/Scalar/ResolveStaticRequire.cpp
   Optimizer/Scalar/SimpleCallGraphProvider.cpp
@@ -45,6 +46,8 @@ add_hermes_library(hermesFrontend
   IR/IRVerifier.cpp
   IR/Instrs.cpp
   Utils/Dumper.cpp
+  Optimizer/Wasm/WasmIntrinsics.cpp
+  Optimizer/Wasm/EmitWasmIntrinsics.cpp
   LINK_LIBS hermesSupport hermesFrontEndDefs hermesAST hermesParser
 )
 

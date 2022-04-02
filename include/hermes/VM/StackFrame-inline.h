@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -34,16 +34,8 @@ StackFramePtrT<isConst>::getCalleeCodeBlock() const {
     else
       return nullptr;
   } else {
-    assert(
-        ref.isNativeValue() &&
-        "getCalleeClosureOrCBRef must be NativeValue or Object");
     return ref.template getNativePointer<CodeBlock>();
   }
-}
-
-template <bool isConst>
-inline Callable *StackFramePtrT<isConst>::getCalleeClosure() const {
-  return dyn_vmcast<Callable>(getCalleeClosureOrCBRef());
 }
 
 template <bool isConst>

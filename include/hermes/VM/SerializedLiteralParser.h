@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -29,14 +29,6 @@ class SerializedLiteralParser : public hbc::SerializedLiteralParserBase {
   /// return IdentifierIDs as opposed to encoding strings.
   RuntimeModule *runtimeModule_;
 
-  /// Stores the last returned HermesValue.
-  /// Useful for Null/True/False, as the value only needs to be
-  /// initialized once.
-  /// Since the only pointer values that this HermesValue can store are
-  /// strings, and since those strings are immediately returned and used
-  /// and never reused, it is safe to not store lastValue_ in a Handle.
-  PinnedHermesValue lastValue_;
-
  public:
   /// Creates a parser which generates HermesValues from a char buffer.
   /// buff represents the char buffer that will be parsed.
@@ -53,7 +45,7 @@ class SerializedLiteralParser : public hbc::SerializedLiteralParserBase {
         runtimeModule_(runtimeModule) {}
 
   /// Extract and return the next literal. Note: performs GC allocations.
-  HermesValue get(Runtime *);
+  HermesValue get(Runtime &);
 };
 
 } // namespace vm

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -24,28 +24,18 @@ class BoxedDouble final : public GCCell {
   double value_;
 
  public:
-#if (defined(HERMESVM_GC_HADES) || defined(HERMESVM_GC_RUNTIME))
-  // Unused padding just to meet the minimum allocation requirements from Hades.
-  int8_t _padding_[4];
-#endif
-
-#ifdef HERMESVM_SERIALIZE
-  explicit BoxedDouble(Deserializer &d);
-
-  friend void BoxedDoubleSerialize(Serializer &s, const GCCell *cell);
-  friend void BoxedDoubleDeserialize(Deserializer &d, CellKind kind);
-#endif
-
+  static constexpr CellKind getCellKind() {
+    return CellKind::BoxedDoubleKind;
+  }
   static bool classof(const GCCell *cell) {
     return cell->getKind() == CellKind::BoxedDoubleKind;
   }
 
-  static BoxedDouble *create(double d, Runtime *runtime) {
-    return runtime->makeAFixed<BoxedDouble>(d, runtime);
+  static BoxedDouble *create(double d, Runtime &runtime) {
+    return runtime.makeAFixed<BoxedDouble>(d);
   }
 
-  BoxedDouble(double d, Runtime *runtime)
-      : GCCell(&runtime->getHeap(), &vt), value_(d) {}
+  BoxedDouble(double d) : value_(d) {}
 
   double get() const {
     return value_;

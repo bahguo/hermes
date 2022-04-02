@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -46,7 +46,6 @@ HERMES_VM_GCOBJECT(DictPropertyMap);
 HERMES_VM_GCOBJECT(HiddenClass);
 HERMES_VM_GCOBJECT(PropertyAccessor);
 HERMES_VM_GCOBJECT(JSArray);
-HERMES_VM_GCOBJECT(PrimitiveBox);
 HERMES_VM_GCOBJECT(JSArrayBuffer);
 HERMES_VM_GCOBJECT(JSDataView);
 HERMES_VM_GCOBJECT(JSTypedArrayBase);
@@ -71,9 +70,12 @@ HERMES_VM_GCOBJECT(JSCallableProxy);
 HERMES_VM_GCOBJECT(DecoratedObject);
 HERMES_VM_GCOBJECT(HostObject);
 HERMES_VM_GCOBJECT(SegmentedArray);
-#ifdef UNIT_TEST
-HERMES_VM_GCOBJECT(TestCell);
-#endif
+
+namespace testhelpers {
+struct DummyObject;
+}
+template <>
+struct IsGCObject<testhelpers::DummyObject> : public std::true_type {};
 
 // Typed arrays use templates and cannot use the macro above
 template <typename T, CellKind C>
@@ -186,7 +188,7 @@ struct StringTraitsImpl {
     return value_type{};
   }
   static HermesValue encode(T *value) {
-    return HermesValue::encodeStringValue(value);
+    return HermesValue::encodeStringValueUnsafe(value);
   }
   static T *decode(HermesValue value) {
     return (T *)value.getString();
@@ -222,7 +224,7 @@ struct HermesValueTraits<T, true> {
     return value_type{};
   }
   static HermesValue encode(T *value) {
-    return HermesValue::encodeObjectValue(value);
+    return HermesValue::encodeObjectValueUnsafe(value);
   }
   static T *decode(HermesValue value) {
     return static_cast<T *>(value.getObject());

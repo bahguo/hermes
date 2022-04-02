@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -7,8 +7,6 @@
 
 #ifndef HERMES_SUPPORT_COMPILER_H
 #define HERMES_SUPPORT_COMPILER_H
-
-#include "hermes/Support/Config.h"
 
 #include "llvh/Support/Compiler.h"
 
@@ -56,7 +54,7 @@
 // In fbcode we might have bigger code samples during development due to
 // integration testing. However, we're also at liberty to increase stack
 // size at the application level and for things like HaaS we do this.
-#if !defined(HERMES_FBCODE_BUILD) && \
+#if !defined(HERMES_FBCODE_BUILD) && !defined(HERMES_LARGE_STACK_DEPTH) && \
     (defined(HERMES_UBSAN) || LLVM_ADDRESS_SANITIZER_BUILD)
 #define HERMES_LIMIT_STACK_DEPTH
 #endif
@@ -103,18 +101,6 @@ void AnnotateThreadName(const char *file, int line, const char *name);
 #endif
 
 namespace hermes {
-
-/// Some compiler versions don't support \c std::is_trivially_copyable<>, so
-/// we are forced to abstract it away. A conservative default value must be
-/// provided for the case when the compiler doesn't support it.
-template <typename T, bool defaultValue>
-struct IsTriviallyCopyable {
-#ifdef HAVE_IS_TRIVIALLY_COPYABLE
-  static constexpr bool value = std::is_trivially_copyable<T>::value;
-#else
-  static constexpr bool value = defaultValue;
-#endif
-};
 
 /// Convert from an l-value to an r-value. This is needed when we want to pass
 /// a member constant to something that takes a const & - for example

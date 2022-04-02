@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -31,7 +31,7 @@ class RuntimeModule;
 class CodeBlock;
 
 /// A pointer to JIT-compiled function.
-typedef CallResult<HermesValue> (*JITCompiledFunctionPtr)(Runtime *runtime);
+typedef CallResult<HermesValue> (*JITCompiledFunctionPtr)(Runtime &runtime);
 
 /// A sequence of instructions representing the body of a function.
 class CodeBlock final
@@ -59,7 +59,7 @@ class CodeBlock final
 
 #ifndef HERMESVM_LEAN
   /// Compiles a lazy CodeBlock. Intended to be called from lazyCompile.
-  void lazyCompileImpl(Runtime *runtime);
+  void lazyCompileImpl(Runtime &runtime);
 #endif
 
   /// Helper function for getting start and end locations.
@@ -156,10 +156,12 @@ class CodeBlock final
       uint32_t idx,
       unsigned int numLiterals) const;
 
-  std::pair<SerializedLiteralParser, SerializedLiteralParser>
-  getObjectBufferIter(
-      uint32_t keyIdx,
-      uint32_t valIdx,
+  SerializedLiteralParser getObjectBufferKeyIter(
+      uint32_t idx,
+      unsigned int numLiterals) const;
+
+  SerializedLiteralParser getObjectBufferValueIter(
+      uint32_t idx,
       unsigned int numLiterals) const;
 
   RuntimeModule *getRuntimeModule() const {
@@ -178,7 +180,7 @@ class CodeBlock final
 
   /// \return The name of this code block, as a UTF-8 encoded string.
   /// Does no JS heap allocation.
-  std::string getNameString(GCBase::GCCallbacks *runtime) const;
+  std::string getNameString(GCBase::GCCallbacks &runtime) const;
 
   const_iterator begin() const {
     return bytecode_;
@@ -202,6 +204,10 @@ class CodeBlock final
   /// the code block \p codeBlock.
   OptValue<hbc::DebugSourceLocation> getSourceLocation(
       uint32_t offset = 0) const;
+
+  /// Look up the function source table and \return the String ID associated
+  /// with the current function if an entry is found, or llvh::None if not.
+  OptValue<uint32_t> getFunctionSourceID() const;
 
   OptValue<uint32_t> getDebugLexicalDataOffset() const;
 
@@ -227,7 +233,7 @@ class CodeBlock final
   }
 
   /// Compiles this CodeBlock, if it's lazy and not already compiled.
-  void lazyCompile(Runtime *runtime) {
+  void lazyCompile(Runtime &runtime) {
     if (LLVM_UNLIKELY(isLazy())) {
       lazyCompileImpl(runtime);
     }
@@ -237,7 +243,7 @@ class CodeBlock final
   bool isLazy() const {
     return false;
   }
-  void lazyCompile(Runtime *) {}
+  void lazyCompile(Runtime &) {}
 #endif
 
   /// Get the start location of this function, if it's lazy.
@@ -263,7 +269,7 @@ class CodeBlock final
   }
 
   // Mark all hidden classes in the property cache as roots.
-  void markCachedHiddenClasses(Runtime *runtime, WeakRootAcceptor &acceptor);
+  void markCachedHiddenClasses(Runtime &runtime, WeakRootAcceptor &acceptor);
 
   static CodeBlock *createCodeBlock(
       RuntimeModule *runtimeModule,
@@ -300,28 +306,6 @@ class CodeBlock final
 
   /// \return the offset of the next instruction after the one at \p offset.
   uint32_t getNextOffset(uint32_t offset) const;
-#endif
-
-#ifdef HERMESVM_SERIALIZE
-  /// Serialize this CodeBlock.
-  void serialize(Serializer &s) const;
-
-  /// Deserialize and create a new CodeBlock. \return a pointer to the
-  /// CodeBlock. It has the same semantics as \p create() wrt memory management:
-  /// the result must be deallocated via delete, which is overridden.
-  /// \param runtimeModule The RuntimeModule the CodeBlock belongs to.
-  static CodeBlock *deserialize(Deserializer &d, RuntimeModule *runtimeModule);
-#endif
-
-#ifndef HERMESVM_LEAN
-  /// Returns true if source code is available for the function backing this
-  /// CodeBlock. This will only be the case if the function is lazily compiled,
-  /// or we've enabled Function.toString() to return source and compilation was
-  /// done at run-time.
-  llvh::StringRef getFunctionSource() const;
-
-  /// Returns true if \c getFunctionSource() above will return function source.
-  bool hasFunctionSource() const;
 #endif
 };
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -27,7 +27,7 @@ enum {
   VerifyBytecodeChecksum = 1 << 7,
   IgnoreMemoryWarnings = 1 << 9,
   // HadesCompaction = 1 << 10,
-  GenGC = 1 << 11,
+  // GenGC = 1 << 11,
   // HadesTimedIncremental = 1 << 12,
   CrashTrace = 1 << 13,
   JobQueue = 1 << 14,

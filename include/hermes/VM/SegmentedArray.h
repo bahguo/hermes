@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -51,8 +51,11 @@ class SegmentedArray final
     static constexpr uint32_t kMaxLength = 1024;
 
     /// Creates an empty segment with zero length
-    static PseudoHandle<Segment> create(Runtime *runtime);
+    static PseudoHandle<Segment> create(Runtime &runtime);
 
+    static constexpr CellKind getCellKind() {
+      return CellKind::SegmentKind;
+    }
     static bool classof(const GCCell *cell) {
       return cell->getKind() == CellKind::SegmentKind;
     }
@@ -79,38 +82,15 @@ class SegmentedArray final
     /// Increases or decreases the length of the segment, up to a max of
     /// kMaxLength. If the length increases, it fills the newly used portion of
     /// the segment with empty values.
-    void setLength(Runtime *runtime, uint32_t newLength);
-
-    /// Same as above, except it doesn't fill with empty values.
-    /// It is the caller's responsibility to ensure that the newly used portion
-    /// will contain valid values before they are accessed (including accesses
-    /// by the GC).
-    /// \pre This cannot be called if kConcurrentGC is true, since the GC might
-    ///   read uninitialized memory even if the mutator wouldn't.
-    void setLengthWithoutFilling(uint32_t newLength) {
-      assert(!kConcurrentGC && "Cannot avoid filling for a concurrent GC");
-      assert(newLength <= kMaxLength && "Cannot set length to more than size");
-      length_.store(newLength, std::memory_order_release);
-    }
-
-#ifdef HERMESVM_SERIALIZE
-    explicit Segment(Deserializer &d);
-
-    friend void SegmentSerialize(Serializer &s, const GCCell *cell);
-    friend void SegmentDeserialize(Deserializer &d, CellKind kind);
-#endif
+    void setLength(Runtime &runtime, uint32_t newLength);
 
     friend void SegmentBuildMeta(const GCCell *cell, Metadata::Builder &mb);
 
    private:
     static const VTable vt;
 
-    AtomicIfConcurrentGC<uint32_t> length_;
+    AtomicIfConcurrentGC<uint32_t> length_{0};
     GCHermesValue data_[kMaxLength];
-
-   public:
-    explicit Segment(Runtime *runtime)
-        : GCCell(&runtime->getHeap(), &vt), length_(0) {}
   };
 
   using size_type = uint32_t;
@@ -144,14 +124,22 @@ class SegmentedArray final
   /// is at most \c Segment::kMaxLength - 1.
   using InteriorIndex = uint32_t;
 
+  /// The number of slots a SegmentedArray with allocation size \p allocSize can
+  /// hold.
+  static constexpr size_type slotCapacityForAllocationSize(uint32_t allocSize) {
+    return (allocSize - allocationSizeForSlots(0)) / sizeof(GCHermesValue);
+  }
+
   /// The number of slots for either inline storage or segments that this
-  /// SegmentedArray can hold. This is decided at creation time. In order to
-  /// have more slots, a new SegmentedArray must be allocated.
+  /// SegmentedArray can hold. This is a function of the allocated size.
   /// NOTE: This can be changed during compaction.
-  size_type slotCapacity_;
+  size_type slotCapacity() const {
+    return slotCapacityForAllocationSize(getAllocatedSize());
+  }
+
   /// The number of slots that are currently valid. The \c size() is a derived
   /// field from this value.
-  AtomicIfConcurrentGC<size_type> numSlotsUsed_;
+  AtomicIfConcurrentGC<size_type> numSlotsUsed_{0};
 
   struct iterator {
     using iterator_category = std::bidirectional_iterator_tag;
@@ -237,27 +225,20 @@ class SegmentedArray final
   };
 
  public:
-#ifdef HERMESVM_SERIALIZE
-  friend void SegmentSerialize(Serializer &s, const GCCell *cell);
-  friend void SegmentDeserialize(Deserializer &d, CellKind kind);
-  friend void SegmentedArraySerialize(Serializer &s, const GCCell *cell);
-  friend void SegmentedArrayDeserialize(Deserializer &d, CellKind kind);
-#endif
-
   static constexpr size_type maxElements();
 
   /// Creates a new SegmentedArray that has space for at least the requested \p
   /// capacity number of elements, and has size 0.
   static CallResult<PseudoHandle<SegmentedArray>> create(
-      Runtime *runtime,
+      Runtime &runtime,
       size_type capacity);
   static CallResult<PseudoHandle<SegmentedArray>> createLongLived(
-      Runtime *runtime,
+      Runtime &runtime,
       size_type capacity);
   /// Same as \c create(runtime, capacity) except fills in the first \p size
   /// elements with \p fill, and sets the size to \p size.
   static CallResult<PseudoHandle<SegmentedArray>>
-  create(Runtime *runtime, size_type capacity, size_type size);
+  create(Runtime &runtime, size_type capacity, size_type size);
 
   /// Returns a reference to an element. Strongly prefer using at and set
   /// instead.
@@ -327,7 +308,7 @@ class SegmentedArray final
   /// Increase the size by one and set the new element to \p value.
   static ExecutionStatus push_back(
       MutableHandle<SegmentedArray> &self,
-      Runtime *runtime,
+      Runtime &runtime,
       Handle<> value);
 
   /// Change the size of the storage to \p newSize. This can increase the size
@@ -335,7 +316,7 @@ class SegmentedArray final
   /// the size.
   static ExecutionStatus resize(
       MutableHandle<SegmentedArray> &self,
-      Runtime *runtime,
+      Runtime &runtime,
       size_type newSize);
 
   /// The same as resize, but add elements to the left instead of the right.
@@ -346,7 +327,7 @@ class SegmentedArray final
   /// as \c resize.
   static ExecutionStatus resizeLeft(
       MutableHandle<SegmentedArray> &self,
-      Runtime *runtime,
+      Runtime &runtime,
       size_type newSize);
 
   /// Set the size to a value <= the capacity. This is a special
@@ -354,14 +335,17 @@ class SegmentedArray final
   /// need to reallocate.
   static void resizeWithinCapacity(
       SegmentedArray *self,
-      Runtime *runtime,
+      Runtime &runtime,
       size_type newSize);
 
   /// Decrease the size to zero.
-  void clear(Runtime *runtime) {
+  void clear(Runtime &runtime) {
     shrinkRight(runtime, size());
   }
 
+  static constexpr CellKind getCellKind() {
+    return CellKind::SegmentedArrayKind;
+  }
   static bool classof(const GCCell *cell) {
     return cell->getKind() == CellKind::SegmentedArrayKind;
   }
@@ -375,37 +359,12 @@ class SegmentedArray final
       const GCCell *cell,
       Metadata::Builder &mb);
 
- public:
-  SegmentedArray(Runtime *runtime, size_type capacity)
-      : VariableSizeRuntimeCell(
-            &runtime->getHeap(),
-            &vt,
-            allocationSizeForCapacity(capacity)),
-        slotCapacity_(numSlotsForCapacity(capacity)),
-        numSlotsUsed_(0) {}
-
-#ifdef HERMESVM_SERIALIZE
-  /// Constructor used during deserialization. Takes argument \p slotCapacity
-  /// instead of \p capacity like in common constructor.
-  /// \param slotCapacity The number of slots for either inline storage or
-  /// segments that this SegmentedArray can hold.
-  SegmentedArray(
-      Runtime *runtime,
-      size_type slotCapacity,
-      size_type numSlotsUsed)
-      : VariableSizeRuntimeCell(
-            &runtime->getHeap(),
-            &vt,
-            allocationSizeForSlots(slotCapacity)),
-        slotCapacity_(slotCapacity),
-        numSlotsUsed_(numSlotsUsed) {}
-#endif
  private:
   /// Throws a RangeError with a descriptive message describing the attempted
   /// capacity allocated, and the max that is allowed.
   /// \returns ExecutionStatus::EXCEPTION always.
   static ExecutionStatus throwExcessiveCapacityError(
-      Runtime *runtime,
+      Runtime &runtime,
       size_type capacity);
 
   iterator begin() {
@@ -468,7 +427,7 @@ class SegmentedArray final
 
   /// Turns an unallocated segment into an allocated one.
   static void allocateSegment(
-      Runtime *runtime,
+      Runtime &runtime,
       Handle<SegmentedArray> self,
       SegmentNumber segment);
 
@@ -496,7 +455,7 @@ class SegmentedArray final
   }
 
   /// Same as \c segmentAt, except for any segment, including ones between
-  /// numSlotsUsed_ and slotCapacity_.
+  /// numSlotsUsed_ and slotCapacity().
   GCHermesValue *segmentAtPossiblyUnallocated(SegmentNumber segment) {
     return const_cast<GCHermesValue *>(
         static_cast<const SegmentedArray *>(this)->segmentAtPossiblyUnallocated(
@@ -535,9 +494,10 @@ class SegmentedArray final
   /// This number does not represent the number of allocated segments, only the
   /// total number of segments that could exist.
   SegmentNumber numSegments() const {
-    return slotCapacity_ <= kValueToSegmentThreshold
+    const auto slotCap = slotCapacity();
+    return slotCap <= kValueToSegmentThreshold
         ? 0
-        : slotCapacity_ - kValueToSegmentThreshold;
+        : slotCap - kValueToSegmentThreshold;
   }
 
   /// \return the number of segments in active use by this SegmentedArray.
@@ -556,7 +516,7 @@ class SegmentedArray final
   /// re-allocation will occur.
   static ExecutionStatus growRight(
       MutableHandle<SegmentedArray> &self,
-      Runtime *runtime,
+      Runtime &runtime,
       size_type amount);
 
   /// Same as \c growRight, except the empty values are filled to the left.
@@ -565,41 +525,38 @@ class SegmentedArray final
   /// empty values.
   static ExecutionStatus growLeft(
       MutableHandle<SegmentedArray> &self,
-      Runtime *runtime,
+      Runtime &runtime,
       size_type amount);
 
   /// Same as \c growRightWithinCapacity except it fills from the left.
   static void growLeftWithinCapacity(
-      Runtime *runtime,
+      Runtime &runtime,
       PseudoHandle<SegmentedArray> self,
       size_type amount);
 
   /// Shrink the array on the right hand side, removing the existing elements.
   /// \p pre amount <= size().
-  void shrinkRight(Runtime *runtime, size_type amount);
+  void shrinkRight(Runtime &runtime, size_type amount);
 
   /// Shrink the array on the left hand side, removing the existing elements
   /// from the left.
   /// \p pre amount <= size().
-  void shrinkLeft(Runtime *runtime, size_type amount);
+  void shrinkLeft(Runtime &runtime, size_type amount);
 
   /// Increases the size by \p amount, without doing any allocation.
-  /// \param fill If true, fill the newly usable space with empty HermesValues.
-  void
-  increaseSizeWithinCapacity(Runtime *runtime, size_type amount, bool fill);
+  void increaseSizeWithinCapacity(Runtime &runtime, size_type amount);
 
   /// Increases the size by \p amount, and adjusts segment sizes
   /// accordingly.
   /// NOTE: increasing size can potentially allocate new segments.
-  template <bool Fill>
   static PseudoHandle<SegmentedArray> increaseSize(
-      Runtime *runtime,
+      Runtime &runtime,
       PseudoHandle<SegmentedArray> self,
       size_type amount);
 
   /// Decreases the size by \p amount, and no longer tracks the elements past
   /// the new size limit.
-  void decreaseSize(Runtime *runtime, size_type amount);
+  void decreaseSize(Runtime &runtime, size_type amount);
 
   /// @}
 
@@ -611,7 +568,6 @@ class SegmentedArray final
   static constexpr SegmentNumber maxNumSegmentsWithoutOverflow();
 
   static gcheapsize_t _trimSizeCallback(const GCCell *self);
-  static void _trimCallback(GCCell *self);
 };
 
 constexpr SegmentedArray::size_type SegmentedArray::maxElements() {
@@ -620,11 +576,10 @@ constexpr SegmentedArray::size_type SegmentedArray::maxElements() {
 
 constexpr SegmentedArray::SegmentNumber SegmentedArray::maxNumSegments() {
   const SegmentedArray::SegmentNumber maxAllocSlots =
-      (GC::maxAllocationSize() - allocationSizeForCapacity(0)) /
-      sizeof(GCHermesValue);
+      slotCapacityForAllocationSize(GC::maxAllocationSize());
   const SegmentedArray::SegmentNumber maxAllocSegments =
       maxAllocSlots - kValueToSegmentThreshold;
-  return min(maxAllocSegments, maxNumSegmentsWithoutOverflow());
+  return std::min(maxAllocSegments, maxNumSegmentsWithoutOverflow());
 }
 
 constexpr SegmentedArray::SegmentNumber

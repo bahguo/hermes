@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -201,11 +201,6 @@ public class PlatformDateTimeFormatterAndroid implements IPlatformDateTimeFormat
       TimeZone timeZoneObject = TimeZone.getTimeZone(JSObjects.getJavaString(timeZone));
       mDateFormat.setTimeZone(timeZoneObject);
     }
-  }
-
-  @Override
-  public boolean isValidTimeZone(String timeZone) {
-    return TimeZone.getTimeZone(timeZone).getID().equals(timeZone);
   }
 
   @Override

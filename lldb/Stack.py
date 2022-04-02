@@ -1,4 +1,4 @@
-# Copyright (c) Facebook, Inc. and its affiliates.
+# Copyright (c) Meta Platforms, Inc. and affiliates.
 #
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
@@ -49,7 +49,7 @@ def _evaluate_expression(frame, expression):
 
 
 def _get_raw_ptr_from_shared_ptr(shared_ptr):
-    """ Decode raw pointer from shared_ptr"""
+    """Decode raw pointer from shared_ptr"""
     return shared_ptr.GetChildAtIndex(0)
 
 

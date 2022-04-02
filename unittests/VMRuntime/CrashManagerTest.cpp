@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -31,15 +31,8 @@ using ::testing::MatchesRegex;
 
 namespace {
 
-const MetadataTableForTests getMetadataTable() {
-  static const Metadata storage[] = {
-      Metadata() // Uninitialized
-  };
-  return MetadataTableForTests(storage);
-}
-
 // We make this not FixedSize, to allow direct allocation in the old generation.
-using SegmentCell = VarSizedEmptyCell<AlignedHeapSegment::maxSize()>;
+using SegmentCell = EmptyCell<AlignedHeapSegment::maxSize()>;
 
 class TestCrashManager : public CrashManager {
  public:
@@ -101,128 +94,32 @@ TEST(CrashManagerTest, HeapExtentsCorrect) {
                           .build();
   auto testCrashMgr = std::make_shared<TestCrashManager>();
   auto runtime = DummyRuntime::create(
-      getMetadataTable(),
-      gcConfig,
-      DummyRuntime::defaultProvider(),
-      testCrashMgr);
+      gcConfig, DummyRuntime::defaultProvider(), testCrashMgr);
   DummyRuntime &rt = *runtime;
 
-  std::deque<GCCell *> roots;
+  GCScope scope{rt};
 
   // Allocate 25 segments.  By the time we're done, this should fill
   // the YG (which will have grown to a full segment size), and 24 OG
   // segments.
-  for (size_t i = 0; i < 25; ++i) {
-    roots.push_back(SegmentCell::create(rt));
-    rt.pointerRoots.push_back(&roots.back());
+  for (size_t i = 0; i < 8; ++i) {
+    rt.makeHandle(SegmentCell::create(rt));
+  }
+  auto marker = scope.createMarker();
+  (void)marker;
+  for (size_t i = 0; i < 17; ++i) {
+    rt.makeHandle(SegmentCell::create(rt));
   }
   // This function isn't used in all paths.
   (void)validJSON;
-#ifdef HERMESVM_GC_NONCONTIG_GENERATIONAL
-  EXPECT_EQ(5, testCrashMgr->customData().size());
 
-  const std::string expectedYgKeyStr = "XYZ:HeapSegments_YG";
-  const std::string oneExtent =
-      R"(\{\\"lo\\": \\"0x[a-f0-9]*\\", \\"hi\\": \\"0x[a-f0-9]*\\"\})";
-
-  EXPECT_NE(
-      testCrashMgr->customData().end(),
-      testCrashMgr->customData().find(expectedYgKeyStr));
-  EXPECT_THAT(
-      testCrashMgr->customData().at(expectedYgKeyStr),
-      MatchesRegex(oneExtent + "$"));
-  // The output should be encodable as a string value in JSON.
-  EXPECT_TRUE(
-      validJSON("\"" + testCrashMgr->customData().at(expectedYgKeyStr) + "\""));
-
-  const std::string expectedOgKeyStr = "XYZ:HeapSegments_OG";
-  const std::string expectedOgKeyStr0 = expectedOgKeyStr + ":0";
-  const std::string expectedOgKeyStr10 = expectedOgKeyStr + ":10";
-  const std::string expectedOgKeyStr20 = expectedOgKeyStr + ":20";
-
-  const std::string leftBracket = "\\[";
-  const std::string rightBracket = "\\]";
-
-  const std::string fourExtentsBody =
-      oneExtent + "," + oneExtent + "," + oneExtent + "," + oneExtent;
-  const std::string fourExtents = leftBracket + fourExtentsBody + rightBracket;
-
-  const std::string fiveExtentsBody = fourExtentsBody + "," + oneExtent;
-  const std::string fiveExtents = leftBracket + fiveExtentsBody + rightBracket;
-
-  const std::string eightExtentsBody = fourExtentsBody + "," + fourExtentsBody;
-  const std::string eightExtents =
-      leftBracket + eightExtentsBody + rightBracket;
-
-  const std::string tenExtentsBody = fiveExtentsBody + "," + fiveExtentsBody;
-  const std::string tenExtents = leftBracket + tenExtentsBody + rightBracket;
-
-  EXPECT_NE(
-      testCrashMgr->customData().end(),
-      testCrashMgr->customData().find(expectedOgKeyStr0));
-  EXPECT_THAT(
-      testCrashMgr->customData().at(expectedOgKeyStr0),
-      MatchesRegex(tenExtents + "$"));
-  EXPECT_NE(
-      testCrashMgr->customData().end(),
-      testCrashMgr->customData().find(expectedOgKeyStr10));
-  EXPECT_THAT(
-      testCrashMgr->customData().at(expectedOgKeyStr10),
-      MatchesRegex(tenExtents + "$"));
-  EXPECT_NE(
-      testCrashMgr->customData().end(),
-      testCrashMgr->customData().find(expectedOgKeyStr20));
-  // "four" because one of the 25 segments is the young gen.
-  EXPECT_THAT(
-      testCrashMgr->customData().at(expectedOgKeyStr20),
-      MatchesRegex(fourExtents + "$"));
-
-  // Now allocate one more, make sure we now have 5 in the 20 key.
-  roots.push_back(SegmentCell::create(rt));
-  rt.pointerRoots.push_back(&roots.back());
-
-  EXPECT_THAT(
-      testCrashMgr->customData().at(expectedOgKeyStr0),
-      MatchesRegex(tenExtents + "$"));
-  EXPECT_THAT(
-      testCrashMgr->customData().at(expectedOgKeyStr10),
-      MatchesRegex(tenExtents + "$"));
-  EXPECT_THAT(
-      testCrashMgr->customData().at(expectedOgKeyStr20),
-      MatchesRegex(fiveExtents + "$"));
-
-  /// Now erase enough roots so that we only have 7 OG segments remaining
-  /// (to pick a fairly random number).  Then do a GC.  The old gen
-  /// will have those 7 filled segments, plus an empty allocation
-  /// segment.  Make sure only those are registered with the crash manager.
-  for (size_t i = 0; i < (25 - 7); i++) {
-    roots.pop_back();
-    rt.pointerRoots.pop_back();
-  }
-  rt.collect();
-
-  EXPECT_EQ(3, testCrashMgr->customData().size());
-
-  EXPECT_NE(
-      testCrashMgr->customData().end(),
-      testCrashMgr->customData().find(expectedYgKeyStr));
-  EXPECT_THAT(
-      testCrashMgr->customData().at(expectedYgKeyStr),
-      MatchesRegex(oneExtent + "$"));
-
-  EXPECT_NE(
-      testCrashMgr->customData().end(),
-      testCrashMgr->customData().find(expectedOgKeyStr0));
-  EXPECT_THAT(
-      testCrashMgr->customData().at(expectedOgKeyStr0),
-      MatchesRegex(eightExtents + "$"));
-#elif defined(HERMESVM_GC_HADES)
+#ifdef HERMESVM_GC_HADES
   const auto &contextualCustomData = testCrashMgr->contextualCustomData();
   EXPECT_EQ(26, contextualCustomData.size());
   const std::string expectedKeyBase = "XYZ:HeapSegment:";
   for (int i = 0; i < 26; i++) {
     const std::string expectedKey =
-        expectedKeyBase + (i == 0 ? std::string("YG") : oscompat::to_string(i));
+        expectedKeyBase + (i == 0 ? std::string("YG") : std::to_string(i));
     std::string actual = contextualCustomData.at(expectedKey);
     void *ptr = nullptr;
     int numArgsWritten = std::sscanf(actual.c_str(), "%p", &ptr);
@@ -248,18 +145,14 @@ TEST(CrashManagerTest, PromotedYGHasCorrectName) {
                           .build();
   auto testCrashMgr = std::make_shared<TestCrashManager>();
   auto runtime = DummyRuntime::create(
-      getMetadataTable(),
-      gcConfig,
-      DummyRuntime::defaultProvider(),
-      testCrashMgr);
+      gcConfig, DummyRuntime::defaultProvider(), testCrashMgr);
   DummyRuntime &rt = *runtime;
 
-  std::deque<GCCell *> roots;
+  GCScope scope{rt};
 
   // Fill up YG at least once, to make sure promotion keeps the right name.
   for (size_t i = 0; i < 3; ++i) {
-    roots.push_back(SegmentCell::create(rt));
-    rt.pointerRoots.push_back(&roots.back());
+    rt.makeHandle(SegmentCell::create(rt));
   }
 
   const auto &contextualCustomData = testCrashMgr->contextualCustomData();
@@ -283,10 +176,7 @@ TEST(CrashManagerTest, GCNameIncluded) {
       GCConfig::Builder(kTestGCConfigBuilder).withName("XYZ").build();
   auto testCrashMgr = std::make_shared<TestCrashManager>();
   auto runtime = DummyRuntime::create(
-      getMetadataTable(),
-      gcConfig,
-      DummyRuntime::defaultProvider(),
-      testCrashMgr);
+      gcConfig, DummyRuntime::defaultProvider(), testCrashMgr);
 
   const auto &crashData = testCrashMgr->customData();
   auto gcName = crashData.find("HermesGC");

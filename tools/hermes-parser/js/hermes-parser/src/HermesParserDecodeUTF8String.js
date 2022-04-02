@@ -1,9 +1,10 @@
 /**
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
  *
+ * @flow strict
  * @format
  */
 
@@ -17,7 +18,12 @@
  * - Allow UTF-8 encoded code points that are part of a surrogate pair, even though
  *   this is technically invalid UTF-8 that UTF8ToString would convert to 0xfffd.
  */
-function HermesParserDecodeUTF8String(ptr, length, heap) {
+export default function HermesParserDecodeUTF8String(
+  ptrIn: number,
+  length: number,
+  heap: Uint8Array,
+): string {
+  let ptr = ptrIn;
   const endPtr = ptr + length;
   let str = '';
 
@@ -31,13 +37,13 @@ function HermesParserDecodeUTF8String(ptr, length, heap) {
 
     // Two byte code point
     const u1 = heap[ptr++] & 0x3f;
-    if ((u0 & 0xe0) == 0xc0) {
+    if ((u0 & 0xe0) === 0xc0) {
       str += String.fromCharCode(((u0 & 0x1f) << 6) | u1);
       continue;
     }
 
     const u2 = heap[ptr++] & 0x3f;
-    if ((u0 & 0xf0) == 0xe0) {
+    if ((u0 & 0xf0) === 0xe0) {
       // Three byte code point
       u0 = ((u0 & 0x0f) << 12) | (u1 << 6) | u2;
     } else {
@@ -57,5 +63,3 @@ function HermesParserDecodeUTF8String(ptr, length, heap) {
 
   return str;
 }
-
-module.exports = HermesParserDecodeUTF8String;

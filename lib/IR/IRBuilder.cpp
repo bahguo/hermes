@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -11,11 +11,9 @@
 #include "hermes/AST/Context.h"
 #include "hermes/IR/IR.h"
 #include "hermes/IR/IRBuilder.h"
-#include "hermes/Support/OSCompat.h"
 
 using namespace hermes;
 
-using hermes::oscompat::to_string;
 using llvh::cast;
 using llvh::dyn_cast;
 using llvh::isa;
@@ -29,6 +27,7 @@ Function *IRBuilder::createFunction(
     Identifier OriginalName,
     Function::DefinitionKind definitionKind,
     bool strictMode,
+    SourceVisibility sourceVisibility,
     SMRange sourceRange,
     bool isGlobal,
     Function *insertBefore) {
@@ -43,6 +42,7 @@ Function *IRBuilder::createFunction(
       OriginalName,
       definitionKind,
       strictMode,
+      sourceVisibility,
       isGlobal,
       sourceRange,
       insertBefore);
@@ -52,6 +52,7 @@ GeneratorFunction *IRBuilder::createGeneratorFunction(
     Identifier OriginalName,
     Function::DefinitionKind definitionKind,
     bool strictMode,
+    SourceVisibility sourceVisibility,
     SMRange sourceRange,
     Function *insertBefore) {
   if (!OriginalName.isValid()) {
@@ -64,6 +65,7 @@ GeneratorFunction *IRBuilder::createGeneratorFunction(
       OriginalName,
       definitionKind,
       strictMode,
+      sourceVisibility,
       /* isGlobal */ false,
       sourceRange,
       insertBefore);
@@ -98,6 +100,7 @@ ExternalScope *IRBuilder::createExternalScope(
 
 Function *IRBuilder::createTopLevelFunction(
     bool strictMode,
+    SourceVisibility sourceVisibility,
     SMRange sourceRange) {
   // Notice that this synthesized name is not a legal javascript name and
   // can't collide with functions in the processed program.
@@ -105,6 +108,7 @@ Function *IRBuilder::createTopLevelFunction(
       "global",
       Function::DefinitionKind::ES5Function,
       strictMode,
+      sourceVisibility,
       sourceRange,
       true);
 }
@@ -113,6 +117,7 @@ Function *IRBuilder::createFunction(
     StringRef OriginalName,
     Function::DefinitionKind definitionKind,
     bool strictMode,
+    SourceVisibility sourceVisibility,
     SMRange sourceRange,
     bool isGlobal,
     Function *insertBefore) {
@@ -122,6 +127,7 @@ Function *IRBuilder::createFunction(
       OrigIden,
       definitionKind,
       strictMode,
+      sourceVisibility,
       sourceRange,
       isGlobal,
       insertBefore);
@@ -131,6 +137,7 @@ AsyncFunction *IRBuilder::createAsyncFunction(
     Identifier OriginalName,
     Function::DefinitionKind definitionKind,
     bool strictMode,
+    SourceVisibility sourceVisibility,
     SMRange sourceRange,
     Function *insertBefore) {
   if (!OriginalName.isValid()) {
@@ -143,6 +150,7 @@ AsyncFunction *IRBuilder::createAsyncFunction(
       OriginalName,
       definitionKind,
       strictMode,
+      sourceVisibility,
       /* isGlobal */ false,
       sourceRange,
       insertBefore);
@@ -447,7 +455,7 @@ StoreOwnPropertyInst *IRBuilder::createStoreOwnPropertyInst(
 StoreNewOwnPropertyInst *IRBuilder::createStoreNewOwnPropertyInst(
     Value *storedValue,
     Value *object,
-    LiteralString *property,
+    Literal *property,
     PropEnumerable isEnumerable) {
   auto *inst = new StoreNewOwnPropertyInst(
       storedValue,
@@ -859,6 +867,17 @@ GetBuiltinClosureInst *IRBuilder::createGetBuiltinClosureInst(
   return inst;
 }
 
+#ifdef HERMES_RUN_WASM
+CallIntrinsicInst *IRBuilder::createCallIntrinsicInst(
+    WasmIntrinsics::Enum intrinsicsIndex,
+    ArrayRef<Value *> arguments) {
+  auto *inst =
+      new CallIntrinsicInst(getLiteralNumber(intrinsicsIndex), arguments);
+  insert(inst);
+  return inst;
+}
+#endif
+
 HBCCallDirectInst *IRBuilder::createHBCCallDirectInst(
     Function *callee,
     Value *thisValue,
@@ -895,6 +914,13 @@ HBCAllocObjectFromBufferInst *IRBuilder::createHBCAllocObjectFromBufferInst(
     uint32_t size) {
   auto *inst =
       new HBCAllocObjectFromBufferInst(M->getLiteralNumber(size), prop_map);
+  insert(inst);
+  return inst;
+}
+
+AllocObjectLiteralInst *IRBuilder::createAllocObjectLiteralInst(
+    const AllocObjectLiteralInst::ObjectPropertyMap &propMap) {
+  auto *inst = new AllocObjectLiteralInst(propMap);
   insert(inst);
   return inst;
 }

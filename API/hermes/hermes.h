@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -12,6 +12,7 @@
 #include <list>
 #include <map>
 #include <memory>
+#include <ostream>
 #include <string>
 
 #include <hermes/Public/RuntimeConfig.h>
@@ -20,21 +21,13 @@
 
 #ifndef HERMES_EXPORT
 #ifdef _MSC_VER
-#ifdef CREATE_SHARED_LIBRARY
 #define HERMES_EXPORT __declspec(dllexport)
-#else
-#define HERMES_EXPORT
-#endif // CREATE_SHARED_LIBRARY
 #else // _MSC_VER
 #define HERMES_EXPORT __attribute__((visibility("default")))
 #endif // _MSC_VER
 #endif // !defined(HERMES_EXPORT)
 
 struct HermesTestHelper;
-
-namespace llvh {
-class raw_ostream;
-}
 
 namespace hermes {
 namespace vm {
@@ -96,7 +89,11 @@ class HERMES_EXPORT HermesRuntime : public jsi::Runtime {
   static void dumpSampledTraceToFile(const std::string &fileName);
 
   /// Dump sampled stack trace to the given stream.
-  static void dumpSampledTraceToStream(llvh::raw_ostream &stream);
+  static void dumpSampledTraceToStream(std::ostream &stream);
+
+  /// Serialize the sampled stack to the format expected by DevTools'
+  /// Profiler.stop return type.
+  void sampledTraceToStreamInDevToolsFormat(std::ostream &stream);
 
   /// Return the executed JavaScript function info.
   /// This information holds the segmentID, Virtualoffset and sourceURL.
@@ -135,6 +132,17 @@ class HERMES_EXPORT HermesRuntime : public jsi::Runtime {
   uint64_t getUniqueID(const jsi::Object &o) const;
   uint64_t getUniqueID(const jsi::String &s) const;
   uint64_t getUniqueID(const jsi::PropNameID &pni) const;
+  uint64_t getUniqueID(const jsi::Symbol &sym) const;
+
+  /// Same as the other \c getUniqueID, except it can return 0 for some values.
+  /// 0 means there is no ID associated with the value.
+  uint64_t getUniqueID(const jsi::Value &val) const;
+
+  /// From an ID retrieved from \p getUniqueID, go back to the object.
+  /// NOTE: This is much slower in general than the reverse operation, and takes
+  /// up more memory. Don't use this unless it's absolutely necessary.
+  /// \return a jsi::Object if a matching object is found, else returns null.
+  jsi::Value getObjectForID(uint64_t id);
 
   /// Get a structure representing the environment-dependent behavior, so
   /// it can be written into the trace for later replay.
@@ -156,12 +164,12 @@ class HERMES_EXPORT HermesRuntime : public jsi::Runtime {
 
 #ifdef HERMESVM_PROFILER_BB
   /// Write the trace to the given stream.
-  void dumpBasicBlockProfileTrace(llvh::raw_ostream &os) const;
+  void dumpBasicBlockProfileTrace(std::ostream &os) const;
 #endif
 
 #ifdef HERMESVM_PROFILER_OPCODE
   /// Write the opcode stats to the given stream.
-  void dumpOpcodeStats(llvh::raw_ostream &os) const;
+  void dumpOpcodeStats(std::ostream &os) const;
 #endif
 
 #ifdef HERMESVM_PROFILER_EXTERN

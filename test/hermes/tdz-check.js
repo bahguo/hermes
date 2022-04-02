@@ -1,12 +1,12 @@
 /**
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
  */
 
-// RUN: %hermes %s | %FileCheck --match-full-lines %s
-// RUN: %hermes -O %s | %FileCheck --match-full-lines %s
+// RUN: %hermes -Xenable-tdz -O0 %s | %FileCheck --match-full-lines %s
+// RUN: %hermes -Xenable-tdz -O %s | %FileCheck --match-full-lines %s
 
 function test(f) {
     try {
@@ -43,5 +43,10 @@ test(() => {
     let x = init();
     function init(p1) { return p1 ? 10 : x; }
     return x;
+});
+//CHECK-NEXT: caught ReferenceError: accessing an uninitialized variable
+
+test(() => {
+    const foo = print(foo, typeof foo)
 });
 //CHECK-NEXT: caught ReferenceError: accessing an uninitialized variable

@@ -1,10 +1,7 @@
-# Copyright (c) Facebook, Inc. and its affiliates.
+# Copyright (c) Meta Platforms, Inc. and affiliates.
 #
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
-
-set(CMAKE_CXX_STANDARD 14)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 include_directories(.)
 
@@ -30,12 +27,10 @@ if(HERMES_IS_ANDROID)
       libhermes
       hermesapi
       compileJS
-      hermesfbjni
+      fbjni::fbjni
       jsi
-      ${CORE_FOUNDATION}
   )
   target_compile_options(jsijni PRIVATE -frtti -fexceptions)
-  hermes_link_icu(jsijni)
 
   add_hermes_library(jsijniepi SHARED
       ${epi_source_files}
@@ -43,10 +38,8 @@ if(HERMES_IS_ANDROID)
       libhermes
       hermesapi
       compileJS
-      hermesfbjni
+      fbjni::fbjni
       jsi
-      ${CORE_FOUNDATION}
   )
   target_compile_options(jsijniepi PRIVATE -frtti -fexceptions)
-  hermes_link_icu(jsijniepi)
 endif()

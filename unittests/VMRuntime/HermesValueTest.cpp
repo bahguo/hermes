@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -264,8 +264,8 @@ TEST(HermesValueTest, NanTest) {
           .getDouble();
   EXPECT_TRUE(std::isnan(v1));
   EXPECT_TRUE(std::isnan(v2));
-  int64_t v1_int = hermes::safeTypeCast<double, int64_t>(v1);
-  int64_t v2_int = hermes::safeTypeCast<double, int64_t>(v2);
+  int64_t v1_int = llvh::DoubleToBits(v1);
+  int64_t v2_int = llvh::DoubleToBits(v2);
   EXPECT_EQ(v1_int, v2_int);
 }
 
@@ -305,11 +305,11 @@ TEST(HermesValueTest, OutputStreamTest) {
   llvh::raw_string_ostream OS(result);
 
   result.clear();
-  OS << HermesValue::encodeObjectValue(nullptr);
+  OS << HermesValue::encodeObjectValueUnsafe(nullptr);
   EXPECT_EQ("[Object :0 0x00000000]", OS.str());
 
   result.clear();
-  OS << HermesValue::encodeStringValue(nullptr);
+  OS << HermesValue::encodeStringValueUnsafe(nullptr);
   EXPECT_EQ("[String :0 0x00000000]", OS.str());
 
   result.clear();
@@ -349,6 +349,11 @@ TEST(HermesValueTest, NativePointerTest) {
   void *scaryPointer = reinterpret_cast<void *>((uint64_t)1 << 46);
   auto hv = HermesValue::encodeNativePointer(scaryPointer);
   ASSERT_EQ(scaryPointer, hv.getNativePointer<void>());
+
+  // Ensure that MTE bits set in the top byte of a native pointer are not lost.
+  void *mtePointer = reinterpret_cast<void *>((7ULL << 56) | 0xFACEB00C);
+  auto mteHV = HermesValue::encodeNativePointer(mtePointer);
+  ASSERT_EQ(mtePointer, mteHV.getNativePointer<void>());
 #endif
 }
 } // anonymous namespace.

@@ -1,5 +1,5 @@
 /**
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -69,7 +69,7 @@ print(new Date(-1, 2, 15, 15, 1, 37, 243).toString());
 print(new Date(NaN, 2, 15, 15, 1, 37, 243).toString());
 // CHECK-NEXT: Invalid Date
 print(new Date('2016T12:30').toString());
-// CHECK-NEXT: Fri Jan 01 2016 05:30:00 GMT-0700
+// CHECK-NEXT: Fri Jan 01 2016 12:30:00 GMT-0700
 
 print('@@toPrimitive');
 // CHECK-LABEL: @@toPrimitive
@@ -109,7 +109,7 @@ print(new Date(-1, 0, 0, 0, 0, 0).toUTCString());
 print('toJSON');
 // CHECK-LABEL: toJSON
 print(new Date('2016T12:30').toJSON());
-// CHECK-NEXT: 2016-01-01T12:30:00.000Z
+// CHECK-NEXT: 2016-01-01T19:30:00.000Z
 print(Date.prototype.toJSON.call({valueOf: function() {return Infinity;}}));
 // CHECK-NEXT: null
 try {
@@ -174,6 +174,8 @@ print(Date.parse('2016T12:30asdf'));
 // CHECK-NEXT: NaN
 print(Date.parse('2016T12:30Z-07:00'));
 // CHECK-NEXT: NaN
+print(Date.parse('2016T12:30-07'));
+// CHECK-NEXT: NaN
 print(Date.parse('2016-+01T12:30Z'));
 // CHECK-NEXT: NaN
 print(Date.parse('2016T12:30:00.000-07:00asdf'));
@@ -191,18 +193,28 @@ print(Date.parse('2016T12:30:00.000Z'));
 print(Date.parse('2016'));
 // CHECK-NEXT: 1451606400000
 print(Date.parse('2016T12:30'));
-// CHECK-NEXT: 1451651400000
+// CHECK-NEXT: 1451676600000
 print(Date.parse('2016T12:30:00.000-07:00'));
 // CHECK-NEXT: 1451676600000
 print(Date.parse('2016T12:30:47.1-07:00'));
 // CHECK-NEXT: 1451676647100
+print(Date.parse('2016T12:30:47.1-0700'));
+// CHECK-NEXT: 1451676647100
 print(Date.parse('2016T12:30:47.12-07:00'));
+// CHECK-NEXT: 1451676647120
+print(Date.parse('2016T12:30:47.12-0700'));
 // CHECK-NEXT: 1451676647120
 print(Date.parse('2016T12:30:47.123-07:00'));
 // CHECK-NEXT: 1451676647123
+print(Date.parse('2016T12:30:47.123-0700'));
+// CHECK-NEXT: 1451676647123
 print(Date.parse('2016T12:30:47.1234-07:00'));
 // CHECK-NEXT: 1451676647123
+print(Date.parse('2016T12:30:47.1234-0700'));
+// CHECK-NEXT: 1451676647123
 print(Date.parse('2016T12:30:47.760738998-07:00'));
+// CHECK-NEXT: 1451676647760
+print(Date.parse('2016T12:30:47.760738998-0700'));
 // CHECK-NEXT: 1451676647760
 print(Date.parse('2016T12:30:47.760-07:00') === Date.parse('2016T12:30:47.760738998-07:00'));
 +// CHECK-NEXT: true
@@ -244,53 +256,62 @@ print(Date.parse('Mon Jul 16 2019 13:1525 GMT-0700'));
 // CHECK-NEXT: NaN
 print(Date.parse('Mon Jul 16 2019 13:1525 GMT'));
 // CHECK-NEXT: NaN
+print(Date.parse('Mon Jul 16 2019 00:00:00'));
+// CHECK-NEXT: 1563260400000
+print(Date.parse('Mon Jul 16 2019'));
+// CHECK-NEXT: 1563260400000
 print(Date.parse('2021-04-10T01:00:00.000-01:30'));
+// CHECK-NEXT: 1618021800000
+print(Date.parse('2021-04-10T01:00:00.000-0130'));
 // CHECK-NEXT: 1618021800000
 
 // Fault tolerance on garbages (marked as "G"s).
-// TODO(T66628172) adapt to local timezone.
+print('Fault tolerance');
+// CHECK-LABEL: Fault tolerance
 print(Date.parse('TueG 05 May 2020 00:00:00'));
-// CHECK-NEXT: 1588636800000
+// CHECK-NEXT: 1588662000000
 print(Date.parse('Tue G G 05 May 2020 00:00:00'));
-// CHECK-NEXT: 1588636800000
+// CHECK-NEXT: 1588662000000
 print(Date.parse('Tue ,, G ,, 05 May 2020 00:00:00'));
-// CHECK-NEXT: 1588636800000
+// CHECK-NEXT: 1588662000000
 print(Date.parse('Tue 05 MayG 2020 00:00:00'));
-// CHECK-NEXT: 1588636800000
+// CHECK-NEXT: 1588662000000
 print(Date.parse('Tue 05 May G 2020 00:00:00'));
 // CHECK-NEXT: NaN
 print(Date.parse('TueG May 05 2020 00:00:00'));
-// CHECK-NEXT: 1588636800000
+// CHECK-NEXT: 1588662000000
 print(Date.parse('Tue G May 05 2020 00:00:00'));
-// CHECK-NEXT: 1588636800000
+// CHECK-NEXT: 1588662000000
 print(Date.parse('Tue ,, G ,, May 05 2020 00:00:00'));
-// CHECK-NEXT: 1588636800000
+// CHECK-NEXT: 1588662000000
 print(Date.parse('Tue MayG 05 2020 00:00:00'));
-// CHECK-NEXT: 1588636800000
+// CHECK-NEXT: 1588662000000
 print(Date.parse('Tue May G 05 2020 00:00:00'));
 // CHECK-NEXT: NaN
 
 // Fault tolerance on spaces.
 print(Date.parse('Tue  05 May 2020 00:00:00'));
-// CHECK-NEXT: 1588636800000
+// CHECK-NEXT: 1588662000000
 print(Date.parse('Tue 05  May 2020 00:00:00'));
-// CHECK-NEXT: 1588636800000
+// CHECK-NEXT: 1588662000000
 print(Date.parse('Tue 05 May  2020 00:00:00'));
-// CHECK-NEXT: 1588636800000
+// CHECK-NEXT: 1588662000000
 print(Date.parse('Tue 05 May 2020  00:00:00'));
-// CHECK-NEXT: 1588636800000
+// CHECK-NEXT: 1588662000000
 print(Date.parse('Tue  May 05 2020 00:00:00'));
-// CHECK-NEXT: 1588636800000
+// CHECK-NEXT: 1588662000000
 print(Date.parse('Tue May  05 2020 00:00:00'));
-// CHECK-NEXT: 1588636800000
+// CHECK-NEXT: 1588662000000
 print(Date.parse('Tue May 05  2020 00:00:00'));
-// CHECK-NEXT: 1588636800000
+// CHECK-NEXT: 1588662000000
 print(Date.parse('Tue May 05 2020  00:00:00'));
-// CHECK-NEXT: 1588636800000
+// CHECK-NEXT: 1588662000000
 print(Date.parse('Tue May 05 2020 00:00:00  PDT'));
 // CHECK-NEXT: 1588662000000
 print(Date.parse('Tue May 05 2020 00:00:00'.padEnd(60)));  // trailing spaces.
-// CHECK-NEXT: 1588636800000
+// CHECK-NEXT: 1588662000000
+print(Date.parse('Tue May 05 2020'.padEnd(60)));
+// CHECK-NEXT: 1588662000000
 
 // Quick check that getters work; internal functions are unit tested instead.
 print('getters');

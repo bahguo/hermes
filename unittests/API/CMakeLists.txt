@@ -1,26 +1,28 @@
-# Copyright (c) Facebook, Inc. and its affiliates.
+# Copyright (c) Meta Platforms, Inc. and affiliates.
 #
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
-set(CMAKE_CXX_STANDARD 14)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-
-set(APISources
+set(APITestsSources
   APITest.cpp
   APITestFactory.cpp
-  APILeanTest.cpp
   DebuggerTest.cpp
   SegmentTest.cpp
+  HeapSnapshotAPITest.cpp
+  SynthTraceTest.cpp
+  SynthTraceParserTest.cpp
   )
 set(APISegmentTestCompileSources
   SegmentTestCompile.cpp
+  )
+set(SamplingProfilerSources
+  SamplingProfilerPosixHermesAPITest.cpp
   )
 
 set(HERMES_LINK_COMPONENTS LLVHSupport)
 
 # Build SegmentTestCompile without EH and RTTI
-add_hermes_library(SegmentTestCompile STATIC ${APISegmentTestCompileSources})
+add_hermes_library(SegmentTestCompile STATIC ${APISegmentTestCompileSources} LINK_LIBS hermesHBCBackend)
 
 # Turn on EH and RTTI for APITests
 set(HERMES_ENABLE_EH ON)
@@ -29,11 +31,14 @@ set(HERMES_ENABLE_RTTI ON)
 # we need to set this one.
 set(LLVM_ENABLE_RTTI ON)
 
-set(APITestsSources ${APISources} ${APITraceSources})
 add_hermes_unittest(APITests ${APITestsSources})
 
-include_directories(${HERMES_SOURCE_DIR}/API)
-include_directories(${HERMES_JSI_DIR})
-# TODO: The synth trace and heap snapshot tests are currently disabled
+# TODO(T111467508): The synth trace serialization tests are currently disabled
 # because of build issues. We should find a way to re-enable them.
-target_link_libraries(APITests hermesapi compileJS SegmentTestCompile)
+target_link_libraries(APITests hermesapi compileJS SegmentTestCompile traceInterpreter)
+
+add_hermes_unittest(APILeanTests APILeanTest.cpp)
+target_link_libraries(APILeanTests hermesapiLean)
+
+add_hermes_unittest(SamplingProfilerTests ${SamplingProfilerSources})
+target_link_libraries(SamplingProfilerTests hermesapiLean hermesVMRuntimeLean)

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -11,10 +11,8 @@
 #include "hermes/BCGen/HBC/SerializedLiteralGenerator.h"
 #include "hermes/FrontEndDefs/Builtins.h"
 #include "hermes/Support/JenkinsHash.h"
-#include "hermes/Support/OSCompat.h"
 #include "hermes/Support/RegExpSerialization.h"
 #include "hermes/Support/SHA1.h"
-#include "hermes/Support/UTF8.h"
 
 #include <cstdint>
 #include <iomanip>
@@ -25,7 +23,6 @@
 #include "llvh/Support/ErrorHandling.h"
 
 using namespace hermes::inst;
-using hermes::oscompat::to_string;
 using SLG = hermes::hbc::SerializedLiteralGenerator;
 
 namespace hermes {
@@ -63,31 +60,31 @@ std::string SLPToString(SLG::TagType tag, const unsigned char *buff, int *ind) {
       uint8_t val = llvh::support::endian::read<uint8_t, 1>(
           buff + *ind, llvh::support::endianness::little);
       *ind += 1;
-      return std::string("[String ") + to_string(val) + rBracket;
+      return std::string("[String ") + std::to_string(val) + rBracket;
     }
     case SLG::ShortStringTag: {
       uint16_t val = llvh::support::endian::read<uint16_t, 1>(
           buff + *ind, llvh::support::endianness::little);
       *ind += 2;
-      return std::string("[String ") + to_string(val) + rBracket;
+      return std::string("[String ") + std::to_string(val) + rBracket;
     }
     case SLG::LongStringTag: {
       uint32_t val = llvh::support::endian::read<uint32_t, 1>(
           buff + *ind, llvh::support::endianness::little);
       *ind += 4;
-      return std::string("[String ") + to_string(val) + rBracket;
+      return std::string("[String ") + std::to_string(val) + rBracket;
     }
     case SLG::NumberTag: {
       double val = llvh::support::endian::read<double, 1>(
           buff + *ind, llvh::support::endianness::little);
       *ind += 8;
-      return std::string("[double ") + to_string(val) + rBracket;
+      return std::string("[double ") + std::to_string(val) + rBracket;
     }
     case SLG::IntegerTag: {
       uint32_t val = llvh::support::endian::read<uint32_t, 1>(
           buff + *ind, llvh::support::endianness::little);
       *ind += 4;
-      return std::string("[int ") + to_string(val) + rBracket;
+      return std::string("[int ") + std::to_string(val) + rBracket;
     }
     case SLG::NullTag:
       return "null";
@@ -129,6 +126,8 @@ void BytecodeDisassembler::disassembleBytecodeFileHeader(raw_ostream &OS) {
      << "\n";
   OS << "  CommonJS module count (static): "
      << bcProvider_->getCJSModuleTableStatic().size() << "\n";
+  OS << "  Function source count: "
+     << bcProvider_->getFunctionSourceTable().size() << "\n";
   OS << "  Bytecode options:\n";
   OS << "    staticBuiltins: " << bcopts.staticBuiltins << "\n";
   OS << "    cjsModulesStaticallyResolved: "
@@ -270,6 +269,17 @@ void BytecodeDisassembler::disassembleCJSModuleTable(raw_ostream &OS) {
       uint32_t functionID = cjsModulesStatic[i].second;
       OS << "Module ID " << moduleID << " -> function ID " << functionID
          << '\n';
+    }
+    OS << '\n';
+  }
+}
+
+void BytecodeDisassembler::disassembleFunctionSourceTable(raw_ostream &OS) {
+  auto functionSources = bcProvider_->getFunctionSourceTable();
+  if (!functionSources.empty()) {
+    OS << "Function Source Table:\n";
+    for (const auto &pair : functionSources) {
+      OS << "  Function ID " << pair.first << " -> s" << pair.second << '\n';
     }
     OS << '\n';
   }
@@ -1095,6 +1105,7 @@ void BytecodeDisassembler::disassemble(raw_ostream &OS) {
   disassembleArrayBuffer(OS);
   disassembleObjectBuffer(OS);
   disassembleCJSModuleTable(OS);
+  disassembleFunctionSourceTable(OS);
 
   for (unsigned funcId = 0; funcId < bcProvider_->getFunctionCount();
        ++funcId) {

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -40,17 +40,6 @@ ForwardIt uninitializedCopyN(InputIt src, Size count, ForwardIt dst) {
   if (std::is_trivial<SrcType>::value && std::is_trivial<DstType>::value)
     return std::copy_n(src, count, dst);
   return std::uninitialized_copy_n(src, count, dst);
-}
-
-/// std::min and std::max are only made constexpr in C++14.
-template <class T>
-constexpr const T &max(const T &a, const T &b) {
-  return a < b ? b : a;
-}
-
-template <class T>
-constexpr const T &min(const T &a, const T &b) {
-  return b < a ? b : a;
 }
 
 } // namespace hermes

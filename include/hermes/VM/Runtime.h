@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -18,7 +18,6 @@
 #include "hermes/VM/CallResult.h"
 #include "hermes/VM/Casting.h"
 #include "hermes/VM/Debugger/Debugger.h"
-#include "hermes/VM/Deserializer.h"
 #include "hermes/VM/GC.h"
 #include "hermes/VM/GCBase-inline.h"
 #include "hermes/VM/GCStorage.h"
@@ -35,7 +34,6 @@
 #include "hermes/VM/RegExpMatch.h"
 #include "hermes/VM/RuntimeModule.h"
 #include "hermes/VM/RuntimeStats.h"
-#include "hermes/VM/Serializer.h"
 #include "hermes/VM/StackFrame.h"
 #include "hermes/VM/StackTracesTree-NoRuntime.h"
 #include "hermes/VM/SymbolRegistry.h"
@@ -100,7 +98,7 @@ static const unsigned STACK_RESERVE = 32;
 /// Type used to assign object unique integer identifiers.
 using ObjectID = uint32_t;
 
-using DestructionCallback = std::function<void(Runtime *)>;
+using DestructionCallback = std::function<void(Runtime &)>;
 
 #define PROP_CACHE_IDS(V) V(RegExpLastIndex, Predefined::lastIndex)
 
@@ -214,7 +212,7 @@ class Runtime : public HandleRootOwner,
   /// collection to mark additional weak GC roots that may not be known to the
   /// Runtime.
   void addCustomWeakRootsFunction(
-      std::function<void(GC *, WeakRefAcceptor &)> markRootsFn);
+      std::function<void(GC *, WeakRootAcceptor &)> markRootsFn);
 
   /// Add a custom function that will be executed when a heap snapshot is taken,
   /// to add any extra nodes.
@@ -238,7 +236,7 @@ class Runtime : public HandleRootOwner,
   CallResult<HermesValue> run(
       llvh::StringRef code,
       llvh::StringRef sourceURL,
-      hbc::CompileFlags compileFlags);
+      const hbc::CompileFlags &compileFlags);
 
   /// Runs the given UTF-8 \p code in a new RuntimeModule as top-level code.
   /// \param sourceURL the location of the source that's being run.
@@ -247,7 +245,7 @@ class Runtime : public HandleRootOwner,
   CallResult<HermesValue> run(
       std::unique_ptr<Buffer> code,
       llvh::StringRef sourceURL,
-      hbc::CompileFlags compileFlags);
+      const hbc::CompileFlags &compileFlags);
 
   /// Runs the given \p bytecode with the given \p runtimeModuleFlags. The \p
   /// sourceURL, if not empty, is reported as the file name in backtraces. If \p
@@ -370,10 +368,10 @@ class Runtime : public HandleRootOwner,
 
   /// A wrapper to facilitate printing the name of a SymbolID to a stream.
   struct FormatSymbolID {
-    Runtime *const runtime;
+    Runtime &runtime;
     SymbolID const symbolID;
 
-    FormatSymbolID(Runtime *runtime, SymbolID symbolID)
+    FormatSymbolID(Runtime &runtime, SymbolID symbolID)
         : runtime(runtime), symbolID(symbolID) {}
   };
 
@@ -728,22 +726,25 @@ class Runtime : public HandleRootOwner,
   ExecutionStatus stepFunction(InterpreterState &state);
 #endif
 
-  /// Inserts an object into the string cycle checking stack.
+  /// Inserts an object into the string cycle checking stack if it does not
+  /// already exist.
   /// \return true if a cycle was found
-  CallResult<bool> insertVisitedObject(Handle<JSObject> obj);
+  bool insertVisitedObject(JSObject *obj);
 
   /// Removes the last element (which must be obj) from the cycle check stack.
   /// \param obj the last element, which will be removed. Used for checking
   /// that invariants aren't violated in debug mode.
-  void removeVisitedObject(Handle<JSObject> obj);
+  void removeVisitedObject(JSObject *obj);
 
   /// Like calling JSObject::getNamed, but uses this runtime's property cache.
   CallResult<PseudoHandle<>> getNamed(Handle<JSObject> obj, PropCacheID id);
 
   /// Like calling JSObject::putNamed with the ThrowOnError flag, but uses this
   /// runtime's property cache.
-  ExecutionStatus
-  putNamedThrowOnError(Handle<JSObject> obj, PropCacheID id, HermesValue hv);
+  ExecutionStatus putNamedThrowOnError(
+      Handle<JSObject> obj,
+      PropCacheID id,
+      SmallHermesValue hv);
 
   /// @}
 
@@ -881,6 +882,21 @@ class Runtime : public HandleRootOwner,
     return getCallStackNoAlloc(nullptr);
   }
 
+  /// \return whether we are currently formatting a stack trace. Used to break
+  /// recursion in Error.prepareStackTrace.
+  bool formattingStackTrace() const {
+    return formattingStackTrace_;
+  }
+
+  /// Mark whether we are currently formatting a stack trace. Used to break
+  /// recursion in Error.prepareStackTrace.
+  void setFormattingStackTrace(bool value) {
+    assert(
+        value != formattingStackTrace() &&
+        "All calls to setFormattingStackTrace must actually change the current state");
+    formattingStackTrace_ = value;
+  }
+
   /// A stack overflow exception is thrown when \c nativeCallFrameDepth_ exceeds
   /// this threshold.
   static constexpr unsigned MAX_NATIVE_CALL_FRAME_DEPTH =
@@ -907,27 +923,6 @@ class Runtime : public HandleRootOwner,
 
   /// Called when various GC events(e.g. collection start/end) happen.
   void onGCEvent(GCEventKind kind, const std::string &extraInfo) override;
-
-#ifdef HERMESVM_SERIALIZE
-  /// Fill the header with current Runtime config
-  void populateHeaderRuntimeConfig(SerializeHeader &header);
-
-  /// Check if the SerializeHeader read from the file matches Runtime config of
-  /// current run.
-  void checkHeaderRuntimeConfig(SerializeHeader &header) const;
-
-  /// Serialize the VM state.
-  void serialize(Serializer &s);
-
-  /// Set the closure function to execute after deserialization.
-  void setSerializeClosure(Handle<JSFunction> function) {
-    serializeClosure = function.getHermesValue();
-  }
-
-  HermesValue getSerializeClosure() {
-    return serializeClosure;
-  }
-#endif
 
 #ifdef HERMESVM_PROFILER_BB
   using ClassId = InlineCacheProfiler::ClassId;
@@ -956,14 +951,6 @@ class Runtime : public HandleRootOwner,
   void getInlineCacheProfilerInfo(llvh::raw_ostream &ostream);
 #endif
 
- protected:
-  /// Construct a Runtime on the stack.
-  /// NOTE: This should only be used by StackRuntime. All other uses should use
-  /// Runtime::create.
-  explicit Runtime(
-      std::shared_ptr<StorageProvider> provider,
-      const RuntimeConfig &runtimeConfig);
-
 #if defined(HERMESVM_PROFILER_EXTERN)
  public:
 #else
@@ -973,6 +960,10 @@ class Runtime : public HandleRootOwner,
   CallResult<HermesValue> interpretFunctionImpl(CodeBlock *newCodeBlock);
 
  private:
+  explicit Runtime(
+      std::shared_ptr<StorageProvider> provider,
+      const RuntimeConfig &runtimeConfig);
+
   /// Called by the GC at the beginning of a collection. This method informs the
   /// GC of all runtime roots.  The \p markLongLived argument
   /// indicates whether root data structures that contain only
@@ -983,7 +974,8 @@ class Runtime : public HandleRootOwner,
 
   /// Called by the GC during collections that may reset weak references. This
   /// method informs the GC of all runtime weak roots.
-  void markWeakRoots(WeakRootAcceptor &weakAcceptor) override;
+  void markWeakRoots(WeakRootAcceptor &weakAcceptor, bool markLongLived)
+      override;
 
   /// See documentation on \c GCBase::GCCallbacks.
   void markRootsForCompleteMarking(
@@ -1107,28 +1099,11 @@ class Runtime : public HandleRootOwner,
   /// Write a JS stack trace as part of a \c crashCallback() run.
   void crashWriteCallStack(JSONEmitter &json);
 
-#ifdef HERMESVM_SERIALIZE
-  void serializeIdentifierTable(Serializer &s);
-
-  /// Serialize Runtime fields.
-  void serializeRuntimeFields(Serializer &s);
-
-  /// Deserialize Runtime fields.
-  void deserializeRuntimeFields(Deserializer &d);
-
-  /// Deserialize the VM state.
-  /// \param inputFile MemoryBuffer to read from.
-  /// \param currentlyInYoung Whether we are allocating from the young gen
-  /// before deserialization starts and should we go back to allocating from the
-  /// young gen after deserialziation.
-  void deserializeImpl(Deserializer &d, bool currentlyInYoung);
-#endif
-
  private:
   GCStorage heapStorage_;
 
   std::vector<std::function<void(GC *, RootAcceptor &)>> customMarkRootFuncs_;
-  std::vector<std::function<void(GC *, WeakRefAcceptor &)>>
+  std::vector<std::function<void(GC *, WeakRootAcceptor &)>>
       customMarkWeakRootFuncs_;
   std::vector<std::function<void(HeapSnapshot &)>> customSnapshotNodeFuncs_;
   std::vector<std::function<void(HeapSnapshot &)>> customSnapshotEdgeFuncs_;
@@ -1151,6 +1126,10 @@ class Runtime : public HandleRootOwner,
   // Signal-based I/O tracking. Slows down execution.
   const bool trackIO_;
 
+  // Whether we are currently formatting a stack trace. Used to break recursion
+  // in Error.prepareStackTrace.
+  bool formattingStackTrace_{false};
+
   /// This value can be passed to the runtime as flags to test experimental
   /// features. Each experimental feature decides how to interpret these
   /// values. Generally each experiment is associated with one or more bits of
@@ -1169,6 +1148,7 @@ class Runtime : public HandleRootOwner,
   friend class ScopedNativeDepthTracker;
   friend class ScopedNativeCallFrame;
 
+  class StackRuntime;
   class MarkRootsPhaseTimer;
 
   /// Whenever we pass through the first phase, we record the current time here,
@@ -1218,13 +1198,12 @@ class Runtime : public HandleRootOwner,
   /// @name Private VM State
   /// @{
 
-  PinnedHermesValue *registerStack_;
+  /// If the register stack is allocated by the runtime, then this stores its
+  /// location and size.
+  llvh::MutableArrayRef<PinnedHermesValue> registerStackAllocation_;
+  PinnedHermesValue *registerStackStart_;
   PinnedHermesValue *registerStackEnd_;
   PinnedHermesValue *stackPointer_;
-  /// Bytes of register stack to unmap on destruction.
-  /// When set to zero, the register stack is not allocated
-  /// by the runtime itself.
-  uint32_t registerStackBytesToUnmap_{0};
   /// Manages data to be used in the case of a crash.
   std::shared_ptr<CrashManager> crashMgr_;
   /// Points to the last register in the callers frame. The current frame (the
@@ -1238,7 +1217,9 @@ class Runtime : public HandleRootOwner,
 
   /// rootClazzes_[i] is a PinnedHermesValue pointing to a hidden class with
   /// its i first slots pre-reserved.
-  std::array<PinnedHermesValue, InternalProperty::NumInternalProperties + 1>
+  std::array<
+      PinnedHermesValue,
+      InternalProperty::NumAnonymousInternalProperties + 1>
       rootClazzes_;
 
   /// Cache for property lookups in non-JS code.
@@ -1248,6 +1229,10 @@ class Runtime : public HandleRootOwner,
   /// These are allocated as "long-lived" objects, so they don't need
   /// to be scanned as roots in young-gen collections.
   std::vector<PinnedHermesValue> charStrings_{};
+
+  /// Keeps track of objects that have already been visited in order to detect
+  /// cycles while doing string conversions.
+  std::vector<JSObject *> stringCycleCheckVisited_{};
 
   /// Pointers to callable implementations of builtins.
   std::vector<Callable *> builtins_{};
@@ -1320,7 +1305,7 @@ class Runtime : public HandleRootOwner,
         (uint8_t)AsyncBreakReasonBits::DebuggerImplicit);
   }
 
-  Debugger debugger_{this};
+  Debugger debugger_{*this};
 #endif
 
   /// Holds references to persistent BC providers for the lifetime of the
@@ -1330,9 +1315,6 @@ class Runtime : public HandleRootOwner,
 
   /// Config-provided callback for GC events.
   std::function<void(GCEventKind, const char *)> gcEventCallback_;
-
-  /// Set from RuntimeConfig.
-  bool allowFunctionToStringWithRuntimeSource_;
 
   /// @}
 
@@ -1359,7 +1341,7 @@ class Runtime : public HandleRootOwner,
     return oldFlag;
   }
 
-  /// \return whether timeout async break was requsted or not. Clear the
+  /// \return whether timeout async break was requested or not. Clear the
   /// timeout request bit afterward.
   bool testAndClearTimeoutAsyncBreakRequest() {
     return testAndClearAsyncBreakRequest(
@@ -1437,14 +1419,6 @@ class Runtime : public HandleRootOwner,
 #endif
     currentFrame_.getSavedIPRef() =
         HermesValue::encodeNativePointer(getCurrentIP());
-  }
-
-  void setAllowFunctionToStringWithRuntimeSource(bool v) {
-    allowFunctionToStringWithRuntimeSource_ = v;
-  }
-
-  bool getAllowFunctionToStringWithRuntimeSource() const {
-    return allowFunctionToStringWithRuntimeSource_;
   }
 
  private:
@@ -1525,36 +1499,21 @@ class Runtime : public HandleRootOwner,
   std::unique_ptr<StackTracesTree> stackTracesTree_;
 };
 
-/// StackRuntime is meant to be used whenever a Runtime should be allocated on
-/// the stack. This should only be used by JSI, everything else should use the
-/// default creator.
-class StackRuntime final : public Runtime {
- public:
-  StackRuntime(const RuntimeConfig &config);
-  StackRuntime(
-      std::shared_ptr<StorageProvider> provider,
-      const RuntimeConfig &config);
-
-  // A dummy virtual destructor to avoid problems when StackRuntime is used
-  // in compilation units compiled with RTTI.
-  virtual ~StackRuntime();
-};
-
 /// An RAII class for automatically tracking the native call frame depth.
 class ScopedNativeDepthTracker {
-  Runtime *const runtime_;
+  Runtime &runtime_;
 
  public:
-  explicit ScopedNativeDepthTracker(Runtime *runtime) : runtime_(runtime) {
-    ++runtime->nativeCallFrameDepth_;
+  explicit ScopedNativeDepthTracker(Runtime &runtime) : runtime_(runtime) {
+    ++runtime.nativeCallFrameDepth_;
   }
   ~ScopedNativeDepthTracker() {
-    --runtime_->nativeCallFrameDepth_;
+    --runtime_.nativeCallFrameDepth_;
   }
 
   /// \return whether we overflowed the native call frame depth.
   bool overflowed() const {
-    return runtime_->nativeCallFrameDepth_ >
+    return runtime_.nativeCallFrameDepth_ >
         Runtime::MAX_NATIVE_CALL_FRAME_DEPTH;
   }
 };
@@ -1564,21 +1523,21 @@ class ScopedNativeDepthTracker {
 /// stack, as the error may represent an overflow.  Without this, a
 /// cascade of exceptions could occur, overflowing the C++ stack.
 class ScopedNativeDepthReducer {
-  Runtime *const runtime_;
+  Runtime &runtime_;
   bool undo = false;
   // This is empirically good enough.
   static constexpr int kDepthAdjustment = 3;
 
  public:
-  explicit ScopedNativeDepthReducer(Runtime *runtime) : runtime_(runtime) {
-    if (runtime->nativeCallFrameDepth_ >= kDepthAdjustment) {
-      runtime->nativeCallFrameDepth_ -= kDepthAdjustment;
+  explicit ScopedNativeDepthReducer(Runtime &runtime) : runtime_(runtime) {
+    if (runtime.nativeCallFrameDepth_ >= kDepthAdjustment) {
+      runtime.nativeCallFrameDepth_ -= kDepthAdjustment;
       undo = true;
     }
   }
   ~ScopedNativeDepthReducer() {
     if (undo) {
-      runtime_->nativeCallFrameDepth_ += kDepthAdjustment;
+      runtime_.nativeCallFrameDepth_ += kDepthAdjustment;
     }
   }
 };
@@ -1594,7 +1553,7 @@ class ScopedNativeDepthReducer {
 /// for this purpose.
 class ScopedNativeCallFrame {
   /// The runtime for this call frame.
-  Runtime *const runtime_;
+  Runtime &runtime_;
 
   /// The stack pointer that will be restored in the destructor.
   PinnedHermesValue *const savedSP_;
@@ -1614,10 +1573,10 @@ class ScopedNativeCallFrame {
   /// of registers. This may fail if we've overflowed our register stack, or
   /// exceeded the native call frame depth.
   static bool runtimeCanAllocateFrame(
-      Runtime *runtime,
+      Runtime &runtime,
       uint32_t registersNeeded) {
-    return runtime->checkAvailableStack(registersNeeded) &&
-        runtime->nativeCallFrameDepth_ <= Runtime::MAX_NATIVE_CALL_FRAME_DEPTH;
+    return runtime.checkAvailableStack(registersNeeded) &&
+        runtime.nativeCallFrameDepth_ <= Runtime::MAX_NATIVE_CALL_FRAME_DEPTH;
   }
 
  public:
@@ -1632,13 +1591,13 @@ class ScopedNativeCallFrame {
   /// The arguments are initially uninitialized. The caller should initialize
   /// them by storing into them, or via fillArguments().
   ScopedNativeCallFrame(
-      Runtime *runtime,
+      Runtime &runtime,
       uint32_t argCount,
       HermesValue callee,
       HermesValue newTarget,
       HermesValue thisArg)
-      : runtime_(runtime), savedSP_(runtime->getStackPointer()) {
-    runtime->nativeCallFrameDepth_++;
+      : runtime_(runtime), savedSP_(runtime.getStackPointer()) {
+    runtime.nativeCallFrameDepth_++;
     uint32_t registersNeeded =
         StackFrameLayout::callerOutgoingRegisters(argCount);
     overflowed_ = !runtimeCanAllocateFrame(runtime, registersNeeded);
@@ -1648,10 +1607,10 @@ class ScopedNativeCallFrame {
 
     // We have enough space. Increment the call frame depth and construct the
     // frame. The ScopedNativeCallFrame will restore both.
-    auto *stack = runtime->allocUninitializedStack(registersNeeded);
+    auto *stack = runtime.allocUninitializedStack(registersNeeded);
     frame_ = StackFramePtr::initFrame(
         stack,
-        runtime->currentFrame_,
+        runtime.currentFrame_,
         nullptr,
         nullptr,
         argCount,
@@ -1676,7 +1635,7 @@ class ScopedNativeCallFrame {
   /// The arguments are initially uninitialized. The caller should initialize
   /// them by storing into them, or via fillArguments().
   ScopedNativeCallFrame(
-      Runtime *runtime,
+      Runtime &runtime,
       uint32_t argCount,
       Callable *callee,
       bool construct,
@@ -1692,8 +1651,8 @@ class ScopedNativeCallFrame {
   ~ScopedNativeCallFrame() {
     // Note that we unconditionally increment the native call frame depth and
     // save the SP to avoid branching in the dtor.
-    runtime_->nativeCallFrameDepth_--;
-    runtime_->popToSavedStackPointer(savedSP_);
+    runtime_.nativeCallFrameDepth_--;
+    runtime_.popToSavedStackPointer(savedSP_);
 #ifndef NDEBUG
     // Clear the frame to detect use-after-free.
     frame_ = StackFramePtr{};
@@ -1704,7 +1663,7 @@ class ScopedNativeCallFrame {
   void fillArguments(uint32_t argCount, HermesValue fillValue) {
     assert(overflowHasBeenChecked_ && "ScopedNativeCallFrame could overflow");
     assert(argCount == frame_.getArgCount() && "Arg count mismatch.");
-    std::uninitialized_fill_n(&frame_.getArgRefUnsafe(0), argCount, fillValue);
+    std::uninitialized_fill_n(frame_.argsBegin(), argCount, fillValue);
   }
 
   /// \return whether the stack frame overflowed.
@@ -1727,11 +1686,11 @@ class ScopedNativeCallFrame {
 class NoAllocScope {
  public:
 #ifdef NDEBUG
-  explicit NoAllocScope(Runtime *runtime) {}
+  explicit NoAllocScope(Runtime &runtime) {}
   explicit NoAllocScope(GC *gc) {}
   void release() {}
 #else
-  explicit NoAllocScope(Runtime *runtime) : NoAllocScope(&runtime->getHeap()) {}
+  explicit NoAllocScope(Runtime &runtime) : NoAllocScope(&runtime.getHeap()) {}
   explicit NoAllocScope(GC *gc) : noAllocLevel_(&gc->noAllocLevel_) {
     ++*noAllocLevel_;
   }
@@ -1763,7 +1722,7 @@ inline void Runtime::addCustomRootsFunction(
 }
 
 inline void Runtime::addCustomWeakRootsFunction(
-    std::function<void(GC *, WeakRefAcceptor &)> markRootsFn) {
+    std::function<void(GC *, WeakRootAcceptor &)> markRootsFn) {
   customMarkWeakRootFuncs_.emplace_back(std::move(markRootsFn));
 }
 
@@ -1830,12 +1789,12 @@ inline void Runtime::ttiReached() {
 
 template <class T>
 inline Handle<T> Runtime::makeHandle(const GCPointer<T> &p) {
-  return Handle<T>(this, p.get(this));
+  return Handle<T>(*this, p.get(*this));
 }
 
 template <class T>
 inline MutableHandle<T> Runtime::makeMutableHandle(const GCPointer<T> &p) {
-  return MutableHandle<T>(this, p.get(this));
+  return MutableHandle<T>(*this, p.get(*this));
 }
 
 inline StringPrimitive *Runtime::getPredefinedString(
@@ -1859,7 +1818,7 @@ inline Handle<StringPrimitive> Runtime::getPredefinedStringHandle(
 }
 
 inline StringPrimitive *Runtime::getStringPrimFromSymbolID(SymbolID id) {
-  return identifierTable_.getStringPrim(this, id);
+  return identifierTable_.getStringPrim(*this, id);
 }
 
 #ifdef HERMESVM_PROFILER_BB
@@ -1873,22 +1832,22 @@ inline void Runtime::dumpBasicBlockProfileTrace(llvh::raw_ostream &OS) {
 #endif
 
 inline Runtime::FormatSymbolID Runtime::formatSymbolID(SymbolID id) {
-  return FormatSymbolID(this, id);
+  return FormatSymbolID(*this, id);
 }
 
 inline void Runtime::popToSavedStackPointer(PinnedHermesValue *stackPointer) {
   assert(
-      stackPointer >= stackPointer_ &&
+      stackPointer <= stackPointer_ &&
       "attempting to pop the stack to a higher level");
   stackPointer_ = stackPointer;
 }
 
 inline uint32_t Runtime::getStackLevel() const {
-  return (uint32_t)(registerStackEnd_ - stackPointer_);
+  return (uint32_t)(stackPointer_ - registerStackStart_);
 }
 
 inline uint32_t Runtime::availableStackSize() const {
-  return (uint32_t)(stackPointer_ - registerStack_);
+  return (uint32_t)(registerStackEnd_ - stackPointer_);
 }
 
 inline bool Runtime::checkAvailableStack(uint32_t count) {
@@ -1899,7 +1858,7 @@ inline bool Runtime::checkAvailableStack(uint32_t count) {
 
 inline PinnedHermesValue *Runtime::allocUninitializedStack(uint32_t count) {
   assert(availableStackSize() >= count && "register stack overflow");
-  return stackPointer_ -= count;
+  return stackPointer_ += count;
 }
 
 inline bool Runtime::checkAndAllocStack(uint32_t count, HermesValue initValue) {
@@ -1943,14 +1902,15 @@ inline StackFramePtr Runtime::restoreStackAndPreviousFrame() {
 
 inline llvh::iterator_range<StackFrameIterator> Runtime::getStackFrames() {
   return {
-      StackFrameIterator{currentFrame_}, StackFrameIterator{registerStackEnd_}};
+      StackFrameIterator{currentFrame_},
+      StackFrameIterator{registerStackStart_}};
 };
 
 inline llvh::iterator_range<ConstStackFrameIterator> Runtime::getStackFrames()
     const {
   return {
       ConstStackFrameIterator{currentFrame_},
-      ConstStackFrameIterator{registerStackEnd_}};
+      ConstStackFrameIterator{registerStackStart_}};
 };
 
 inline ExecutionStatus Runtime::setThrownValue(HermesValue value) {

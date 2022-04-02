@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -42,10 +42,12 @@ class ChromeStackFrameNode {
  private:
   /// Unique id for the stack frame.
   uint32_t id_;
-  /// Frame information.
-  SamplingProfiler::StackFrame frameInfo_;
+  /// Frame information. Is None iff this is the root node.
+  llvh::Optional<SamplingProfiler::StackFrame> frameInfo_;
   /// All callee/children of this stack frame.
   std::vector<std::shared_ptr<ChromeStackFrameNode>> children_;
+  /// How many times was this node on the top of the callstack during profiling.
+  uint32_t hitCount_ = 0;
 
   /// \p node represents the current visiting node.
   /// \p parent can be nullptr for root node.
@@ -66,15 +68,27 @@ class ChromeStackFrameNode {
  public:
   explicit ChromeStackFrameNode(
       uint32_t nextFrameId,
-      const SamplingProfiler::StackFrame &frame)
+      llvh::Optional<SamplingProfiler::StackFrame> frame)
       : id_(nextFrameId), frameInfo_(frame) {}
 
   uint32_t getId() const {
     return id_;
   }
 
+  // Get the frame info for this node. Should never be called on the root node
+  // since it will be None.
   const SamplingProfiler::StackFrame &getFrameInfo() const {
-    return frameInfo_;
+    return *frameInfo_;
+  }
+
+  /// Increments this node's hit counter by one.
+  void addHit() {
+    ++hitCount_;
+  }
+
+  /// \return this node's hit counter.
+  uint32_t getHitCount() const {
+    return hitCount_;
   }
 
   /// Find a child node matching \p target, otherwise add \p target
@@ -88,6 +102,12 @@ class ChromeStackFrameNode {
   /// For each visited node, invoke \p callback.
   void dfsWalk(DfsWalkCallback &callback) const {
     this->dfsWalkHelper(callback, nullptr);
+  }
+
+  /// Get the vector with the this node's children list.
+  const std::vector<std::shared_ptr<ChromeStackFrameNode>> &getChildren()
+      const {
+    return children_;
   }
 };
 
@@ -143,18 +163,16 @@ class ChromeTraceFormat {
   uint32_t pid_;
   /// Thread names map.
   SamplingProfiler::ThreadNamesMap threadNames_;
-  /// Collapsed/merged stack frame call trees.
-  /// Note: since different threads/stack may start from different root frame
-  /// so we may have a list of call tree instead of a single one.
-  std::vector<std::shared_ptr<ChromeStackFrameNode>> callTrees_;
+  /// The root of the stack frame tree.
+  const std::shared_ptr<ChromeStackFrameNode> root_;
   /// Maintain all transformed chrome sample events.
   std::vector<ChromeSampleEvent> sampleEvents_;
 
- private:
   explicit ChromeTraceFormat(
       uint32_t pid,
-      const SamplingProfiler::ThreadNamesMap &threadNames)
-      : pid_(pid), threadNames_(threadNames) {}
+      const SamplingProfiler::ThreadNamesMap &threadNames,
+      std::unique_ptr<ChromeStackFrameNode> root)
+      : pid_(pid), threadNames_(threadNames), root_(std::move(root)) {}
 
  public:
   static ChromeTraceFormat create(
@@ -170,9 +188,8 @@ class ChromeTraceFormat {
     return threadNames_;
   }
 
-  const std::vector<std::shared_ptr<ChromeStackFrameNode>> &getCallTree()
-      const {
-    return callTrees_;
+  const ChromeStackFrameNode &getRoot() const {
+    return *root_;
   }
 
   const std::vector<ChromeSampleEvent> &getSampledEvents() const {
@@ -206,6 +223,15 @@ class ChromeTraceSerializer {
   /// Serialize chrome trace to \p OS.
   void serialize(llvh::raw_ostream &OS) const;
 };
+
+/// Serialize the \p chromeTrace as a Profiler.Profile to \p os. See the url
+/// below for a description of that type.
+///
+/// https://chromedevtools.github.io/devtools-protocol/tot/Profiler/#type-Profile
+///
+void serializeAsProfilerProfile(
+    llvh::raw_ostream &os,
+    ChromeTraceFormat &&chromeTrace);
 
 } // namespace vm
 } // namespace hermes

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -19,12 +19,14 @@ using namespace hermes::vm;
 struct DummyCell final {
  public:
   static void buildMeta(const GCCell *cell, Metadata::Builder &mb);
-
+  static const VTable vt;
   GCPointerBase x_;
   GCPointerBase y_;
   GCPointerBase z_;
   GCSymbolID sym_;
 };
+
+const VTable DummyCell::vt{CellKind::DummyObjectKind, sizeof(DummyCell)};
 
 static_assert(
     std::is_standard_layout<DummyCell>::value,
@@ -32,6 +34,7 @@ static_assert(
 
 void DummyCell::buildMeta(const GCCell *cell, Metadata::Builder &mb) {
   const auto *self = reinterpret_cast<const DummyCell *>(cell);
+  mb.setVTable(&DummyCell::vt);
   mb.addField("x", &self->x_);
   mb.addField("y", &self->y_);
   mb.addField("z", &self->z_);
@@ -40,11 +43,16 @@ void DummyCell::buildMeta(const GCCell *cell, Metadata::Builder &mb) {
 
 struct DummyArrayCell {
  public:
+  static const VTable vt;
   AtomicIfConcurrentGC<std::uint32_t> length_{3};
   GCPointerBase data_[3];
 
   static void buildMeta(const GCCell *cell, Metadata::Builder &mb);
 };
+
+const VTable DummyArrayCell::vt{
+    CellKind::DummyObjectKind,
+    sizeof(DummyArrayCell)};
 
 static_assert(
     std::is_standard_layout<DummyArrayCell>::value,
@@ -52,37 +60,38 @@ static_assert(
 
 void DummyArrayCell::buildMeta(const GCCell *cell, Metadata::Builder &mb) {
   const auto *self = reinterpret_cast<const DummyArrayCell *>(cell);
-  mb.addArray("dummystorage", self->data_, &self->length_, sizeof(DummyCell));
+  mb.setVTable(&DummyArrayCell::vt);
+  mb.addArray(
+      "dummystorage", self->data_, &self->length_, sizeof(DummyArrayCell));
 }
 
 TEST(MetadataTest, TestNormalFields) {
-  const auto meta =
+  static const auto meta =
       buildMetadata(CellKind::UninitializedKind, DummyCell::buildMeta);
-  ASSERT_FALSE(meta.array_);
+  ASSERT_FALSE(meta.offsets.array);
 
-  auto &fields = meta.pointers_;
-  ASSERT_EQ(fields.size(), 3u);
-  EXPECT_STREQ(fields.names[0], "x");
-  EXPECT_STREQ(fields.names[1], "y");
-  EXPECT_STREQ(fields.names[2], "z");
-  EXPECT_EQ(fields.offsets[0], offsetof(DummyCell, x_));
-  EXPECT_EQ(fields.offsets[1], offsetof(DummyCell, y_));
-  EXPECT_EQ(fields.offsets[2], offsetof(DummyCell, z_));
+  EXPECT_EQ(meta.offsets.endGCPointerBase, 3u);
+  EXPECT_STREQ(meta.names[0], "x");
+  EXPECT_STREQ(meta.names[1], "y");
+  EXPECT_STREQ(meta.names[2], "z");
+  EXPECT_EQ(meta.offsets.fields[0], offsetof(DummyCell, x_));
+  EXPECT_EQ(meta.offsets.fields[1], offsetof(DummyCell, y_));
+  EXPECT_EQ(meta.offsets.fields[2], offsetof(DummyCell, z_));
 
-  EXPECT_EQ(meta.pointers_.size(), 3u);
-  EXPECT_EQ(meta.values_.size(), 0u);
+  EXPECT_EQ(meta.offsets.endGCHermesValue, 3u);
+  EXPECT_EQ(meta.offsets.endGCSmallHermesValue, 3u);
 
-  EXPECT_EQ(meta.symbols_.size(), 1u);
-  EXPECT_STREQ(meta.symbols_.names[0], "sym");
-  EXPECT_EQ(meta.symbols_.offsets[0], offsetof(DummyCell, sym_));
+  EXPECT_EQ(meta.offsets.endGCSymbolID, 4u);
+  EXPECT_STREQ(meta.names[3], "sym");
+  EXPECT_EQ(meta.offsets.fields[3], offsetof(DummyCell, sym_));
 }
 
 TEST(MetadataTest, TestArray) {
-  const auto meta =
+  static const auto meta =
       buildMetadata(CellKind::UninitializedKind, DummyArrayCell::buildMeta);
-  ASSERT_TRUE(meta.array_);
-  auto &array = *(meta.array_);
-  EXPECT_EQ(array.type, Metadata::ArrayData::ArrayType::Pointer);
+  ASSERT_TRUE(meta.offsets.array);
+  auto &array = *(meta.offsets.array);
+  EXPECT_EQ(array.type, Metadata::ArrayData::ArrayType::GCPointerBase);
 
   EXPECT_EQ(array.lengthOffset, offsetof(DummyArrayCell, length_));
   EXPECT_EQ(array.startOffset, offsetof(DummyArrayCell, data_));

@@ -1,15 +1,16 @@
 /**
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
  *
+ * @flow strict-local
  * @format
  */
 
 'use strict';
 
-const {parseForESLint} = require('hermes-eslint');
+const {parseForESLint} = require('../src');
 
 test('Parser produces ESTree AST', () => {
   expect(parseForESLint('const x = 1').ast).toMatchObject({
@@ -102,11 +103,10 @@ test('Visitor key order for control flow nodes', () => {
 });
 
 test('Parse error messages formatted for ESLint', () => {
-  try {
-    parseForESLint('const = 1');
-    fail('Expected parse error to be thrown');
-  } catch (e) {
-    expect(e.lineNumber).toEqual(1);
-    expect(e.column).toEqual(6);
-  }
+  expect(() => parseForESLint('const = 1')).toThrowError(
+    expect.objectContaining({
+      lineNumber: 1,
+      column: 6,
+    }),
+  );
 });

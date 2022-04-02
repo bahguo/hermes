@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -44,7 +44,7 @@ using ScopeType = hermes::ScopedHashTableScope<Value *, bool>;
 // children do not need to be store spearately.
 class StackNode : public DomTreeDFS::StackNode<TDZDedupContext> {
  public:
-  inline StackNode(TDZDedupContext *ctx, DominanceInfoNode *n);
+  inline StackNode(TDZDedupContext *ctx, const DominanceInfoNode *n);
 
  private:
   /// RAII to create and pop a scope when the stack node is created and
@@ -86,7 +86,7 @@ class TDZDedupContext : public DomTreeDFS::Visitor<TDZDedupContext, StackNode> {
   ScopedHTType availableValues_{};
 };
 
-inline StackNode::StackNode(TDZDedupContext *ctx, DominanceInfoNode *n)
+inline StackNode::StackNode(TDZDedupContext *ctx, const DominanceInfoNode *n)
     : DomTreeDFS::StackNode<TDZDedupContext>(ctx, n),
       scope_{ctx->availableValues_} {}
 

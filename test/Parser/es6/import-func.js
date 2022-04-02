@@ -1,5 +1,5 @@
 /**
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -19,7 +19,8 @@ import('foo')
 // CHECK-NEXT:         "source": {
 // CHECK-NEXT:           "type": "StringLiteral",
 // CHECK-NEXT:           "value": "foo"
-// CHECK-NEXT:         }
+// CHECK-NEXT:         },
+// CHECK-NEXT:         "attributes": null
 // CHECK-NEXT:       },
 // CHECK-NEXT:       "directive": null
 // CHECK-NEXT:     },
@@ -39,7 +40,8 @@ import('foo')
 // CHECK-NEXT:           "source": {
 // CHECK-NEXT:             "type": "StringLiteral",
 // CHECK-NEXT:             "value": "foo"
-// CHECK-NEXT:           }
+// CHECK-NEXT:           },
+// CHECK-NEXT:           "attributes": null
 // CHECK-NEXT:         },
 // CHECK-NEXT:         "operator": "+"
 // CHECK-NEXT:       },
@@ -70,7 +72,8 @@ function func() {
 // CHECK-NEXT:                   "source": {
 // CHECK-NEXT:                     "type": "StringLiteral",
 // CHECK-NEXT:                     "value": "foo"
-// CHECK-NEXT:                   }
+// CHECK-NEXT:                   },
+// CHECK-NEXT:                   "attributes": null
 // CHECK-NEXT:                 },
 // CHECK-NEXT:                 "property": {
 // CHECK-NEXT:                   "type": "Identifier",

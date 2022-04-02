@@ -1,5 +1,5 @@
 /**
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -22,6 +22,3 @@ function helper() {
 entryPoint();
 
 //CHECK: Uncaught TimeoutError: Javascript execution has timed out.
-//CHECK: at helper ({{.*/execution-time-limit.js}}:18:5)
-//CHECK-NEXT: at entryPoint ({{.*/execution-time-limit.js}}:12:9)
-//CHECK-NEXT: at global ({{.*/execution-time-limit.js}}:22:11)

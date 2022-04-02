@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -16,7 +16,8 @@ namespace vm {
 namespace Predefined {
 
 enum IProp {
-#define NAMED_PROP(name) name,
+#define PROP(i) InternalProperty##i,
+#define NAMED_PROP(name) InternalProperty##name,
 #include "InternalProperties.def"
   _IPROP_AFTER_LAST
 };

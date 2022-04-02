@@ -1,5 +1,5 @@
 /**
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -560,6 +560,28 @@ print(Array.prototype.join.call(Array.prototype.sort.call(a, function(x,y) {
   return x - y;
 })));
 // CHECK-NEXT: 2,13
+var a = [
+    { "idx": 0, "key": 1 },
+    { "idx": 1, "key": 2 },
+    { "idx": 2, "key": 1 },
+    { "idx": 3, "key": 2 },
+    { "idx": 4, "key": 1 },
+    { "idx": 5, "key": 2 },
+    { "idx": 6, "key": 1 },
+    { "idx": 7, "key": 2 }];
+a.sort((item1, item2) => item1.key - item2.key);
+print(JSON.stringify(a));
+// CHECK-NEXT: [{"idx":0,"key":1},{"idx":2,"key":1},{"idx":4,"key":1},{"idx":6,"key":1},{"idx":1,"key":2},{"idx":3,"key":2},{"idx":5,"key":2},{"idx":7,"key":2}]
+a.sort((item1, item2) => item1.key - item2.key);
+print(JSON.stringify(a));
+// CHECK-NEXT: [{"idx":0,"key":1},{"idx":2,"key":1},{"idx":4,"key":1},{"idx":6,"key":1},{"idx":1,"key":2},{"idx":3,"key":2},{"idx":5,"key":2},{"idx":7,"key":2}]
+a.sort((item1, item2) => item2.key - item1.key);
+print(JSON.stringify(a));
+// CHECK-NEXT: [{"idx":1,"key":2},{"idx":3,"key":2},{"idx":5,"key":2},{"idx":7,"key":2},{"idx":0,"key":1},{"idx":2,"key":1},{"idx":4,"key":1},{"idx":6,"key":1}]
+print(['1', '111', '11', '222', '22', '2', '33', '3', '333'].sort(
+  function(x,y) {return x.length - y.length})
+);
+// CHECK-NEXT: 1,2,3,11,22,33,111,222,333
 try { [1,2,3].sort(null); } catch(e) { print('caught', e.name); }
 // CHECK-NEXT: caught TypeError
 var badobj = {
@@ -889,6 +911,56 @@ print(Array.prototype.findIndex.call(
   function(v) { return v === 'b'; }
 ));
 // CHECK-NEXT: 1
+
+print('findLast');
+// CHECK-LABEL: findLast
+print(Array.prototype.findLast.length);
+// CHECK-NEXT: 1
+print([].findLast(function(){}));
+// CHECK-NEXT: undefined
+print([1,2,3].findLast(function(v){ return v === 4 }));
+// CHECK-NEXT: undefined
+print([0,1,2].findLast(function(v){ return v }));
+// CHECK-NEXT: 2
+print(['a','b','c'].findLast(function(v, k, obj) {
+  print(this, v, k, obj);
+  return v === 'b';
+}, 'thisarg'));
+// CHECK-NEXT: thisarg c 2 a,b,c
+// CHECK-NEXT: thisarg b 1 a,b,c
+// CHECK-NEXT: b
+print(Array.prototype.findLast.call(
+  {0:'a',1:'b',length:3},
+  function(v) { return v === 'b'; }
+));
+// CHECK-NEXT: b
+print([3,3,3].findLast(function(v){ return v === 3 }));
+// CHECK-NEXT: 3
+
+print('findLastIndex');
+// CHECK-LABEL: findLastIndex
+print(Array.prototype.findLastIndex.length);
+// CHECK-NEXT: 1
+print([].findLastIndex(function(){}));
+// CHECK-NEXT: -1
+print([1,2,3].findLastIndex(function(v){ return v === 4 }));
+// CHECK-NEXT: -1
+print([0,1,2].findLastIndex(function(v){ return v }));
+// CHECK-NEXT: 2
+print(['a','b','c'].findLastIndex(function(v, k, obj) {
+  print(this, v, k, obj);
+  return v === 'b';
+}, 'thisarg'));
+// CHECK-NEXT: thisarg c 2 a,b,c
+// CHECK-NEXT: thisarg b 1 a,b,c
+// CHECK-NEXT: 1
+print(Array.prototype.findLastIndex.call(
+  {0:'a',1:'b',length:3},
+  function(v) { return v === 'b'; }
+));
+// CHECK-NEXT: 1
+print([3,3,3].findLastIndex(function(v){ return v === 3 }));
+// CHECK-NEXT: 2
 
 print('reduce');
 // CHECK-LABEL: reduce

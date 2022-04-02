@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -67,7 +67,7 @@ namespace {
 
 /// Convert all arguments to string and print them followed by new line.
 static CallResult<HermesValue>
-print(void *, Runtime *runtime, NativeArgs args) {
+print(void *, Runtime &runtime, NativeArgs args) {
   GCScope scope(runtime);
   bool first = true;
 
@@ -80,7 +80,7 @@ print(void *, Runtime *runtime, NativeArgs args) {
       llvh::outs() << " ";
     SmallU16String<32> tmp;
     llvh::outs() << StringPrimitive::createStringView(
-                        runtime, runtime->makeHandle(std::move(*res)))
+                        runtime, runtime.makeHandle(std::move(*res)))
                         .getUTF16Ref(tmp);
     first = false;
   }
@@ -102,7 +102,7 @@ class InterpreterFunctionTest : public RuntimeTestFixture {
 
   InterpreterFunctionTest()
       : RuntimeTestFixture(),
-        domain(runtime->makeHandle(Domain::create(runtime))),
+        domain(runtime.makeHandle(Domain::create(runtime))),
         runtimeModule(RuntimeModule::createUninitialized(runtime, domain)) {
     BFG = BytecodeFunctionGenerator::create(BMG, 1);
   }
@@ -118,7 +118,7 @@ class InterpreterFunctionTest : public RuntimeTestFixture {
         HermesValue::encodeUndefinedValue(),
         HermesValue::encodeUndefinedValue());
     assert(!frame.overflowed());
-    result = runtime->interpretFunction(codeBlock);
+    result = runtime.interpretFunction(codeBlock);
 
     hasRun = true;
     return result;
@@ -133,7 +133,7 @@ class InterpreterFunctionTest : public RuntimeTestFixture {
   Handle<StringPrimitive> getResultAsString() {
     assert(hasRun);
     assert(result != ExecutionStatus::EXCEPTION);
-    return runtime->makeHandle(result->getString());
+    return runtime.makeHandle(result->getString());
   }
 };
 
@@ -162,7 +162,6 @@ TEST_F(InterpreterTest, SimpleSmokeTest) {
   StringID resultID = 2;
 
   const unsigned FRAME_SIZE = 16;
-  const unsigned LAST_REG = FRAME_SIZE - 1;
   BytecodeModuleGenerator BMG;
   auto BFG = BytecodeFunctionGenerator::create(BMG, FRAME_SIZE);
 
@@ -172,9 +171,9 @@ TEST_F(InterpreterTest, SimpleSmokeTest) {
   BFG->emitGetGlobalObject(0);
   BFG->emitGetById(1, 0, 1, printID);
   BFG->emitLoadConstUndefined(3);
-  BFG->emitMov(LAST_REG - StackFrameLayout::ThisArg, 3);
-  BFG->emitLoadConstString(LAST_REG - StackFrameLayout::FirstArg, resultID);
-  BFG->emitMov(LAST_REG - StackFrameLayout::FirstArg - 1, 2);
+  BFG->emitMov(FRAME_SIZE + StackFrameLayout::ThisArg, 3);
+  BFG->emitLoadConstString(FRAME_SIZE + StackFrameLayout::FirstArg, resultID);
+  BFG->emitMov(FRAME_SIZE + StackFrameLayout::FirstArg - 1, 2);
   BFG->emitCall(3, 1, 3);
   BFG->emitRet(2);
   BFG->setHighestReadCacheIndex(1);
@@ -186,7 +185,7 @@ TEST_F(InterpreterTest, SimpleSmokeTest) {
   ASSERT_EQ(detail::mapStringMayAllocate(*runtimeModule, "print"), printID);
   ASSERT_EQ(detail::mapStringMayAllocate(*runtimeModule, "result="), resultID);
 
-  auto printFn = runtime->makeHandle<NativeFunction>(
+  auto printFn = runtime.makeHandle<NativeFunction>(
       *NativeFunction::createWithoutPrototype(
           runtime,
           nullptr,
@@ -196,7 +195,7 @@ TEST_F(InterpreterTest, SimpleSmokeTest) {
 
   // Define the 'print' function.
   (void)JSObject::putNamed_RJS(
-      runtime->getGlobal(),
+      runtime.getGlobal(),
       runtime,
       runtimeModule->getSymbolIDFromStringIDMayAllocate(printID),
       printFn);
@@ -204,15 +203,19 @@ TEST_F(InterpreterTest, SimpleSmokeTest) {
   CallResult<HermesValue> status{ExecutionStatus::EXCEPTION};
   {
     ScopedNativeCallFrame frame(
-        runtime, 0, nullptr, false, HermesValue::encodeUndefinedValue());
+        runtime,
+        0,
+        HermesValue::encodeUndefinedValue(),
+        HermesValue::encodeUndefinedValue(),
+        HermesValue::encodeUndefinedValue());
     ASSERT_FALSE(frame.overflowed());
-    status = runtime->interpretFunction(codeBlock);
+    status = runtime.interpretFunction(codeBlock);
   }
 
-  auto frames = runtime->getStackFrames();
+  auto frames = runtime.getStackFrames();
   ASSERT_TRUE(frames.begin() == frames.end());
   ASSERT_EQ(
-      StackFrameLayout::CalleeExtraRegistersAtStart, runtime->getStackLevel());
+      StackFrameLayout::CalleeExtraRegistersAtStart, runtime.getStackLevel());
   ASSERT_EQ(ExecutionStatus::RETURNED, status.getStatus());
   ASSERT_EQ(8.0, status.getValue().getDouble());
 }
@@ -266,15 +269,19 @@ L2:
   CallResult<HermesValue> status{ExecutionStatus::EXCEPTION};
   {
     ScopedNativeCallFrame newFrame(
-        runtime, 1, nullptr, false, HermesValue::encodeUndefinedValue());
+        runtime,
+        1,
+        HermesValue::encodeUndefinedValue(),
+        HermesValue::encodeUndefinedValue(),
+        HermesValue::encodeUndefinedValue());
     ASSERT_FALSE(newFrame.overflowed());
     newFrame->getArgRef(0) = HermesValue::encodeDoubleValue(5);
-    status = runtime->interpretFunction(codeBlock);
+    status = runtime.interpretFunction(codeBlock);
   }
-  auto frames = runtime->getStackFrames();
+  auto frames = runtime.getStackFrames();
   ASSERT_TRUE(frames.begin() == frames.end());
   ASSERT_EQ(
-      StackFrameLayout::CalleeExtraRegistersAtStart, runtime->getStackLevel());
+      StackFrameLayout::CalleeExtraRegistersAtStart, runtime.getStackLevel());
   ASSERT_EQ(ExecutionStatus::RETURNED, status.getStatus());
   ASSERT_EQ(120.0, status.getValue().getDouble());
 }
@@ -305,7 +312,6 @@ L1:
   std::map<int, int> labels{};
   std::map<int, int> jmps{};
   const unsigned FRAME_SIZE = 16;
-  const unsigned LAST_REG = FRAME_SIZE - 1;
 
   auto emit = [&](BytecodeFunctionGenerator &builder, int pass) {
     builder.emitLoadParam(0, 1);
@@ -313,8 +319,8 @@ L1:
     JCOND(builder.emitJGreater, L(1), 0, 1);
     builder.emitRet(0);
     LABEL(L(1), builder.emitLoadConstDoubleDirect(1, 1));
-    builder.emitLoadConstUndefined(LAST_REG - StackFrameLayout::ThisArg);
-    builder.emitSub(LAST_REG - StackFrameLayout::FirstArg, 0, 1);
+    builder.emitLoadConstUndefined(FRAME_SIZE + StackFrameLayout::ThisArg);
+    builder.emitSub(FRAME_SIZE + StackFrameLayout::FirstArg, 0, 1);
     builder.emitGetGlobalObject(1);
     builder.emitGetById(1, 1, 0, factID);
     builder.emitCall(1, 1, 2);
@@ -338,16 +344,16 @@ L1:
   BFG->bytecodeGenerationComplete();
   auto codeBlock = createCodeBlock(runtimeModule, runtime, BFG.get());
 
-  Handle<JSFunction> factFn = runtime->makeHandle(JSFunction::create(
+  Handle<JSFunction> factFn = runtime.makeHandle(JSFunction::create(
       runtime,
       runtimeModule->getDomain(runtime),
-      Handle<JSObject>(runtime),
-      Handle<Environment>(runtime),
+      runtime.makeNullHandle<JSObject>(),
+      runtime.makeNullHandle<Environment>(),
       codeBlock));
 
   // Define the 'fact' function.
   (void)JSObject::putNamed_RJS(
-      runtime->getGlobal(),
+      runtime.getGlobal(),
       runtime,
       runtimeModule->getSymbolIDFromStringIDMayAllocate(factID),
       factFn);
@@ -356,16 +362,19 @@ L1:
     CallResult<HermesValue> status{ExecutionStatus::EXCEPTION};
     {
       ScopedNativeCallFrame newFrame(
-          runtime, 1, nullptr, false, HermesValue::encodeUndefinedValue());
+          runtime,
+          1,
+          HermesValue::encodeUndefinedValue(),
+          HermesValue::encodeUndefinedValue(),
+          HermesValue::encodeUndefinedValue());
       ASSERT_FALSE(newFrame.overflowed());
       newFrame->getArgRef(0) = HermesValue::encodeDoubleValue(2);
-      status = runtime->interpretFunction(codeBlock);
+      status = runtime.interpretFunction(codeBlock);
     }
-    auto frames = runtime->getStackFrames();
+    auto frames = runtime.getStackFrames();
     ASSERT_TRUE(frames.begin() == frames.end());
     ASSERT_EQ(
-        StackFrameLayout::CalleeExtraRegistersAtStart,
-        runtime->getStackLevel());
+        StackFrameLayout::CalleeExtraRegistersAtStart, runtime.getStackLevel());
     ASSERT_EQ(ExecutionStatus::RETURNED, status.getStatus());
     ASSERT_EQ(2.0, status.getValue().getDouble());
   }
@@ -374,16 +383,19 @@ L1:
     CallResult<HermesValue> status{ExecutionStatus::EXCEPTION};
     {
       ScopedNativeCallFrame newFrame(
-          runtime, 1, nullptr, false, HermesValue::encodeUndefinedValue());
+          runtime,
+          1,
+          HermesValue::encodeUndefinedValue(),
+          HermesValue::encodeUndefinedValue(),
+          HermesValue::encodeUndefinedValue());
       ASSERT_FALSE(newFrame.overflowed());
       newFrame->getArgRef(0) = HermesValue::encodeDoubleValue(5);
-      status = runtime->interpretFunction(codeBlock);
+      status = runtime.interpretFunction(codeBlock);
     }
-    auto frames = runtime->getStackFrames();
+    auto frames = runtime.getStackFrames();
     ASSERT_TRUE(frames.begin() == frames.end());
     ASSERT_EQ(
-        StackFrameLayout::CalleeExtraRegistersAtStart,
-        runtime->getStackLevel());
+        StackFrameLayout::CalleeExtraRegistersAtStart, runtime.getStackLevel());
     ASSERT_EQ(ExecutionStatus::RETURNED, status.getStatus());
     ASSERT_EQ(120.0, status.getValue().getDouble());
   }
@@ -425,7 +437,7 @@ TEST_F(InterpreterFunctionTest, TestToString) {
     !LLVM_THREAD_SANITIZER_BUILD && !LLVM_ADDRESS_SANITIZER_BUILD
 // Returns the native stack pointer of the callee frame.
 static CallResult<HermesValue>
-getSP(void *, Runtime *runtime, NativeArgs args) {
+getSP(void *, Runtime &runtime, NativeArgs args) {
   int dummy;
   return HermesValue::encodeNativePointer(&dummy);
 }
@@ -434,14 +446,13 @@ getSP(void *, Runtime *runtime, NativeArgs args) {
 // takes place in a new stack frame. This ensures that location of dummy on the
 // stack really is right before the stack frame for interpretFunction.
 LLVM_ATTRIBUTE_NOINLINE static void testInterpreterStackSize(
-    Runtime *runtime,
+    Runtime &runtime,
     CodeBlock *codeBlock) {
   // Check that inner and outer stack pointer differ by at most a set threshold.
   int dummy;
   const auto outerStackPointer = reinterpret_cast<uintptr_t>(&dummy);
-  auto status = runtime->interpretFunction(codeBlock);
+  auto status = runtime.interpretFunction(codeBlock);
   ASSERT_EQ(ExecutionStatus::RETURNED, status.getStatus());
-  ASSERT_TRUE(status.getValue().isNativeValue());
   const auto innerStackPointer =
       reinterpret_cast<uintptr_t>(status.getValue().getNativePointer<void>());
   // Increase this only if you have a reason to grow the interpreter's frame.
@@ -488,7 +499,7 @@ TEST_F(InterpreterTest, FrameSizeTest) {
 
   ASSERT_EQ(detail::mapStringMayAllocate(*runtimeModule, "getSP"), getSPID);
 
-  auto getSPFn = runtime->makeHandle<NativeFunction>(
+  auto getSPFn = runtime.makeHandle<NativeFunction>(
       *NativeFunction::createWithoutPrototype(
           runtime,
           nullptr,
@@ -498,7 +509,7 @@ TEST_F(InterpreterTest, FrameSizeTest) {
 
   // Define the 'getSP' function.
   (void)JSObject::putNamed_RJS(
-      runtime->getGlobal(),
+      runtime.getGlobal(),
       runtime,
       runtimeModule->getSymbolIDFromStringIDMayAllocate(getSPID),
       getSPFn);

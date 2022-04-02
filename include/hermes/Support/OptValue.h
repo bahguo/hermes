@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -31,7 +31,7 @@ namespace hermes {
 template <typename T>
 class OptValue {
   static_assert(
-      IsTriviallyCopyable<T, true>::value,
+      std::is_trivially_copyable<T>::value,
       "OptValue<> can only be used with trivially copyable types");
   T value_{};
   bool hasValue_;
@@ -67,7 +67,7 @@ class OptValue {
   }
 };
 static_assert(
-    IsTriviallyCopyable<OptValue<int>, true>::value,
+    std::is_trivially_copyable<OptValue<int>>::value,
     "OptValue<int> must be trivially copyable");
 
 /// Specialization for bool that improves codegen by collapsing compares.
@@ -103,7 +103,7 @@ class OptValue<bool> {
   }
 };
 static_assert(
-    IsTriviallyCopyable<OptValue<bool>, true>::value,
+    std::is_trivially_copyable<OptValue<bool>>::value,
     "OptValue<bool> must be trivially copyable");
 
 template <typename T, typename U>

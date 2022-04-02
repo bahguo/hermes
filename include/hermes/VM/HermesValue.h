@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -56,7 +56,7 @@
 /// 48-bit data, and to extend the first 4 tags with one bit to the right.
 /// We call the resulting 4-bit tag an "extended tag".
 ///
-/// Pointer Encoding
+/// Heap Pointer Encoding
 /// ================
 /// On 32-bit platforms clearly we have enough bits to encode any pointer in
 /// the low word.
@@ -77,6 +77,25 @@
 /// Should the OS requirements change in the distant future, we can "squeeze" 3
 /// more bits by relying on the 8-byte alignment of all our allocations and
 /// shifting the values to the right. That is still not needed however.
+///
+/// Native Pointer Encoding
+/// ================
+/// We also have limited support for storing a native pointer in a HermesValue.
+/// When doing so, we do not associate a tag with the native pointer and instead
+/// require that the pointer is a valid non-NaN double bit-for-bit. It is the
+/// caller's responsibility to keep track of where these native pointers are
+/// stored.
+///
+/// Native pointers cannot be NaN-boxed because on platforms where the ARM
+/// memory tagging extension is enabled, the top byte may also have bits set
+/// in it. On Android, these tags are added in the 56th to 59th bits of pointers
+/// allocated in the native heap. However, as long as it is only the top byte
+/// and the bottom 48 bits that have non-zero values, we are guaranteed that the
+/// value will not be a NaN.
+///
+/// Fortunately, since the native pointers will appear as doubles to anything
+/// other than the code that created them, anything that scans HermesValues
+/// (e.g. the GC or heap snapshots), will simply ignore them.
 
 #ifndef HERMES_VM_HERMESVALUE_H
 #define HERMES_VM_HERMESVALUE_H
@@ -121,14 +140,13 @@ static constexpr TagKind LastTag = 0xffff;
 
 static constexpr TagKind EmptyInvalidTag = FirstTag;
 static constexpr TagKind UndefinedNullTag = FirstTag + 1;
-static constexpr TagKind BoolTag = FirstTag + 2;
-static constexpr TagKind SymbolTag = FirstTag + 3;
+static constexpr TagKind BoolSymbolTag = FirstTag + 2;
 
 // Tags with 48-bit data start here.
-static constexpr TagKind NativeValueTag = FirstTag + 4;
+static constexpr TagKind NativeValueTag = FirstTag + 3;
 
 // Pointer tags start here.
-static constexpr TagKind StrTag = FirstTag + 5;
+static constexpr TagKind StrTag = FirstTag + 4;
 static constexpr TagKind ObjectTag = FirstTag + 6;
 
 static_assert(ObjectTag == LastTag, "Tags mismatch");
@@ -149,8 +167,8 @@ class HermesValue {
 #endif
     Undefined = UndefinedNullTag * 2,
     Null = UndefinedNullTag * 2 + 1,
-    Bool = BoolTag * 2,
-    Symbol = SymbolTag * 2,
+    Bool = BoolSymbolTag * 2,
+    Symbol = BoolSymbolTag * 2 + 1,
     Native1 = NativeValueTag * 2,
     Native2 = NativeValueTag * 2 + 1,
     Str1 = StrTag * 2,
@@ -179,7 +197,7 @@ class HermesValue {
   static void validatePointer(const void *ptr) {
 #if LLVM_PTR_SIZE == 8
     assert(
-        (safeTypeCast<const void *, uint64_t>(ptr) & ~kDataMask) == 0 &&
+        (reinterpret_cast<uintptr_t>(ptr) & ~kDataMask) == 0 &&
         "Pointer top bits are set");
 #endif
   }
@@ -207,26 +225,43 @@ class HermesValue {
     return (ETag)(raw_ >> (kNumDataBits - 1));
   }
 
-  /// Combine two tags into an 8-bit value.
-  inline static constexpr unsigned combineTags(TagKind a, TagKind b) {
-    return ((a & kTagMask) << kTagWidth) | (b & kTagMask);
+  /// Combine two tags into an 10-bit value.
+  inline static constexpr unsigned combineETags(ETag a, ETag b) {
+    unsigned au = static_cast<unsigned>(a);
+    unsigned bu = static_cast<unsigned>(b);
+    return ((au & kETagMask) << kETagWidth) | (bu & kETagMask);
   }
 
-  constexpr inline static HermesValue encodeNullptrObjectValue() {
+  /// Special functions that allow nullptr to be stored in a HermesValue.
+  /// WARNING: These should never be used on the JS stack or heap, and are only
+  /// intended for Handles.
+  constexpr inline static HermesValue encodeNullptrObjectValueUnsafe() {
     return HermesValue(0, ObjectTag);
   }
-  inline static HermesValue encodeObjectValue(void *val) {
+
+  inline static HermesValue encodeObjectValueUnsafe(void *val) {
     validatePointer(val);
-    HermesValue RV(safeTypeCast<void *, uintptr_t>(val), ObjectTag);
+    HermesValue RV(reinterpret_cast<uintptr_t>(val), ObjectTag);
     assert(RV.isObject());
     return RV;
   }
 
-  inline static HermesValue encodeStringValue(const StringPrimitive *val) {
+  inline static HermesValue encodeStringValueUnsafe(
+      const StringPrimitive *val) {
     validatePointer(val);
-    HermesValue RV(safeTypeCast<const void *, uintptr_t>(val), StrTag);
+    HermesValue RV(reinterpret_cast<uintptr_t>(val), StrTag);
     assert(RV.isString());
     return RV;
+  }
+
+  inline static HermesValue encodeObjectValue(void *val) {
+    assert(val && "Null pointers require special handling.");
+    return encodeObjectValueUnsafe(val);
+  }
+
+  inline static HermesValue encodeStringValue(const StringPrimitive *val) {
+    assert(val && "Null pointers require special handling.");
+    return encodeStringValueUnsafe(val);
   }
 
   inline static HermesValue encodeNativeUInt32(uint32_t val) {
@@ -238,24 +273,21 @@ class HermesValue {
   }
 
   inline static HermesValue encodeNativePointer(const void *p) {
+    HermesValue RV(reinterpret_cast<uintptr_t>(p));
     assert(
-        (reinterpret_cast<uintptr_t>(p) & ~kDataMask) == 0 &&
-        "Native pointer must contain zeroes in the high bits");
-    HermesValue RV(reinterpret_cast<uintptr_t>(p), NativeValueTag);
-    assert(
-        RV.isNativeValue() && RV.getNativePointer<void>() == p &&
-        "Native pointer doesn't fit");
+        RV.isDouble() && RV.getNativePointer<void>() == p &&
+        "Native pointer cannot be represented as a double");
     return RV;
   }
 
   inline static HermesValue encodeSymbolValue(SymbolID val) {
-    HermesValue RV(val.unsafeGetRaw(), SymbolTag);
+    HermesValue RV(val.unsafeGetRaw(), ETag::Symbol);
     assert(RV.isSymbol());
     return RV;
   }
 
   constexpr inline static HermesValue encodeBoolValue(bool val) {
-    return HermesValue((uint64_t)(val), BoolTag);
+    return HermesValue((uint64_t)(val), ETag::Bool);
   }
 
   inline static constexpr HermesValue encodeNullValue() {
@@ -277,7 +309,7 @@ class HermesValue {
 #endif
 
   inline static HermesValue encodeDoubleValue(double num) {
-    HermesValue RV(safeTypeCast<double, uint64_t>(num));
+    HermesValue RV(llvh::DoubleToBits(num));
     assert(RV.isDouble());
     return RV;
   }
@@ -306,27 +338,22 @@ class HermesValue {
     return encodeDoubleValue((double)num);
   }
 
-  static constexpr HermesValue encodeNaNValue() {
-    return HermesValue(safeTypeCast<double, uint64_t>(
-        std::numeric_limits<double>::quiet_NaN()));
+  static HermesValue encodeNaNValue() {
+    return HermesValue(
+        llvh::DoubleToBits(std::numeric_limits<double>::quiet_NaN()));
   }
 
   /// Keeping tag constant, make a new HermesValue with \p val stored in it.
   inline HermesValue updatePointer(void *val) const {
     assert(isPointer());
-    HermesValue V(safeTypeCast<void *, uintptr_t>(val), getTag());
+    HermesValue V(reinterpret_cast<uintptr_t>(val), getTag());
     assert(V.isPointer());
     return V;
   }
 
-  /// Update a HermesValue to encode \p ptr. Used by (de)seserializer.
-  /// We need to have this function instead of using \p updatePointer because
-  /// we also want to be able to update \p NativePointer HermesValue, which
-  /// will fail the \p isPointer check in \p updatePointer.
-  /// \param ptr pointer value to encode.
+  /// Update a HermesValue in place to encode \p ptr. Used by (de)serializer.
   inline void unsafeUpdatePointer(void *ptr) {
-    raw_ = (uint64_t)(safeTypeCast<void *, uintptr_t>(ptr)) |
-        (uint64_t)getTag() << kNumDataBits;
+    setNoBarrier(updatePointer(ptr));
   }
 
   inline bool isNull() const {
@@ -347,10 +374,10 @@ class HermesValue {
     return getTag() == NativeValueTag;
   }
   inline bool isSymbol() const {
-    return getTag() == SymbolTag;
+    return getETag() == ETag::Symbol;
   }
   inline bool isBool() const {
-    return getTag() == BoolTag;
+    return getETag() == ETag::Bool;
   }
   inline bool isObject() const {
     return getTag() == ObjectTag;
@@ -375,19 +402,12 @@ class HermesValue {
   inline void *getPointer() const {
     assert(isPointer());
     // Mask out the tag.
-    return safeSizeTrunc<uint64_t, void *>(raw_ & kDataMask);
+    return reinterpret_cast<void *>(raw_ & kDataMask);
   }
 
   inline double getDouble() const {
     assert(isDouble());
-    return safeTypeCast<uint64_t, double>(raw_);
-  }
-
-  inline int64_t getNativeValue() const {
-    assert(isNativeValue());
-    // Sign-extend the value.
-    return (static_cast<int64_t>(raw_ & kDataMask) << (64 - kNumDataBits)) >>
-        (64 - kNumDataBits);
+    return llvh::BitsToDouble(raw_);
   }
 
   inline uint32_t getNativeUInt32() const {
@@ -397,10 +417,8 @@ class HermesValue {
 
   template <class T>
   inline T *getNativePointer() const {
-    assert(isNativeValue());
-    // Zero-extend the value because we know that bit 47 must be 0 (or otherwise
-    // it would be a kernel address).
-    return reinterpret_cast<T *>(raw_ & kDataMask);
+    assert(isDouble() && "Native pointers must look like doubles.");
+    return reinterpret_cast<T *>(raw_);
   }
 
   inline SymbolID getSymbol() const {
@@ -467,11 +485,11 @@ class HermesValue {
   /// @name HV32 Compatibility APIs - DO NOT CALL DIRECTLY
   /// @{
 
-  GCCell *getPointer(PointerBase *) const {
+  GCCell *getPointer(PointerBase &) const {
     return static_cast<GCCell *>(getPointer());
   }
 
-  static HermesValue encodeHermesValue(HermesValue hv, Runtime *) {
+  static HermesValue encodeHermesValue(HermesValue hv, Runtime &) {
     return hv;
   }
 
@@ -602,20 +620,23 @@ class GCHermesValueBase final : public HVType {
   uninitialized_copy(InputIt first, InputIt last, OutputIt result, GC *gc);
 
 #if !defined(HERMESVM_GC_HADES) && !defined(HERMESVM_GC_RUNTIME)
-  /// Same as \p copy, but specialised for raw pointers.
+  /// Same as \p copy, but specialized for raw pointers.
   static inline GCHermesValueBase<HVType> *copy(
       GCHermesValueBase<HVType> *first,
       GCHermesValueBase<HVType> *last,
       GCHermesValueBase<HVType> *result,
       GC *gc);
+#endif
 
-  /// Same as \p uninitialized_copy, but specialised for raw pointers.
+  /// Same as \p uninitialized_copy, but specialized for raw pointers. This is
+  /// unsafe to use if the memory region being copied into (pointed to by
+  /// \p result) is reachable by the GC (for instance, memory within the
+  /// size of an ArrayStorage), since it does not update elements atomically.
   static inline GCHermesValueBase<HVType> *uninitialized_copy(
       GCHermesValueBase<HVType> *first,
       GCHermesValueBase<HVType> *last,
       GCHermesValueBase<HVType> *result,
       GC *gc);
-#endif
 
   /// Copies a range of values and performs a write barrier on each.
   template <typename InputIt, typename OutputIt>

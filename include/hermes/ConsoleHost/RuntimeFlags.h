@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -102,26 +102,6 @@ static opt<bool> SampleProfiling(
     init(false),
     desc("Enable sampling profiler"),
     cat(RuntimeCategory));
-
-#ifdef HERMESVM_SERIALIZE
-static opt<std::string> SerializeAfterInitFile(
-    "serialize-after-init-file",
-    desc("Serialize vm status after initialization, output to file"),
-    init(""),
-    cat(RuntimeCategory));
-
-static opt<std::string> DeserializeFile(
-    "deserialize-file",
-    desc("Deserialize vm from a previous serialized file"),
-    init(""),
-    cat(RuntimeCategory));
-
-static opt<std::string> SerializeVMPath(
-    "serializevm-path",
-    desc("Path to serialize VM state to when serializeVM() is called"),
-    init(""),
-    cat(RuntimeCategory));
-#endif // HERMESVM_SERIALIZE
 
 static opt<MemorySize, false, MemorySizeParser> MaxHeapSize(
     "gc-max-heap",

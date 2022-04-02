@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -9,7 +9,7 @@
 #define HERMES_BCGEN_HBC_UNIQUINGSTRINGLITERALTABLE_H
 
 #include "hermes/BCGen/HBC/ConsecutiveStringStorage.h"
-#include "hermes/Support/StringKind.h"
+#include "hermes/BCGen/HBC/StringKind.h"
 
 namespace hermes {
 namespace hbc {

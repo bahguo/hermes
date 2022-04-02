@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -12,7 +12,6 @@
 // Android.  It's likely it could be made to work against the
 // non-Android ICU4J packages, too, if necessary, but it would take a
 // bit more work.
-#if HERMES_PLATFORM_INTL == HERMES_PLATFORM_INTL_ANDROID
 
 #include <fbjni/fbjni.h>
 
@@ -70,8 +69,18 @@ using JOptionsMap = jni::JMap<jni::JString, jni::JObject>;
 using JPartMap = jni::JMap<jni::JString, jni::JString>;
 using JPartsList = jni::JList<JPartMap>;
 
-jni::local_ref<jstring> stringToJava(std::u16string str) {
-  return jni::make_jstring(str);
+jni::local_ref<jstring> stringToJava(const std::u16string &utf16) {
+  // Work around a bug in fbjni where make_jstring returns null for empty
+  // u16strings.
+  // TODO(T101910387): Switch back to make_jstring once it is fixed.
+  const auto env = jni::Environment::current();
+  static_assert(
+      sizeof(jchar) == sizeof(std::u16string::value_type),
+      "Expecting jchar to be the same size as std::u16string::CharT");
+  jstring result = env->NewString(
+      reinterpret_cast<const jchar *>(utf16.c_str()), utf16.size());
+  FACEBOOK_JNI_THROW_PENDING_EXCEPTION();
+  return jni::adopt_local(result);
 }
 
 jni::local_ref<JLocalesList> localesToJava(
@@ -79,7 +88,7 @@ jni::local_ref<JLocalesList> localesToJava(
   jni::local_ref<JArrayList<jni::JString>> ret =
       JArrayList<jni::JString>::create(locales.size());
   for (const auto &locale : locales) {
-    ret->add(jni::make_jstring(locale));
+    ret->add(stringToJava(locale));
   }
   return ret;
 }
@@ -94,9 +103,9 @@ jni::local_ref<JOptionsMap> optionsToJava(const Options &options) {
       jvalue = jni::autobox(static_cast<jdouble>(kv.second.getNumber()));
     } else {
       assert(kv.second.isString() && "Option is not valid type");
-      jvalue = jni::make_jstring(kv.second.getString());
+      jvalue = stringToJava(kv.second.getString());
     }
-    ret->put(jni::make_jstring(kv.first), jvalue);
+    ret->put(stringToJava(kv.first), jvalue);
   }
   return ret;
 }
@@ -166,7 +175,7 @@ Part partFromJava(jni::alias_ref<JPartMap> result) {
 }
 
 vm::CallResult<std::vector<std::u16string>> localesFromJava(
-    vm::Runtime *runtime,
+    vm::Runtime &runtime,
     vm::CallResult<jni::local_ref<JLocalesList>> &&result) {
   if (LLVM_UNLIKELY(result == vm::ExecutionStatus::EXCEPTION)) {
     return vm::ExecutionStatus::EXCEPTION;
@@ -234,37 +243,37 @@ class JIntl : public jni::JavaClass<JIntl> {
 } // namespace
 
 vm::CallResult<std::vector<std::u16string>> getCanonicalLocales(
-    vm::Runtime *runtime,
+    vm::Runtime &runtime,
     const std::vector<std::u16string> &locales) {
   try {
     return localesFromJava(
         runtime, JIntl::getCanonicalLocales(localesToJava(locales)));
   } catch (const std::exception &ex) {
-    return runtime->raiseRangeError(ex.what());
+    return runtime.raiseRangeError(ex.what());
   }
 }
 
 vm::CallResult<std::u16string> toLocaleLowerCase(
-    vm::Runtime *runtime,
+    vm::Runtime &runtime,
     const std::vector<std::u16string> &locales,
     const std::u16string &str) {
   try {
     return stringFromJava(
         JIntl::toLocaleLowerCase(localesToJava(locales), stringToJava(str)));
   } catch (const std::exception &ex) {
-    return runtime->raiseRangeError(ex.what());
+    return runtime.raiseRangeError(ex.what());
   }
 }
 
 vm::CallResult<std::u16string> toLocaleUpperCase(
-    vm::Runtime *runtime,
+    vm::Runtime &runtime,
     const std::vector<std::u16string> &locales,
     const std::u16string &str) {
   try {
     return stringFromJava(
         JIntl::toLocaleUpperCase(localesToJava(locales), stringToJava(str)));
   } catch (const std::exception &ex) {
-    return runtime->raiseRangeError(ex.what());
+    return runtime.raiseRangeError(ex.what());
   }
 }
 
@@ -315,10 +324,12 @@ struct Collator::Impl {
 
 Collator::Collator() : impl_(std::make_unique<Impl>()) {}
 
-Collator::~Collator() {}
+Collator::~Collator() {
+  jni::ThreadScope::WithClassLoader([&] { impl_.reset(); });
+}
 
 vm::CallResult<std::vector<std::u16string>> Collator::supportedLocalesOf(
-    vm::Runtime *runtime,
+    vm::Runtime &runtime,
     const std::vector<std::u16string> &locales,
     const Options &options) noexcept {
   try {
@@ -327,19 +338,19 @@ vm::CallResult<std::vector<std::u16string>> Collator::supportedLocalesOf(
         JCollator::supportedLocalesOf(
             localesToJava(locales), optionsToJava(options)));
   } catch (const std::exception &ex) {
-    return runtime->raiseRangeError(ex.what());
+    return runtime.raiseRangeError(ex.what());
   }
 }
 
 vm::ExecutionStatus Collator::initialize(
-    vm::Runtime *runtime,
+    vm::Runtime &runtime,
     const std::vector<std::u16string> &locales,
     const Options &options) noexcept {
   try {
     impl_->jCollator_ = jni::make_global(
         JCollator::create(localesToJava(locales), optionsToJava(options)));
   } catch (const std::exception &ex) {
-    return runtime->raiseRangeError(ex.what());
+    return runtime.raiseRangeError(ex.what());
   }
 
   return vm::ExecutionStatus::RETURNED;
@@ -408,10 +419,12 @@ struct DateTimeFormat::Impl {
 
 DateTimeFormat::DateTimeFormat() : impl_(std::make_unique<Impl>()) {}
 
-DateTimeFormat::~DateTimeFormat() {}
+DateTimeFormat::~DateTimeFormat() {
+  jni::ThreadScope::WithClassLoader([&] { impl_.reset(); });
+}
 
 vm::CallResult<std::vector<std::u16string>> DateTimeFormat::supportedLocalesOf(
-    vm::Runtime *runtime,
+    vm::Runtime &runtime,
     const std::vector<std::u16string> &locales,
     const Options &options) noexcept {
   try {
@@ -420,19 +433,19 @@ vm::CallResult<std::vector<std::u16string>> DateTimeFormat::supportedLocalesOf(
         JDateTimeFormat::supportedLocalesOf(
             localesToJava(locales), optionsToJava(options)));
   } catch (const std::exception &ex) {
-    return runtime->raiseRangeError(ex.what());
+    return runtime.raiseRangeError(ex.what());
   }
 }
 
 vm::ExecutionStatus DateTimeFormat::initialize(
-    vm::Runtime *runtime,
+    vm::Runtime &runtime,
     const std::vector<std::u16string> &locales,
     const Options &options) noexcept {
   try {
     impl_->jDateTimeFormat_ = jni::make_global(JDateTimeFormat::create(
         localesToJava(locales), optionsToJava(options)));
   } catch (const std::exception &ex) {
-    return runtime->raiseRangeError(ex.what());
+    return runtime.raiseRangeError(ex.what());
   }
 
   return vm::ExecutionStatus::RETURNED;
@@ -508,10 +521,12 @@ struct NumberFormat::Impl {
 
 NumberFormat::NumberFormat() : impl_(std::make_unique<Impl>()) {}
 
-NumberFormat::~NumberFormat() {}
+NumberFormat::~NumberFormat() {
+  jni::ThreadScope::WithClassLoader([&] { impl_.reset(); });
+}
 
 vm::CallResult<std::vector<std::u16string>> NumberFormat::supportedLocalesOf(
-    vm::Runtime *runtime,
+    vm::Runtime &runtime,
     const std::vector<std::u16string> &locales,
     const Options &options) noexcept {
   try {
@@ -520,19 +535,19 @@ vm::CallResult<std::vector<std::u16string>> NumberFormat::supportedLocalesOf(
         JNumberFormat::supportedLocalesOf(
             localesToJava(locales), optionsToJava(options)));
   } catch (const std::exception &ex) {
-    return runtime->raiseRangeError(ex.what());
+    return runtime.raiseRangeError(ex.what());
   }
 }
 
 vm::ExecutionStatus NumberFormat::initialize(
-    vm::Runtime *runtime,
+    vm::Runtime &runtime,
     const std::vector<std::u16string> &locales,
     const Options &options) noexcept {
   try {
     impl_->jNumberFormat_ = jni::make_global(
         JNumberFormat::create(localesToJava(locales), optionsToJava(options)));
   } catch (const std::exception &ex) {
-    return runtime->raiseRangeError(ex.what());
+    return runtime.raiseRangeError(ex.what());
   }
 
   return vm::ExecutionStatus::RETURNED;
@@ -557,5 +572,3 @@ std::vector<Part> NumberFormat::formatToParts(double number) noexcept {
 
 } // namespace platform_intl
 } // namespace hermes
-
-#endif

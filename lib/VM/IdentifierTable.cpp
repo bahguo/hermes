@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -10,8 +10,6 @@
 
 #include "hermes/Support/UTF8.h"
 #include "hermes/VM/CallResult.h"
-#include "hermes/VM/Deserializer.h"
-#include "hermes/VM/Serializer.h"
 #include "hermes/VM/StringBuilder.h"
 #include "hermes/VM/StringPrimitive.h"
 #include "hermes/VM/StringView.h"
@@ -34,96 +32,30 @@ IdentifierTable::LookupEntry::LookupEntry(
   hash_ = hermes::hashString(llvh::ArrayRef<char16_t>(storage));
 }
 
-#ifdef HERMESVM_SERIALIZE
-enum class EntryKind { ASCII, UTF16, StrPrim, Free };
-
-void IdentifierTable::LookupEntry::serialize(Serializer &s) {
-  // Common for every type.
-  s.writeInt<uint8_t>(isNotUniqued_);
-  s.writeInt<uint32_t>(hash_);
-  if (isStringPrim()) {
-    // Actual StringPrimitive pointed to should be on the heap, will be
-    // serialized later.
-    // Write the following data for this entry:
-    // [STRPRIM, num_, strPrim_(relocation)].
-    s.writeInt<uint8_t>((uint8_t)EntryKind::StrPrim);
-    s.writeInt<uint32_t>(num_);
-    s.writeRelocation(strPrim_);
-  } else if (isLazyASCII()) {
-    // Pointer to an ASCII string literal.
-    // Write the following data for this entry: [ASCII, num, str(offset)].
-    s.writeInt<uint8_t>((uint8_t)EntryKind::ASCII);
-    s.writeInt<uint32_t>(num_);
-    s.writeCharStr(getLazyASCIIRef());
-  } else if (isLazyUTF16()) {
-    // Pointer to an UTF16 string literal.
-    // Write the following data for this entry: [UTF16, num, str(offset)].
-    s.writeInt<uint8_t>((uint8_t)EntryKind::UTF16);
-    s.writeInt<uint32_t>(num_);
-    s.writeChar16Str(getLazyUTF16Ref());
-  } else {
-    // A free entry. Write the following data for this entry: [FREE, num_].
-    assert(isFreeSlot() && "invalid entry kind");
-    s.writeInt<uint8_t>((uint8_t)EntryKind::Free);
-    s.writeInt<uint32_t>(num_);
-  }
-}
-
-void IdentifierTable::LookupEntry::deserialize(Deserializer &d) {
-  isNotUniqued_ = d.readInt<uint8_t>();
-  hash_ = d.readInt<uint32_t>();
-  EntryKind kind = (EntryKind)d.readInt<uint8_t>();
-  switch (kind) {
-    case EntryKind::ASCII: {
-      num_ = d.readInt<uint32_t>();
-      asciiPtr_ = d.readCharStr();
-      isUTF16_ = false;
-      return;
-    }
-    case EntryKind::UTF16: {
-      num_ = d.readInt<uint32_t>();
-      utf16Ptr_ = d.readChar16Str();
-      isUTF16_ = true;
-      return;
-    }
-    case EntryKind::StrPrim: {
-      num_ = d.readInt<uint32_t>();
-      d.readRelocation(&strPrim_, RelocationKind::NativePointer);
-      return;
-    }
-    case EntryKind::Free: {
-      num_ = d.readInt<uint32_t>();
-      return;
-    }
-  }
-  llvm_unreachable("wrong EntryKind");
-}
-#endif
-
 IdentifierTable::IdentifierTable() {
   hashTable_.setIdentifierTable(this);
 }
 
 CallResult<Handle<SymbolID>> IdentifierTable::getSymbolHandle(
-    Runtime *runtime,
+    Runtime &runtime,
     UTF16Ref str,
     uint32_t hash) {
   auto cr = getOrCreateIdentifier(
       runtime, str, Runtime::makeNullHandle<StringPrimitive>(), hash);
   if (LLVM_UNLIKELY(cr == ExecutionStatus::EXCEPTION))
     return ExecutionStatus::EXCEPTION;
-  return runtime->makeHandle(*cr);
+  return runtime.makeHandle(*cr);
 }
 
 CallResult<Handle<SymbolID>> IdentifierTable::getSymbolHandle(
-    Runtime *runtime,
+    Runtime &runtime,
     ASCIIRef str,
     uint32_t hash) {
   auto cr = getOrCreateIdentifier(
       runtime, str, Runtime::makeNullHandle<StringPrimitive>(), hash);
   if (LLVM_UNLIKELY(cr == ExecutionStatus::EXCEPTION))
     return ExecutionStatus::EXCEPTION;
-  return runtime->makeHandle(*cr);
+  return runtime.makeHandle(*cr);
 }
 
 SymbolID IdentifierTable::registerLazyIdentifier(ASCIIRef str) {
@@ -143,16 +75,16 @@ SymbolID IdentifierTable::registerLazyIdentifier(UTF16Ref str, uint32_t hash) {
 }
 
 CallResult<Handle<SymbolID>> IdentifierTable::getSymbolHandleFromPrimitive(
-    Runtime *runtime,
+    Runtime &runtime,
     PseudoHandle<StringPrimitive> str) {
   assert(str && "null string primitive");
   if (str->isUniqued()) {
     // If the string was already uniqued, we can return directly.
     SymbolID id = str->getUniqueID();
     symbolReadBarrier(id.unsafeGetIndex());
-    return runtime->makeHandle(id);
+    return runtime.makeHandle(id);
   }
-  auto handle = runtime->makeHandle(std::move(str));
+  auto handle = runtime.makeHandle(std::move(str));
   // Force the string primitive to flatten if it's a rope.
   handle = StringPrimitive::ensureFlat(runtime, handle);
   auto cr = handle->isASCII()
@@ -160,10 +92,10 @@ CallResult<Handle<SymbolID>> IdentifierTable::getSymbolHandleFromPrimitive(
       : getOrCreateIdentifier(runtime, handle->castToUTF16Ref(), handle);
   if (LLVM_UNLIKELY(cr == ExecutionStatus::EXCEPTION))
     return ExecutionStatus::EXCEPTION;
-  return runtime->makeHandle(*cr);
+  return runtime.makeHandle(*cr);
 }
 
-StringPrimitive *IdentifierTable::getStringPrim(Runtime *runtime, SymbolID id) {
+StringPrimitive *IdentifierTable::getStringPrim(Runtime &runtime, SymbolID id) {
   auto &entry = getLookupTableEntry(id);
   if (entry.isStringPrim()) {
     return entry.getStringPrimRef();
@@ -174,7 +106,7 @@ StringPrimitive *IdentifierTable::getStringPrim(Runtime *runtime, SymbolID id) {
   return materializeLazyIdentifier(runtime, id);
 }
 
-StringView IdentifierTable::getStringView(Runtime *runtime, SymbolID id) const {
+StringView IdentifierTable::getStringView(Runtime &runtime, SymbolID id) const {
   auto &entry = getLookupTableEntry(id);
   if (entry.isStringPrim()) {
     // The const_cast is a mechanical requirement as it's not worth it to
@@ -191,7 +123,7 @@ StringView IdentifierTable::getStringView(Runtime *runtime, SymbolID id) const {
   return StringView(entry.getLazyUTF16Ref());
 }
 
-StringView IdentifierTable::getStringViewForDev(Runtime *runtime, SymbolID id)
+StringView IdentifierTable::getStringViewForDev(Runtime &runtime, SymbolID id)
     const {
   if (id == SymbolID::empty()) {
     assert(false && "getStringViewForDev on empty SymbolID");
@@ -305,7 +237,7 @@ void IdentifierTable::visitIdentifiers(
 template <typename T, bool Unique>
 CallResult<PseudoHandle<StringPrimitive>>
 IdentifierTable::allocateDynamicString(
-    Runtime *runtime,
+    Runtime &runtime,
     llvh::ArrayRef<T> str,
     Handle<StringPrimitive> primHandle) {
   size_t length = str.size();
@@ -318,7 +250,7 @@ IdentifierTable::allocateDynamicString(
   PseudoHandle<StringPrimitive> result;
   if (StringPrimitive::isExternalLength(length)) {
     if (LLVM_UNLIKELY(length > StringPrimitive::MAX_STRING_LENGTH)) {
-      return runtime->raiseRangeError("String length exceeds limit");
+      return runtime.raiseRangeError("String length exceeds limit");
     }
     std::basic_string<T> stdString(str.begin(), str.end());
     auto cr = ExternalStringPrimitive<T>::createLongLived(
@@ -328,12 +260,11 @@ IdentifierTable::allocateDynamicString(
     }
     result = createPseudoHandle(vmcast<StringPrimitive>(*cr));
   } else {
-    auto *tmp = runtime->makeAVariable<
+    auto *tmp = runtime.makeAVariable<
         DynamicStringPrimitive<T, Unique>,
         HasFinalizer::No,
         LongLived::Yes>(
         DynamicStringPrimitive<T, Unique>::allocationSize((uint32_t)length),
-        runtime,
         length);
     // Since we keep a raw pointer to mem, no more JS heap allocations after
     // this point.
@@ -380,7 +311,7 @@ uint32_t IdentifierTable::allocIDAndInsert(
 
 template <typename T>
 CallResult<SymbolID> IdentifierTable::getOrCreateIdentifier(
-    Runtime *runtime,
+    Runtime &runtime,
     llvh::ArrayRef<T> str,
     Handle<StringPrimitive> maybeIncomingPrimHandle,
     uint32_t hash) {
@@ -409,7 +340,7 @@ CallResult<SymbolID> IdentifierTable::getOrCreateIdentifier(
   // \code
   // if (maybeIncomingPrimHandle &&
   //     LLVM_UNLIKELY(maybeIncomingPrimHandle->canBeUniqued()) &&
-  //     runtime->getHeap().isLongLived(*maybeIncomingPrimHandle)) {
+  //     runtime.getHeap().isLongLived(*maybeIncomingPrimHandle)) {
   //   return SymbolID::unsafeCreate(
   //       allocIDAndInsert(idx, maybeIncomingPrimHandle.get()));
   // }
@@ -427,7 +358,7 @@ CallResult<SymbolID> IdentifierTable::getOrCreateIdentifier(
 }
 
 StringPrimitive *IdentifierTable::getExistingStringPrimitiveOrNull(
-    Runtime *runtime,
+    Runtime &runtime,
     llvh::ArrayRef<char16_t> str) {
   auto idx = hashTable_.lookupString(str, hashString(str));
   if (!hashTable_.isValid(idx)) {
@@ -463,7 +394,7 @@ SymbolID IdentifierTable::registerLazyIdentifierImpl(
 }
 
 StringPrimitive *IdentifierTable::materializeLazyIdentifier(
-    Runtime *runtime,
+    Runtime &runtime,
     SymbolID id) {
   auto &entry = getLookupTableEntry(id);
   assert(
@@ -471,7 +402,7 @@ StringPrimitive *IdentifierTable::materializeLazyIdentifier(
   // This in theory can throw if running out of memory. However there are only
   // finite number of persistent identifiers, and we should always have enough
   // memory to hold them.
-  PseudoHandle<StringPrimitive> strPrim = runtime->ignoreAllocationFailure(
+  PseudoHandle<StringPrimitive> strPrim = runtime.ignoreAllocationFailure(
       entry.isLazyASCII() ? allocateDynamicString(
                                 runtime,
                                 entry.getLazyASCIIRef(),
@@ -603,11 +534,11 @@ SymbolID IdentifierTable::createNotUniquedLazySymbol(ASCIIRef desc) {
 }
 
 CallResult<SymbolID> IdentifierTable::createNotUniquedSymbol(
-    Runtime *runtime,
+    Runtime &runtime,
     Handle<StringPrimitive> desc) {
   uint32_t nextID = allocNextID();
 
-  if (runtime->getHeap().inYoungGen(desc.get())) {
+  if (runtime.getHeap().inYoungGen(desc.get())) {
     // Need to reallocate in the old gen if the description is in the young gen.
     CallResult<PseudoHandle<StringPrimitive>> longLivedStr = desc->isASCII()
         ? allocateDynamicString<char, /* Unique */ false>(
@@ -639,35 +570,6 @@ llvh::raw_ostream &operator<<(llvh::raw_ostream &OS, SymbolID symbolID) {
               << (symbolID.isUniqued() ? "(Uniqued)" : "(Not Uniqued)")
               << symbolID.unsafeGetIndex() << ")";
 }
-
-#ifdef HERMESVM_SERIALIZE
-void IdentifierTable::serialize(Serializer &s) {
-  // Serialize uint32_t firstFreeID_;
-  s.writeInt<uint32_t>(firstFreeID_);
-  // Serialize IdentTableLookupVector lookupVector_;
-  size_t size = lookupVector_.size();
-  s.writeInt<uint32_t>(size);
-  for (size_t i = 0; i < size; i++) {
-    lookupVector_[i].serialize(s);
-  }
-  s.endObject(&lookupVector_);
-  // Serialize detail::IdentifierHashTable hashTable_;
-  hashTable_.serialize(s);
-}
-
-void IdentifierTable::deserialize(Deserializer &d) {
-  firstFreeID_ = d.readInt<uint32_t>();
-  size_t size = d.readInt<uint32_t>();
-  lookupVector_.resize(size);
-  for (auto &entry : lookupVector_) {
-    entry.deserialize(d);
-  }
-  d.endObject(&lookupVector_);
-  markedSymbols_.resize(size);
-
-  hashTable_.deserialize(d);
-}
-#endif
 
 } // namespace vm
 } // namespace hermes

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -40,11 +40,14 @@ class HashMapEntry final : public GCCell {
   /// Next entry in the hash table bucket.
   GCPointer<HashMapEntry> nextEntryInBucket{nullptr};
 
+  static constexpr CellKind getCellKind() {
+    return CellKind::HashMapEntryKind;
+  }
   static bool classof(const GCCell *cell) {
     return cell->getKind() == CellKind::HashMapEntryKind;
   }
 
-  static CallResult<PseudoHandle<HashMapEntry>> create(Runtime *runtime);
+  static CallResult<PseudoHandle<HashMapEntry>> create(Runtime &runtime);
 
   /// Indicates whether this entry has been deleted.
   bool isDeleted() const {
@@ -53,19 +56,10 @@ class HashMapEntry final : public GCCell {
   }
 
   /// Mark this entry as deleted.
-  void markDeleted(Runtime *runtime) {
-    key.setNonPtr(HermesValue::encodeEmptyValue(), &runtime->getHeap());
-    value.setNonPtr(HermesValue::encodeEmptyValue(), &runtime->getHeap());
+  void markDeleted(Runtime &runtime) {
+    key.setNonPtr(HermesValue::encodeEmptyValue(), &runtime.getHeap());
+    value.setNonPtr(HermesValue::encodeEmptyValue(), &runtime.getHeap());
   }
-
- public:
-#ifdef HERMESVM_SERIALIZE
-  explicit HashMapEntry(Deserializer &d);
-
-  friend void HashMapEntryDeserialize(Deserializer &d, CellKind kind);
-#endif
-
-  HashMapEntry(Runtime *runtime) : GCCell(&runtime->getHeap(), &vt) {}
 }; // HashMapEntry
 
 /// OrderedHashMap is a gc-managed hash map that maintains insertion order.
@@ -91,44 +85,41 @@ class OrderedHashMap final : public GCCell {
  public:
   static const VTable vt;
 
-#ifdef HERMESVM_SERIALIZE
-  OrderedHashMap(Deserializer &d);
-
-  friend void OrderedHashMapSerialize(Serializer &s, const GCCell *cell);
-#endif
-
+  static constexpr CellKind getCellKind() {
+    return CellKind::OrderedHashMapKind;
+  }
   static bool classof(const GCCell *cell) {
     return cell->getKind() == CellKind::OrderedHashMapKind;
   }
 
-  static CallResult<PseudoHandle<OrderedHashMap>> create(Runtime *runtime);
+  static CallResult<PseudoHandle<OrderedHashMap>> create(Runtime &runtime);
 
   /// \return true if the map contains a given HermesValue.
-  static bool has(Handle<OrderedHashMap> self, Runtime *runtime, Handle<> key);
+  static bool has(Handle<OrderedHashMap> self, Runtime &runtime, Handle<> key);
 
   /// Lookup \p key in the table and \return the value if exists.
   /// Otherwise \return undefined.
   static HermesValue
-  get(Handle<OrderedHashMap> self, Runtime *runtime, Handle<> key);
+  get(Handle<OrderedHashMap> self, Runtime &runtime, Handle<> key);
 
   /// Lookup \p key in the table and \return the value if exists.
   /// Otherwise \return nullptr.
   static HashMapEntry *
-  find(Handle<OrderedHashMap> self, Runtime *runtime, Handle<> key);
+  find(Handle<OrderedHashMap> self, Runtime &runtime, Handle<> key);
 
   /// Insert a key/value pair into the map, if not already existing.
   static ExecutionStatus insert(
       Handle<OrderedHashMap> self,
-      Runtime *runtime,
+      Runtime &runtime,
       Handle<> key,
       Handle<> value);
 
   /// Erase a HermesValue from the map, \return true if succeed.
   static bool
-  erase(Handle<OrderedHashMap> self, Runtime *runtime, Handle<> key);
+  erase(Handle<OrderedHashMap> self, Runtime &runtime, Handle<> key);
 
   /// Clear the map.  The \p gc parameter is necessary for write barriers.
-  void clear(Runtime *runtime);
+  void clear(Runtime &runtime);
 
   /// \return the size of the map.
   uint32_t size() const {
@@ -140,10 +131,10 @@ class OrderedHashMap final : public GCCell {
   /// entry that is not deleted.
   /// Otherwise, we look for the next element after \p entry that is not
   /// deleted.
-  HashMapEntry *iteratorNext(Runtime *runtime, HashMapEntry *entry = nullptr)
+  HashMapEntry *iteratorNext(Runtime &runtime, HashMapEntry *entry = nullptr)
       const;
 
-  OrderedHashMap(Runtime *runtime, Handle<ArrayStorageSmall> hashTableStorage);
+  OrderedHashMap(Runtime &runtime, Handle<ArrayStorageSmall> hashTableStorage);
 
  private:
   /// The hashtable, with size always equal to capacity_. The number of
@@ -164,7 +155,7 @@ class OrderedHashMap final : public GCCell {
   // It needs to be less than 1/4th the max 32-bit integer in order to use an
   // integer-based load factor check of 0.75.
   static constexpr uint32_t MAX_CAPACITY =
-      min(ArrayStorageSmall::maxElements(), UINT32_MAX / 4);
+      std::min(ArrayStorageSmall::maxElements(), UINT32_MAX / 4);
 
   /// Capacity of the hash table.
   uint32_t capacity_{INITIAL_CAPACITY};
@@ -174,8 +165,8 @@ class OrderedHashMap final : public GCCell {
 
   /// Hash a HermesValue to an index to our hash table.
   static uint32_t
-  hashToBucket(Handle<OrderedHashMap> self, Runtime *runtime, Handle<> key) {
-    auto hash = runtime->gcStableHashHermesValue(key);
+  hashToBucket(Handle<OrderedHashMap> self, Runtime &runtime, Handle<> key) {
+    auto hash = runtime.gcStableHashHermesValue(key);
     assert(
         (self->capacity_ & (self->capacity_ - 1)) == 0 &&
         "capacity_ must be power of 2");
@@ -183,18 +174,18 @@ class OrderedHashMap final : public GCCell {
   }
 
   /// Remove a node from the linked list.
-  void removeLinkedListNode(Runtime *runtime, HashMapEntry *entry, GC *gc);
+  void removeLinkedListNode(Runtime &runtime, HashMapEntry *entry, GC *gc);
 
   /// Lookup an entry with key as \p key in a given \p bucket.
   HashMapEntry *
-  lookupInBucket(Runtime *runtime, uint32_t bucket, HermesValue key);
+  lookupInBucket(Runtime &runtime, uint32_t bucket, HermesValue key);
 
   /// Adjust the capacity of the hashtable and rehash if necessary.
   /// We make decisions based on the Load Factor (size / capacity).
   /// Rehash if load factor is outside of the range of [0.25, 0.75].
   static ExecutionStatus rehashIfNecessary(
       Handle<OrderedHashMap> self,
-      Runtime *runtime);
+      Runtime &runtime);
 }; // OrderedHashMap
 } // namespace vm
 } // namespace hermes

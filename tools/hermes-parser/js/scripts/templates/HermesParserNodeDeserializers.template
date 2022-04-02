@@ -1,11 +1,12 @@
 /**
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
  */
 
 #define NodeLabel this.deserializeString()
+#define NodeString this.deserializeString()
 #define NodeBoolean this.deserializeBoolean()
 #define NodeNumber this.deserializeNumber()
 #define NodePtr this.deserializeNode()

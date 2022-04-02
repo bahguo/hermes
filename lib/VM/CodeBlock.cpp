@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -10,13 +10,10 @@
 #include "hermes/VM/CodeBlock.h"
 
 #include "hermes/BCGen/HBC/Bytecode.h"
-#include "hermes/BCGen/HBC/BytecodeProviderFromSrc.h"
 #include "hermes/BCGen/HBC/HBC.h"
 #include "hermes/IRGen/IRGen.h"
 #include "hermes/Support/Conversions.h"
-#include "hermes/Support/OSCompat.h"
 #include "hermes/Support/PerfSection.h"
-#include "hermes/VM/Debugger/Debugger.h"
 #include "hermes/VM/GCPointer-inline.h"
 #include "hermes/VM/Runtime.h"
 #include "hermes/VM/RuntimeModule.h"
@@ -24,7 +21,6 @@
 
 #include "llvh/Support/Debug.h"
 #include "llvh/Support/ErrorHandling.h"
-#include "llvh/Support/MathExtras.h"
 
 namespace hermes {
 namespace vm {
@@ -172,17 +168,20 @@ SLP CodeBlock::getArrayBufferIter(uint32_t idx, unsigned int numLiterals)
       runtimeModule_};
 }
 
-std::pair<SLP, SLP> CodeBlock::getObjectBufferIter(
-    uint32_t keyIdx,
-    uint32_t valIdx,
-    unsigned int numLiterals) const {
-  return std::pair<SLP, SLP>{
-      SLP{runtimeModule_->getBytecode()->getObjectKeyBuffer().slice(keyIdx),
-          numLiterals,
-          nullptr},
-      SLP{runtimeModule_->getBytecode()->getObjectValueBuffer().slice(valIdx),
-          numLiterals,
-          runtimeModule_}};
+SLP CodeBlock::getObjectBufferKeyIter(uint32_t idx, unsigned int numLiterals)
+    const {
+  return SLP{
+      runtimeModule_->getBytecode()->getObjectKeyBuffer().slice(idx),
+      numLiterals,
+      nullptr};
+}
+
+SLP CodeBlock::getObjectBufferValueIter(uint32_t idx, unsigned int numLiterals)
+    const {
+  return SLP{
+      runtimeModule_->getBytecode()->getObjectValueBuffer().slice(idx),
+      numLiterals,
+      runtimeModule_};
 }
 
 SymbolID CodeBlock::getNameMayAllocate() const {
@@ -195,10 +194,10 @@ SymbolID CodeBlock::getNameMayAllocate() const {
       functionHeader_.functionName());
 }
 
-std::string CodeBlock::getNameString(GCBase::GCCallbacks *runtime) const {
+std::string CodeBlock::getNameString(GCBase::GCCallbacks &runtime) const {
 #ifndef HERMESVM_LEAN
   if (isLazy()) {
-    return runtime->convertSymbolToUTF8(runtimeModule_->getLazyName());
+    return runtime.convertSymbolToUTF8(runtimeModule_->getLazyName());
   }
 #endif
   return runtimeModule_->getStringFromStringID(functionHeader_.functionName());
@@ -222,11 +221,12 @@ OptValue<hbc::DebugSourceLocation> CodeBlock::getSourceLocation(
     assert(offset == 0 && "Function is lazy, but debug offset >0 specified");
 
     auto *provider = (hbc::BCProviderLazy *)getRuntimeModule()->getBytecode();
-    auto bcModule = provider->getBytecodeModule();
-    auto sourceLoc = bcModule->getFunctionSourceRange(functionID_).Start;
+    auto *func = provider->getBytecodeFunction();
+    auto *lazyData = func->getLazyCompilationData();
+    auto sourceLoc = lazyData->span.Start;
 
     SourceErrorManager::SourceCoords coords;
-    if (!bcModule->getContext()->getSourceErrorManager().findBufferLineAndLoc(
+    if (!lazyData->context->getSourceErrorManager().findBufferLineAndLoc(
             sourceLoc, coords)) {
       return llvh::None;
     }
@@ -253,6 +253,32 @@ OptValue<hbc::DebugSourceLocation> CodeBlock::getSourceLocation(
       ->getLocationForAddress(*debugLocsOffset, offset);
 }
 
+OptValue<uint32_t> CodeBlock::getFunctionSourceID() const {
+  // Note that for the case of lazy compilation, the function sources had been
+  // reserved into the function source table of the root bytecode module.
+  // For non-lazy module, the lazy root module is itself.
+  llvh::ArrayRef<std::pair<uint32_t, uint32_t>> table =
+      runtimeModule_->getLazyRootModule()
+          ->getBytecode()
+          ->getFunctionSourceTable();
+
+  // Performs a binary search since the function source table is sorted by the
+  // 1st value. We could further optimize the lookup by loading it as a map in
+  // the RuntimeModule, but the table is expected to be small.
+  auto it = std::lower_bound(
+      table.begin(),
+      table.end(),
+      functionID_,
+      [](std::pair<uint32_t, uint32_t> entry, uint32_t id) {
+        return entry.first < id;
+      });
+  if (it == table.end() || it->first != functionID_) {
+    return llvh::None;
+  } else {
+    return it->second;
+  }
+}
+
 OptValue<uint32_t> CodeBlock::getDebugLexicalDataOffset() const {
   auto *debugOffsets =
       runtimeModule_->getBytecode()->getDebugOffsets(functionID_);
@@ -269,48 +295,26 @@ SourceErrorManager::SourceCoords CodeBlock::getLazyFunctionLoc(
   assert(isLazy() && "Function must be lazy");
   SourceErrorManager::SourceCoords coords;
 #ifndef HERMESVM_LEAN
-  auto provider = (hbc::BCProviderLazy *)runtimeModule_->getBytecode();
-  auto sourceRange =
-      provider->getBytecodeModule()->getFunctionSourceRange(functionID_);
-  assert(sourceRange.isValid() && "Source not available for function");
-  provider->getBytecodeModule()
-      ->getContext()
-      ->getSourceErrorManager()
-      .findBufferLineAndLoc(
-          start ? sourceRange.Start : sourceRange.End, coords);
+  auto *provider = (hbc::BCProviderLazy *)getRuntimeModule()->getBytecode();
+  auto *func = provider->getBytecodeFunction();
+  auto *lazyData = func->getLazyCompilationData();
+  lazyData->context->getSourceErrorManager().findBufferLineAndLoc(
+      start ? lazyData->span.Start : lazyData->span.End, coords);
 #endif
   return coords;
 }
 
 #ifndef HERMESVM_LEAN
-bool CodeBlock::hasFunctionSource() const {
-  return runtimeModule_->getBytecode()
-      ->getFunctionSourceRange(functionID_)
-      .isValid();
-}
-
-llvh::StringRef CodeBlock::getFunctionSource() const {
-  auto sourceRange =
-      runtimeModule_->getBytecode()->getFunctionSourceRange(functionID_);
-  assert(sourceRange.isValid() && "Function does not have source available");
-  const auto sourceStart = sourceRange.Start.getPointer();
-  return {sourceStart, (size_t)(sourceRange.End.getPointer() - sourceStart)};
-}
-#endif
-
-#ifndef HERMESVM_LEAN
 namespace {
 std::unique_ptr<hbc::BytecodeModule> compileLazyFunction(
-    std::shared_ptr<Context> context,
-    hbc::BytecodeFunction *func,
-    llvh::SMRange sourceRange) {
-  assert(func);
+    hbc::LazyCompilationData *lazyData) {
+  assert(lazyData);
   LLVM_DEBUG(
-      llvh::dbgs() << "Compiling lazy function "
-                   << func->getLazyCompilationData()->originalName << "\n");
+      llvh::dbgs() << "Compiling lazy function " << lazyData->originalName
+                   << "\n");
 
-  Module M{context};
-  auto pair = hermes::generateLazyFunctionIR(func, &M, sourceRange);
+  Module M{lazyData->context};
+  auto pair = hermes::generateLazyFunctionIR(lazyData, &M);
   Function *entryPoint = pair.first;
   Function *lexicalRoot = pair.second;
 
@@ -328,18 +332,17 @@ std::unique_ptr<hbc::BytecodeModule> compileLazyFunction(
 }
 } // namespace
 
-void CodeBlock::lazyCompileImpl(Runtime *runtime) {
+void CodeBlock::lazyCompileImpl(Runtime &runtime) {
   assert(isLazy() && "Laziness has not been checked");
   PerfSection perf("Lazy function compilation");
-  auto provider = (hbc::BCProviderLazy *)runtimeModule_->getBytecode();
-  auto func = provider->getBytecodeFunction();
-  auto sourceRange =
-      provider->getBytecodeModule()->getFunctionSourceRange(functionID_);
-  auto bcMod = compileLazyFunction(
-      provider->getBytecodeModule()->getContext(), func, sourceRange);
+  auto *provider = (hbc::BCProviderLazy *)runtimeModule_->getBytecode();
+  auto *func = provider->getBytecodeFunction();
+  auto *lazyData = func->getLazyCompilationData();
+  auto bcModule = compileLazyFunction(lazyData);
+
   runtimeModule_->initializeLazyMayAllocate(
-      hbc::BCProviderFromSrc::createBCProviderFromSrc(std::move(bcMod)));
-  // Reset all meta data of the CodeBlock to point to the newly
+      hbc::BCProviderFromSrc::createBCProviderFromSrc(std::move(bcModule)));
+  // Reset all meta lazyData of the CodeBlock to point to the newly
   // generated bytecode module.
   functionID_ = runtimeModule_->getBytecode()->getGlobalFunctionIndex();
   functionHeader_ =
@@ -349,7 +352,7 @@ void CodeBlock::lazyCompileImpl(Runtime *runtime) {
 #endif // HERMESVM_LEAN
 
 void CodeBlock::markCachedHiddenClasses(
-    Runtime *runtime,
+    Runtime &runtime,
     WeakRootAcceptor &acceptor) {
   for (auto &prop :
        llvh::makeMutableArrayRef(propertyCache(), propertyCacheSize_)) {
@@ -387,8 +390,8 @@ static void makeWritable(void *address, size_t length) {
   void *endAddress = static_cast<void *>(static_cast<char *>(address) + length);
 
   // Align the address to page size before setting the pagesize.
-  void *alignedAddress = safeTypeCast<size_t, void *>(llvh::alignDown(
-      safeTypeCast<void *, size_t>(address), hermes::oscompat::page_size()));
+  void *alignedAddress = reinterpret_cast<void *>(llvh::alignDown(
+      reinterpret_cast<uintptr_t>(address), hermes::oscompat::page_size()));
 
   size_t totalLength =
       static_cast<char *>(endAddress) - static_cast<char *>(alignedAddress);
@@ -430,30 +433,6 @@ void CodeBlock::uninstallBreakpointAtOffset(
   // This is valid because we can only uninstall breakpoints that we installed.
   // Therefore, the page here must be writable.
   *address = opCode;
-}
-
-#endif
-
-#ifdef HERMESVM_SERIALIZE
-void CodeBlock::serialize(Serializer &s) const {
-  // The identity of a CodeBlock is its functionId. Note: We don't
-  // serialize/deserialize PropertyCache as of now.
-  // TODO: serialize/deserialize PropertyCacheEntry.
-  s.writeInt<uint32_t>(getFunctionID());
-  s.endObject(this);
-}
-
-CodeBlock *CodeBlock::deserialize(
-    Deserializer &d,
-    RuntimeModule *runtimeModule) {
-  uint32_t index = d.readInt<uint32_t>();
-  auto *res = CodeBlock::createCodeBlock(
-      runtimeModule,
-      runtimeModule->getBytecode()->getFunctionHeader(index),
-      runtimeModule->getBytecode()->getBytecode(index),
-      index);
-  d.endObject(res);
-  return res;
 }
 
 #endif

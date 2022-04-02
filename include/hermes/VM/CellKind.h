@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -8,6 +8,7 @@
 #ifndef HERMES_VM_CELLKIND_H
 #define HERMES_VM_CELLKIND_H
 
+#include <cstddef>
 #include <type_traits>
 
 namespace hermes {
@@ -42,6 +43,11 @@ cellKindsContiguousAscending(CellKind v1, CellKind v2, T... rest) {
 }
 
 const char *cellKindStr(CellKind kind);
+
+static constexpr size_t kNumCellKinds = 0
+#define CELL_KIND(name) +1
+#include "hermes/VM/CellKinds.def"
+    ;
 
 } // namespace vm
 } // namespace hermes

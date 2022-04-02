@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -9,16 +9,9 @@
 #include "hermes/BCGen/HBC/BytecodeFileFormat.h"
 #include "hermes/Support/ErrorHandling.h"
 #include "hermes/Support/OSCompat.h"
-#include "hermes/VM/Deserializer.h"
-#include "hermes/VM/Serializer.h"
 
 #include "llvh/Support/MathExtras.h"
 #include "llvh/Support/SHA1.h"
-
-#ifdef HERMESVM_SERIALIZE
-using hermes::vm::Deserializer;
-using hermes::vm::Serializer;
-#endif
 
 namespace hermes {
 namespace hbc {
@@ -306,6 +299,11 @@ bool BytecodeFileFields<Mutable>::populateFromBuffer(
             buf, h->cjsModuleCount, end);
       }
     }
+    void visitFunctionSourceTable() {
+      align(buf);
+      f.functionSourceTable = castArrayRef<std::pair<uint32_t, uint32_t>>(
+          buf, h->functionSourceCount, end);
+    }
   };
 
   BytecodeFileFieldsPopulator populator{*this, buffer.data(), buffer.end()};
@@ -415,7 +413,7 @@ constexpr uint8_t *rawptr_cast(T *p) {
 /// Align \p *ptr down to the start of the page it is pointing in to, and
 /// simultaneously adjust \p *byteLen up by the amount the ptr was shifted down
 /// by.
-inline void pageAlignDown(uint8_t **ptr, size_t *byteLen) {
+inline void pageAlignDown(uint8_t **ptr, size_t &byteLen) {
   const auto PS = oscompat::page_size();
 
   auto orig = *ptr;
@@ -474,7 +472,7 @@ void BCProviderFromBuffer::adviseStringTableSequential() {
       smallStringTableEntries,
       overflowStringTableEntries_);
 
-  pageAlignDown(&start, &adviceLength);
+  pageAlignDown(&start, adviceLength);
   oscompat::vm_madvise(start, adviceLength, oscompat::MAdvice::Sequential);
 }
 
@@ -500,8 +498,8 @@ void BCProviderFromBuffer::adviseStringTableRandom() {
   ASSERT_TOTAL_ARRAY_LEN(
       tableLength, smallStringTableEntries, overflowStringTableEntries_);
 
-  pageAlignDown(&tableStart, &tableLength);
-  pageAlignDown(&storageStart, &storageLength);
+  pageAlignDown(&tableStart, tableLength);
+  pageAlignDown(&storageStart, storageLength);
   oscompat::vm_madvise(tableStart, tableLength, oscompat::MAdvice::Random);
   oscompat::vm_madvise(storageStart, storageLength, oscompat::MAdvice::Random);
 }
@@ -526,7 +524,7 @@ void BCProviderFromBuffer::willNeedStringTable() {
       smallStringTableEntries,
       overflowStringTableEntries_);
 
-  pageAlignDown(&start, &prefetchLength);
+  pageAlignDown(&start, prefetchLength);
   oscompat::vm_prefetch(start, prefetchLength);
 }
 
@@ -572,6 +570,7 @@ BCProviderFromBuffer::BCProviderFromBuffer(
   segmentID_ = fileHeader->segmentID;
   cjsModuleTable_ = fields.cjsModuleTable;
   cjsModuleTableStatic_ = fields.cjsModuleTableStatic;
+  functionSourceTable_ = fields.functionSourceTable;
 }
 
 llvh::ArrayRef<uint8_t> BCProviderFromBuffer::getEpilogue() const {
@@ -725,33 +724,6 @@ void BCProviderFromBuffer::updateBytecodeHash(
     llvh::MutableArrayRef<uint8_t> aref) {
   updateHash(aref);
 }
-
-#ifdef HERMESVM_SERIALIZE
-void BCProviderFromBuffer::serialize(Serializer &s) const {
-  // For BCProviderFromBuffer, serialize the buffer directly.
-  // TODO: As an optimization, we may be able to only serialize filename and a
-  // hash and later use the filename directly for deserialization and use hash
-  // as a sanity check.
-
-  s.writeInt<size_t>(buffer_->size());
-  s.pad();
-  s.writeData(buffer_->data(), buffer_->size());
-  s.endObject(this);
-}
-
-std::unique_ptr<BCProviderFromBuffer> BCProviderFromBuffer::deserialize(
-    Deserializer &d) {
-  size_t size = d.readInt<size_t>();
-  d.align();
-  auto ret = createBCProviderFromBuffer(d.readBuffer(size)).first;
-  if (!ret) {
-    hermes_fatal("Error deserializing bytecode");
-  }
-  d.endObject(ret.get());
-  return ret;
-}
-
-#endif
 
 } // namespace hbc
 } // namespace hermes

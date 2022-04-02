@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -9,6 +9,7 @@
 #define HERMES_VM_SMALLHERMESVALUE_H
 
 #include "hermes/Support/Algorithms.h"
+#include "hermes/VM/CompressedPointer.h"
 #include "hermes/VM/GCDecl.h"
 #include "hermes/VM/HeapAlign.h"
 #include "hermes/VM/HermesValue.h"
@@ -23,7 +24,6 @@ namespace hermes {
 namespace vm {
 
 class StringPrimitive;
-class PointerBase;
 class GCCell;
 class Runtime;
 
@@ -59,23 +59,30 @@ class SmallHermesValueAdaptor : protected HermesValue {
   using HermesValue::isSymbol;
   using HermesValue::isUndefined;
 
-  HermesValue toHV(PointerBase *) const {
+  HermesValue toHV(PointerBase &) const {
     return *this;
   }
-  HermesValue unboxToHV(PointerBase *) const {
+  HermesValue unboxToHV(PointerBase &) const {
     return *this;
   }
 
-  GCCell *getPointer(PointerBase *) const {
+  GCCell *getPointer(PointerBase &) const {
     return static_cast<GCCell *>(HermesValue::getPointer());
   }
-  GCCell *getObject(PointerBase *) const {
+  CompressedPointer getPointer() const {
+    assert(
+        sizeof(uintptr_t) == sizeof(CompressedPointer::RawType) &&
+        "Adaptor should not be used when compressed pointers are enabled.");
+    uintptr_t rawPtr = reinterpret_cast<uintptr_t>(HermesValue::getPointer());
+    return CompressedPointer::fromRaw(rawPtr);
+  }
+  GCCell *getObject(PointerBase &) const {
     return static_cast<GCCell *>(HermesValue::getObject());
   }
-  StringPrimitive *getString(PointerBase *) const {
+  StringPrimitive *getString(PointerBase &) const {
     return HermesValue::getString();
   }
-  double getNumber(PointerBase *) const {
+  double getNumber(PointerBase &) const {
     return HermesValue::getNumber();
   }
   uint32_t getRelocationID() const {
@@ -84,39 +91,50 @@ class SmallHermesValueAdaptor : protected HermesValue {
 
   inline void setInGC(SmallHermesValueAdaptor hv, GC *gc);
 
-  SmallHermesValueAdaptor updatePointer(GCCell *ptr, PointerBase *) const {
+  SmallHermesValueAdaptor updatePointer(GCCell *ptr, PointerBase &) const {
     return SmallHermesValueAdaptor{HermesValue::updatePointer(ptr)};
+  }
+  SmallHermesValueAdaptor updatePointer(CompressedPointer ptr) const {
+    assert(
+        sizeof(uintptr_t) == sizeof(CompressedPointer::RawType) &&
+        "Adaptor should not be used when compressed pointers are enabled.");
+    GCCell *cellPtr = reinterpret_cast<GCCell *>(ptr.getRaw());
+    return SmallHermesValueAdaptor{HermesValue::updatePointer(cellPtr)};
   }
   void unsafeUpdateRelocationID(uint32_t id) {
     HermesValue::unsafeUpdatePointer(
         reinterpret_cast<void *>(static_cast<uintptr_t>(id)));
   }
-  void unsafeUpdatePointer(GCCell *ptr, PointerBase *) {
+  void unsafeUpdatePointer(GCCell *ptr, PointerBase &) {
     HermesValue::unsafeUpdatePointer(ptr);
   }
 
   static constexpr SmallHermesValueAdaptor
-  encodeHermesValue(HermesValue hv, GC *, PointerBase *) {
+  encodeHermesValue(HermesValue hv, GC *, PointerBase &) {
     return SmallHermesValueAdaptor{hv};
   }
   static constexpr SmallHermesValueAdaptor encodeHermesValue(
       HermesValue hv,
-      Runtime *) {
+      Runtime &) {
     return SmallHermesValueAdaptor{hv};
   }
   static SmallHermesValueAdaptor
-  encodeNumberValue(double d, GC *, PointerBase *) {
+  encodeNumberValue(double d, GC *, PointerBase &) {
     return SmallHermesValueAdaptor{HermesValue::encodeNumberValue(d)};
   }
-  static SmallHermesValueAdaptor encodeNumberValue(double d, Runtime *) {
+  static SmallHermesValueAdaptor encodeNumberValue(double d, Runtime &) {
     return SmallHermesValueAdaptor{HermesValue::encodeNumberValue(d)};
   }
-  static SmallHermesValueAdaptor encodeObjectValue(GCCell *ptr, PointerBase *) {
+  static SmallHermesValueAdaptor encodeObjectValue(GCCell *ptr, PointerBase &) {
     return SmallHermesValueAdaptor{HermesValue::encodeObjectValue(ptr)};
+  }
+  static SmallHermesValueAdaptor encodeObjectValue(CompressedPointer cp) {
+    GCCell *cellPtr = reinterpret_cast<GCCell *>(cp.getRaw());
+    return SmallHermesValueAdaptor{HermesValue::encodeObjectValue(cellPtr)};
   }
   static SmallHermesValueAdaptor encodeStringValue(
       StringPrimitive *ptr,
-      PointerBase *) {
+      PointerBase &) {
     return SmallHermesValueAdaptor{HermesValue::encodeStringValue(ptr)};
   }
   static SmallHermesValueAdaptor encodeSymbolValue(SymbolID s) {
@@ -137,24 +155,14 @@ class SmallHermesValueAdaptor : protected HermesValue {
   }
 };
 
-/// A compressed HermesValue that is always equal to the size of a GCPointer. It
-/// uses the least significant bits (guaranteed to be zero by the heap
-/// alignment) as a tag to determine what the type of the remaining bits is.
-/// Some types may use an additional tag bit to form an "extended tag". Doubles
-/// have to be boxed on the heap so that they can then be held as pointers.
-/// Native values are not supported.
+/// A compressed HermesValue that is always equal to the size of a
+/// CompressedPointer. It uses the least significant bits (guaranteed to be zero
+/// by the heap alignment) as a tag to determine what the type of the remaining
+/// bits is. Some types may use an additional tag bit to form an "extended tag".
+/// Doubles have to be boxed on the heap so that they can then be held as
+/// pointers. Native values are not supported.
 class HermesValue32 {
-  /// If compressed pointers are enabled, then the size of this type should be
-  /// equal to the size of a compressed pointer. Otherwise, the size of this
-  /// type should be equal to the size of a normal pointer for this platform.
-  /// This guarantees that we can always fit a pointer inside this class.
-  using RawType =
-#ifdef HERMESVM_COMPRESSED_POINTERS
-      uint32_t
-#else
-      uintptr_t
-#endif
-      ;
+  using RawType = CompressedPointer::RawType;
   using SmiType = std::make_signed<RawType>::type;
 
   static constexpr size_t kNumTagBits = LogHeapAlign;
@@ -164,7 +172,7 @@ class HermesValue32 {
   /// turned off on a 64-bit platform (e.g. with MallocGC) since we would end up
   /// using HermesValue32, but RawType would be 64 bits.
   static constexpr size_t kNumSmiBits =
-      min(kNumValueBits, static_cast<size_t>(54));
+      std::min(kNumValueBits, static_cast<size_t>(54));
 
   /// A 3 bit tag describing the stored value. Tags that represent multiple
   /// types are distinguished using an additional bit found in the "ETag".
@@ -268,8 +276,16 @@ class HermesValue32 {
 
   constexpr explicit HermesValue32(RawType raw) : raw_(raw) {}
 
-  inline static HermesValue32
-  encodePointerImpl(GCCell *ptr, Tag tag, PointerBase *pb);
+  static HermesValue32
+  encodePointerImpl(GCCell *ptr, Tag tag, PointerBase &pb) {
+    return encodePointerImpl(CompressedPointer::encodeNonNull(ptr, pb), tag);
+  }
+
+  static HermesValue32 encodePointerImpl(CompressedPointer ptr, Tag tag) {
+    RawType p = ptr.getRaw();
+    validatePointer(p);
+    return fromRaw(p | static_cast<RawType>(tag));
+  }
 
   static constexpr SmiType doubleToSmi(double d)
       LLVM_NO_SANITIZE("float-cast-overflow") {
@@ -319,18 +335,36 @@ class HermesValue32 {
 
   /// Convert this to a full HermesValue, but do not unbox a BoxedDouble.
   /// This is only intended for diagnostics or for code reuse in the GC.
-  inline HermesValue toHV(PointerBase *pb) const;
+  inline HermesValue toHV(PointerBase &pb) const;
 
   /// Convert this to a full HermesValue, and unbox it if it is currently boxed.
   /// This is more commonly useful, and is essentially the reverse process of
   /// encodeHermesValue.
-  inline HermesValue unboxToHV(PointerBase *pb) const;
+  inline HermesValue unboxToHV(PointerBase &pb) const;
 
   /// Methods to access pointer values.
-  inline GCCell *getPointer(PointerBase *pb) const;
-  inline GCCell *getObject(PointerBase *pb) const;
-  inline StringPrimitive *getString(PointerBase *pb) const;
-  inline double getNumber(PointerBase *pb) const;
+  GCCell *getPointer(PointerBase &pb) const {
+    assert(isPointer());
+    return getPointer().getNonNull(pb);
+  }
+  GCCell *getObject(PointerBase &pb) const {
+    assert(isObject());
+    // Since object pointers are the most common type, we have them as the
+    // zero-tag and can decode them without needing to remove the tag.
+    static_assert(
+        static_cast<uint8_t>(Tag::Object) == 0,
+        "Object tag must be zero for fast path.");
+    return CompressedPointer::fromRaw(raw_).get(pb);
+  }
+
+  inline StringPrimitive *getString(PointerBase &pb) const;
+  inline double getNumber(PointerBase &pb) const;
+
+  CompressedPointer getPointer() const {
+    assert(isPointer());
+    RawType rawPtr = raw_ & llvh::maskLeadingOnes<RawType>(kNumValueBits);
+    return CompressedPointer::fromRaw(rawPtr);
+  }
 
   SymbolID getSymbol() const {
     assert(isSymbol());
@@ -342,16 +376,16 @@ class HermesValue32 {
   }
 
   inline void setInGC(HermesValue32 hv, GC *gc);
-  inline HermesValue32 updatePointer(GCCell *ptr, PointerBase *pb) const;
-  inline void unsafeUpdatePointer(GCCell *ptr, PointerBase *pb);
 
-  /// Serializer/Deserializer helpers.
-  inline uint32_t getRelocationID() const {
-    assert(isPointer());
-    return getValue();
+  HermesValue32 updatePointer(GCCell *ptr, PointerBase &pb) const {
+    return encodePointerImpl(ptr, getTag(), pb);
   }
-  void unsafeUpdateRelocationID(uint32_t id) {
-    setNoBarrier(fromTagAndValue(getTag(), id));
+  void unsafeUpdatePointer(GCCell *ptr, PointerBase &pb) {
+    setNoBarrier(encodePointerImpl(ptr, getTag(), pb));
+  }
+  HermesValue32 updatePointer(CompressedPointer ptr) const {
+    assert(isPointer());
+    return encodePointerImpl(ptr, getTag());
   }
 
   /// Convert a normal HermesValue to a HermesValue32. If \p hv is a pointer,
@@ -360,17 +394,23 @@ class HermesValue32 {
   /// treat this function as though it may allocate.
   inline static HermesValue32 encodeHermesValue(
       HermesValue hv,
-      Runtime *runtime);
+      Runtime &runtime);
 
   /// Encode a double as a HermesValue32. Small integer values will be stored
   /// inline and doubles will be allocated on the heap. Always treat this
   /// function as though it may allocate.
-  inline static HermesValue32 encodeNumberValue(double d, Runtime *runtime);
+  inline static HermesValue32 encodeNumberValue(double d, Runtime &runtime);
 
-  inline static HermesValue32 encodeObjectValue(GCCell *ptr, PointerBase *pb);
-  inline static HermesValue32 encodeStringValue(
+  inline static HermesValue32 encodeObjectValue(GCCell *ptr, PointerBase &pb);
+  static HermesValue32 encodeObjectValue(CompressedPointer cp) {
+    return encodePointerImpl(cp, Tag::Object);
+  }
+
+  static HermesValue32 encodeStringValue(
       StringPrimitive *ptr,
-      PointerBase *pb);
+      PointerBase &pb) {
+    return encodePointerImpl(reinterpret_cast<GCCell *>(ptr), Tag::String, pb);
+  }
 
   static HermesValue32 encodeSymbolValue(SymbolID s) {
     return fromTagAndValue(Tag::Symbol, s.unsafeGetRaw());

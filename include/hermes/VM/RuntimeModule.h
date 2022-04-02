@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -16,6 +16,7 @@
 
 #include "hermes/VM/StringRefUtils.h"
 #include "hermes/VM/WeakRef.h"
+#include "hermes/VM/WeakRoot.h"
 
 #include "llvh/ADT/simple_ilist.h"
 
@@ -74,7 +75,7 @@ class RuntimeModule final : public llvh::ilist_node<RuntimeModule> {
       const char *str);
 
   /// The runtime this module is associated with.
-  Runtime *runtime_;
+  Runtime &runtime_;
 
   /// The table maps from a sequential string id in the bytecode to an
   /// SymbolID.
@@ -125,24 +126,13 @@ class RuntimeModule final : public llvh::ilist_node<RuntimeModule> {
   /// \p domain owning it. The RuntimeModule will be freed when the
   /// domain is collected..
   explicit RuntimeModule(
-      Runtime *runtime,
+      Runtime &runtime,
       Handle<Domain> domain,
       RuntimeModuleFlags flags,
       llvh::StringRef sourceURL,
       facebook::hermes::debugger::ScriptID scriptID);
 
   CodeBlock *getCodeBlockSlowPath(unsigned index);
-
-#ifdef HERMESVM_SERIALIZE
-  /// Constructor used when deserializing.
-  /// Note that this function does NOT add the new RumtimeModule to Domain's
-  /// list, unlike the common constructor. This function also adds the newly
-  /// created RuntimeModule to Runtime's runtimeModuleList_. Although we may not
-  /// have a valid RuntimeModule at this time (contains forward references that
-  /// needs to be relocated later), it is still OK to push to the list now
-  /// because we are pushing the reference.
-  explicit RuntimeModule(Runtime *runtime, WeakRefSlot *domainRef);
-#endif
 
 #ifndef HERMESVM_LEAN
   /// For a lazy module, this is the RuntimeModule that ultimately spawned it
@@ -160,7 +150,7 @@ class RuntimeModule final : public llvh::ilist_node<RuntimeModule> {
   /// \param sourceURL the filename to report in exception backtraces.
   /// \return a raw pointer to the runtime module.
   static CallResult<RuntimeModule *> create(
-      Runtime *runtime,
+      Runtime &runtime,
       Handle<Domain> domain,
       facebook::hermes::debugger::ScriptID scriptID,
       std::shared_ptr<hbc::BCProvider> &&bytecode = nullptr,
@@ -172,7 +162,7 @@ class RuntimeModule final : public llvh::ilist_node<RuntimeModule> {
   /// \param runtime the runtime to use for the identifier table.
   /// \return a raw pointer to the runtime module.
   static RuntimeModule *createUninitialized(
-      Runtime *runtime,
+      Runtime &runtime,
       Handle<Domain> domain,
       RuntimeModuleFlags flags = {},
       facebook::hermes::debugger::ScriptID scriptID =
@@ -182,7 +172,7 @@ class RuntimeModule final : public llvh::ilist_node<RuntimeModule> {
   /// Crates a lazy RuntimeModule as part of lazy compilation. This module
   /// will contain only one CodeBlock that points to \p function.
   static RuntimeModule *createLazyModule(
-      Runtime *runtime,
+      Runtime &runtime,
       Handle<Domain> domain,
       RuntimeModule *parent,
       uint32_t functionID);
@@ -208,8 +198,10 @@ class RuntimeModule final : public llvh::ilist_node<RuntimeModule> {
   /// file's global function (i.e. the first RM created when we started
   /// interpreting and lazily compiling the source code). For other RMs,
   /// e.g. those loaded from precompiled bytecode, this is just itself.
+  /// We also return this for RM created from serialization/deserialization.
+  /// Note that lazy and serialization are not intended to work together.
   RuntimeModule *getLazyRootModule() {
-#ifdef HERMESVM_LEAN
+#if defined(HERMESVM_LEAN)
     return this;
 #else
     return lazyRoot_;
@@ -313,10 +305,10 @@ class RuntimeModule final : public llvh::ilist_node<RuntimeModule> {
   }
 
   /// \return the domain which owns this RuntimeModule.
-  inline Handle<Domain> getDomain(Runtime *);
+  inline Handle<Domain> getDomain(Runtime &);
 
   /// \return a raw pointer to the domain which owns this RuntimeModule.
-  inline Domain *getDomainUnsafe(Runtime *);
+  inline Domain *getDomainUnsafe(Runtime &);
 
   /// \return a raw pointer to the domain which owns this RuntimeModule.
   /// Does not execute any read or write barriers on the GC. Should only be
@@ -324,7 +316,7 @@ class RuntimeModule final : public llvh::ilist_node<RuntimeModule> {
   inline Domain *getDomainForSamplingProfiler();
 
   /// \return the Runtime of this module.
-  Runtime *getRuntime() {
+  Runtime &getRuntime() {
     return runtime_;
   }
 
@@ -376,7 +368,7 @@ class RuntimeModule final : public llvh::ilist_node<RuntimeModule> {
   /// NewObjectWithBuffer instruction.
   /// \return the cached hidden class.
   llvh::Optional<Handle<HiddenClass>> findCachedLiteralHiddenClass(
-      Runtime *runtime,
+      Runtime &runtime,
       unsigned keyBufferIndex,
       unsigned numLiterals) const;
 
@@ -385,7 +377,7 @@ class RuntimeModule final : public llvh::ilist_node<RuntimeModule> {
   /// \param keyBufferIndex value of NewObjectWithBuffer instruction.
   /// \param clazz the hidden class to cache.
   void tryCacheLiteralHiddenClass(
-      Runtime *runtime,
+      Runtime &runtime,
       unsigned keyBufferIndex,
       HiddenClass *clazz);
 
@@ -409,16 +401,6 @@ class RuntimeModule final : public llvh::ilist_node<RuntimeModule> {
     templateMap_[templateObjID] = templateObj.get();
   }
 
-#ifdef HERMESVM_SERIALIZE
-  /// Serialize this RuntimeModule.
-  void serialize(Serializer &s);
-
-  /// Read data from serialize stream and create a RuntimeModule. Returns
-  /// pointer to the newly created object. Note that the newly created
-  /// RuntimeModule will adds itself to Runtime's runtimeModuleList_ when it
-  /// is constructed.
-  static RuntimeModule *deserialize(Deserializer &d);
-#endif
  private:
   /// Import the string table from the supplied module.
   void importStringIDMapMayAllocate();
@@ -454,7 +436,7 @@ class RuntimeModule final : public llvh::ilist_node<RuntimeModule> {
       const StringTableEntry &entry,
       OptValue<uint32_t> mhash);
 
-  /// \return a unqiue hash key for object literal hidden class cache.
+  /// \return a unique hash key for object literal hidden class cache.
   /// \param keyBufferIndex value of NewObjectWithBuffer instruction(must be
   /// less than 2^24).
   /// \param numLiterals number of literals used from key buffer of

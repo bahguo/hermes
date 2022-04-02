@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -20,32 +20,30 @@ class SingleObject final : public JSObject {
   using Super = JSObject;
   static const ObjectVTable vt;
 
-#ifdef HERMESVM_SERIALIZE
-  SingleObject(Deserializer &d, const VTable *vt);
-#endif
-
+  static constexpr CellKind getCellKind() {
+    return kind;
+  }
   static bool classof(const GCCell *cell) {
     return cell->getKind() == kind;
   }
 
   /// Create a SingleObject.
   static CallResult<HermesValue> create(
-      Runtime *runtime,
+      Runtime &runtime,
       Handle<JSObject> parentHandle) {
-    auto *cell = runtime->makeAFixed<SingleObject>(
+    auto *cell = runtime.makeAFixed<SingleObject>(
         runtime,
         parentHandle,
-        runtime->getHiddenClassForPrototype(
-            *parentHandle,
-            numOverlapSlots<SingleObject>() + ANONYMOUS_PROPERTY_SLOTS));
+        runtime.getHiddenClassForPrototype(
+            *parentHandle, numOverlapSlots<SingleObject>()));
     return JSObjectInit::initToHermesValue(runtime, cell);
   }
 
   SingleObject(
-      Runtime *runtime,
+      Runtime &runtime,
       Handle<JSObject> parent,
       Handle<HiddenClass> clazz)
-      : JSObject(runtime, &vt.base, *parent, *clazz) {}
+      : JSObject(runtime, *parent, *clazz) {}
 };
 
 template <CellKind kind>
@@ -65,8 +63,8 @@ const ObjectVTable SingleObject<kind>::vt = {
     SingleObject::_checkAllOwnIndexedImpl,
 };
 
-using JSMath = SingleObject<CellKind::MathKind>;
-using JSJSON = SingleObject<CellKind::JSONKind>;
+using JSMath = SingleObject<CellKind::JSMathKind>;
+using JSJSON = SingleObject<CellKind::JSJSONKind>;
 
 } // namespace vm
 } // namespace hermes

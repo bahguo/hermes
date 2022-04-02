@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -21,6 +21,14 @@
 #define HERMES_PARSE_FLOW 0
 #else
 #define HERMES_PARSE_FLOW 1
+#endif
+#endif
+
+#if !defined(HERMES_PARSE_TS)
+#if defined(HERMES_IS_MOBILE_BUILD)
+#define HERMES_PARSE_TS 0
+#else
+#define HERMES_PARSE_TS 1
 #endif
 #endif
 

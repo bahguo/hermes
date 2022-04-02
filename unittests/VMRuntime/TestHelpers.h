@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -77,13 +77,13 @@ static const RuntimeConfig kTestRTConfigLargeHeap =
 
 template <typename T>
 ::testing::AssertionResult isException(
-    Runtime *runtime,
+    Runtime &runtime,
     const CallResult<T> &res) {
   return isException(runtime, res.getStatus());
 }
 
 ::testing::AssertionResult isException(
-    Runtime *runtime,
+    Runtime &runtime,
     ExecutionStatus status);
 
 /// A RuntimeTestFixture should be used by any test that requires a Runtime.
@@ -93,7 +93,7 @@ class RuntimeTestFixtureBase : public ::testing::Test {
 
  protected:
   // Convenience accessor that points to rt.
-  Runtime *runtime;
+  Runtime &runtime;
 
   RuntimeConfig rtConfig;
 
@@ -103,10 +103,10 @@ class RuntimeTestFixtureBase : public ::testing::Test {
 
   RuntimeTestFixtureBase(const RuntimeConfig &runtimeConfig)
       : rt(Runtime::create(runtimeConfig)),
-        runtime(rt.get()),
+        runtime(*rt),
         rtConfig(runtimeConfig),
         gcScope(runtime),
-        domain(runtime->makeHandle(Domain::create(runtime))) {}
+        domain(runtime.makeHandle(Domain::create(runtime))) {}
 
   /// Can't copy due to internal pointer.
   RuntimeTestFixtureBase(const RuntimeTestFixtureBase &) = delete;
@@ -251,22 +251,13 @@ inline const GCConfig TestGCConfigFixedSize(
   } while (0)
 
 /// Get the global object.
-#define GET_GLOBAL(predefinedId) GET_VALUE(runtime->getGlobal(), predefinedId)
+#define GET_GLOBAL(predefinedId) GET_VALUE(runtime.getGlobal(), predefinedId)
 
 inline HermesValue operator"" _hd(long double d) {
   return HermesValue::encodeDoubleValue(d);
 }
 
-/// A MetadataTable that has a public constructor for tests to use.
-class MetadataTableForTests final : public MetadataTable {
- public:
-  // The constructor is explicit to avoid incompatibilities between compilers.
-  template <int length>
-  explicit constexpr MetadataTableForTests(const Metadata (&table)[length])
-      : MetadataTable(table) {}
-};
-
-/// A Runtime that can take a custom VTableMap and Metadata table.
+/// A minimal Runtime for GC tests.
 class DummyRuntime final : public HandleRootOwner,
                            public PointerBase,
                            private GCBase::GCCallbacks {
@@ -274,22 +265,16 @@ class DummyRuntime final : public HandleRootOwner,
   GCStorage gcStorage_;
 
  public:
-  std::vector<GCCell **> pointerRoots{};
-  std::vector<PinnedHermesValue *> valueRoots{};
-  std::vector<WeakRoot<void> *> weakRoots{};
-  std::function<void(WeakRefAcceptor &)> markExtraWeak{};
+  std::vector<WeakRoot<GCCell> *> weakRoots{};
 
   /// Create a DummyRuntime with the default parameters.
-  static std::shared_ptr<DummyRuntime> create(
-      MetadataTableForTests metaTable,
-      const GCConfig &gcConfig);
+  static std::shared_ptr<DummyRuntime> create(const GCConfig &gcConfig);
 
   /// Use a custom storage provider and/or a custom crash manager.
   /// \param provider A pointer to a StorageProvider. It *must* use
   ///   StorageProvider::defaultProvider eventually or the test will fail.
   /// \param crashMgr
   static std::shared_ptr<DummyRuntime> create(
-      MetadataTableForTests metaTable,
       const GCConfig &gcConfig,
       std::shared_ptr<StorageProvider> provider,
       std::shared_ptr<CrashManager> crashMgr =
@@ -330,7 +315,7 @@ class DummyRuntime final : public HandleRootOwner,
 
   void markRoots(RootAndSlotAcceptorWithNames &acceptor, bool) override;
 
-  void markWeakRoots(WeakRootAcceptor &weakAcceptor) override;
+  void markWeakRoots(WeakRootAcceptor &weakAcceptor, bool) override;
 
   void markRootsForCompleteMarking(
       RootAndSlotAcceptorWithNames &acceptor) override;
@@ -386,39 +371,26 @@ class DummyRuntime final : public HandleRootOwner,
   }
 
  private:
-  static std::unique_ptr<GC> makeHeap(
-      DummyRuntime *runtime,
-      MetadataTableForTests metaTable,
-      const GCConfig &gcConfig,
-      std::shared_ptr<CrashManager> crashMgr,
-      std::shared_ptr<StorageProvider> provider,
-      experiments::VMExperimentFlags experiments);
-
   DummyRuntime(
-      MetadataTableForTests metaTable,
       const GCConfig &gcConfig,
       std::shared_ptr<StorageProvider> storageProvider,
       std::shared_ptr<CrashManager> crashMgr);
 };
 
 /// A DummyRuntimeTestFixtureBase should be used by any test that requires a
-/// DummyRuntime. It takes a metadata table and a GCConfig, the latter can be
+/// DummyRuntime. It takes a GCConfig, which can be
 /// used to specify heap size using the constants i.e kInitHeapSize.
 class DummyRuntimeTestFixtureBase : public ::testing::Test {
   std::shared_ptr<DummyRuntime> rt;
 
  protected:
   // Convenience accessor that points to rt.
-  DummyRuntime *runtime;
+  DummyRuntime &runtime;
 
   GCScope gcScope;
 
-  DummyRuntimeTestFixtureBase(
-      MetadataTableForTests metaTable,
-      const GCConfig &gcConfig)
-      : rt(DummyRuntime::create(metaTable, gcConfig)),
-        runtime(rt.get()),
-        gcScope(runtime) {}
+  DummyRuntimeTestFixtureBase(const GCConfig &gcConfig)
+      : rt(DummyRuntime::create(gcConfig)), runtime(*rt), gcScope(runtime) {}
 
   /// Can't copy due to internal pointer.
   DummyRuntimeTestFixtureBase(const DummyRuntimeTestFixtureBase &) = delete;
@@ -436,7 +408,7 @@ inline bool operator==(HermesValue a, HermesValue b) {
 /// runtimeModule.
 inline CodeBlock *createCodeBlock(
     RuntimeModule *runtimeModule,
-    Runtime *,
+    Runtime &,
     hbc::BytecodeFunctionGenerator *BFG) {
   std::unique_ptr<hbc::BytecodeModule> BM(new hbc::BytecodeModule(1));
   BM->setFunction(

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -163,6 +163,10 @@ class Token {
     assert(getKind() == TokenKind::string_literal);
     return stringLiteral_;
   }
+  UniqueString *getStringLiteralRawValue() const {
+    assert(getKind() == TokenKind::string_literal);
+    return rawString_;
+  }
   bool getStringLiteralContainsEscapes() const {
     assert(getKind() == TokenKind::string_literal);
     return stringLiteralContainsEscapes_;
@@ -183,6 +187,11 @@ class Token {
 
   UniqueString *getTemplateRawValue() const {
     assert(isTemplateLiteral());
+    return rawString_;
+  }
+
+  UniqueString *getBigIntLiteral() const {
+    assert(getKind() == TokenKind::bigint_literal);
     return rawString_;
   }
 
@@ -220,6 +229,10 @@ class Token {
     kind_ = TokenKind::eof;
   }
 
+  void setBigIntLiteral(UniqueString *raw) {
+    kind_ = TokenKind::bigint_literal;
+    rawString_ = raw;
+  }
   void setNumericLiteral(double literal) {
     kind_ = TokenKind::numeric_literal;
     numeric_ = literal;
@@ -236,6 +249,12 @@ class Token {
     kind_ = TokenKind::string_literal;
     stringLiteral_ = literal;
     stringLiteralContainsEscapes_ = containsEscapes;
+  }
+  void setJSXStringLiteral(UniqueString *literal, UniqueString *raw) {
+    kind_ = TokenKind::string_literal;
+    stringLiteral_ = literal;
+    rawString_ = raw;
+    stringLiteralContainsEscapes_ = false;
   }
   void setRegExpLiteral(RegExpLiteral *literal) {
     kind_ = TokenKind::regexp_literal;
@@ -522,8 +541,8 @@ class JSLexer {
   /// - AllowDiv: "/" can follow
   /// - AllowJSXIdentifier: "/" can follow, "-" is part of identifiers,
   ///     ">" is scanned as its own token.
-  /// - Flow: "/" can follow and ">>" scans as two separate ">" tokens.
-  enum GrammarContext { AllowRegExp, AllowDiv, AllowJSXIdentifier, Flow };
+  /// - Type: "/" can follow and ">>" scans as two separate ">" tokens.
+  enum GrammarContext { AllowRegExp, AllowDiv, AllowJSXIdentifier, Type };
 
   /// Consume the current token and scan the next one, which becomes the new
   /// current token. All whitespace is skipped befire the new token and if
@@ -810,19 +829,20 @@ class JSLexer {
   llvh::Optional<uint32_t> consumeHTMLEntityOptional();
 #endif
 
-  /// Skip until after the end of the line terminating the line or hashbang
-  /// comment.
-  /// \return the updated source pointer.
-  const char *skipLineComment(const char *start);
+  /// Consume a line comment starting with from \p start and \return the comment
+  /// excluding the line terminator. Update curCharPtr_ to point after the line
+  /// terminator.
+  llvh::StringRef lineCommentHelper(const char *start);
+
+  /// Consume a line comment starting with from \p start. Optionally store the
+  /// comment in comment storage. Update curCharPtr_ to point after the line
+  /// terminator.
+  /// Process magic comments.
+  void scanLineComment(const char *start);
+
   /// Skip until after the end of the block comment.
   /// \return the updated source pointer.
   const char *skipBlockComment(const char *start);
-
-  /// Try to read a "magic comment" of the form `//# name=value` at \p ptr.
-  /// \return the value encoded in the comment if found, None otherwise.
-  llvh::Optional<StringRef> tryReadMagicComment(
-      llvh::StringRef name,
-      const char *ptr);
 
   void scanNumber(GrammarContext grammarContext);
 
@@ -846,7 +866,7 @@ class JSLexer {
       scanIdentifierFastPath<IdentifierMode::JSX>(start);
     } else if (
         HERMES_PARSE_FLOW &&
-        LLVM_UNLIKELY(grammarContext == GrammarContext::Flow)) {
+        LLVM_UNLIKELY(grammarContext == GrammarContext::Type)) {
       scanIdentifierFastPath<IdentifierMode::Flow>(start);
     } else {
       scanIdentifierFastPath<IdentifierMode::JS>(start);
@@ -861,7 +881,7 @@ class JSLexer {
       scanIdentifierParts<IdentifierMode::JSX>();
     } else if (
         HERMES_PARSE_FLOW &&
-        LLVM_UNLIKELY(grammarContext == GrammarContext::Flow)) {
+        LLVM_UNLIKELY(grammarContext == GrammarContext::Type)) {
       scanIdentifierParts<IdentifierMode::Flow>();
     } else {
       scanIdentifierParts<IdentifierMode::JS>();

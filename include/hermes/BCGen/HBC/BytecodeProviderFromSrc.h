@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -18,7 +18,6 @@ namespace hbc {
 
 /// Flags passed to createBCProviderFromSrc to set parameters on execution.
 struct CompileFlags {
-  bool optimize{false};
   bool debug{false};
   bool lazy{false};
 
@@ -31,7 +30,6 @@ struct CompileFlags {
   /// Eagerly compile functions under this number of bytes, even when lazy.
   unsigned preemptiveFunctionCompilationThreshold{160};
 
-  bool allowFunctionToStringWithRuntimeSource{false};
   bool strict{false};
   /// The value is optional; when it is set, the optimization setting is based
   /// on the value; when it is unset, it means the parser needs to automatically
@@ -74,6 +72,36 @@ class BCProviderFromSrc final : public BCProviderBase {
   /// No need to do anything since it's already created as part of
   /// BytecodeModule and set to the local member.
   void createDebugInfo() override {}
+
+  /// Creates a BCProviderFromSrc by compiling the given JavaScript and
+  /// optionally optimizing it with the supplied callback.
+  /// \param buffer the JavaScript source to compile, encoded in utf-8. It is
+  ///     required to have null termination ('\0') in the byte past the end,
+  ///     in other words `assert(buffer.data()[buffer.size()] == 0)`.
+  /// \param sourceURL this will be used as the "file name" of the buffer for
+  ///     errors, stack traces, etc.
+  /// \param sourceMap optional input source map for \p buffer.
+  /// \param compileFlags self explanatory
+  /// \param scopeChain a scope chain for local variable resolution
+  /// \param diagHandler handler for errors/warnings/notes.
+  /// \param diagContext opaque data that will be passed to diagHandler.
+  /// \param runOptimizationPasses if optimization is enabled in the settings
+  ///     and this is non-null, invoke this callback with the IR module to
+  ///     perform optimizations. This allows us to defer the decision of
+  ///     whether to link all optimizations to the caller.
+  ///
+  /// \return a BCProvider and an empty error, or a null BCProvider and an error
+  ///     message (if diagHandler was provided, the error message is "error").
+  static std::pair<std::unique_ptr<BCProviderFromSrc>, std::string>
+  createBCProviderFromSrcImpl(
+      std::unique_ptr<Buffer> buffer,
+      llvh::StringRef sourceURL,
+      std::unique_ptr<SourceMap> sourceMap,
+      const CompileFlags &compileFlags,
+      const ScopeChain &scopeChain,
+      SourceErrorManager::DiagHandlerTy diagHandler,
+      void *diagContext,
+      const std::function<void(Module &)> &runOptimizationPasses);
 
  public:
   static std::unique_ptr<BCProviderFromSrc> createBCProviderFromSrc(
@@ -125,34 +153,11 @@ class BCProviderFromSrc final : public BCProviderBase {
   /// \param sourceMap optional input source map for \p buffer.
   /// \param compileFlags self explanatory
   /// \param scopeChain a scope chain for local variable resolution
+  /// \param diagHandler optional handler for errors/warnings/notes.
+  /// \param diagContext opaque data that will be passed to diagHandler.
   ///
   /// \return a BCProvider and an empty error, or a null BCProvider and an error
-  ///     message.
-  static std::pair<std::unique_ptr<BCProviderFromSrc>, std::string>
-  createBCProviderFromSrc(
-      std::unique_ptr<Buffer> buffer,
-      llvh::StringRef sourceURL,
-      std::unique_ptr<SourceMap> sourceMap,
-      const CompileFlags &compileFlags,
-      const ScopeChain &scopeChain);
-
-  /// Creates a BCProviderFromSrc by compiling the given JavaScript and
-  /// optionally optimizing it with the supplied callback.
-  /// \param buffer the JavaScript source to compile, encoded in utf-8. It is
-  ///     required to have null termination ('\0') in the byte past the end,
-  ///     in other words `assert(buffer.data()[buffer.size()] == 0)`.
-  /// \param sourceURL this will be used as the "file name" of the buffer for
-  ///     errors, stack traces, etc.
-  /// \param sourceMap optional input source map for \p buffer.
-  /// \param compileFlags self explanatory
-  /// \param scopeChain a scope chain for local variable resolution
-  /// \param runOptimizationPasses if optimization is enabled in the settings
-  ///     and this is non-null, invoke this callback with the IR module to
-  ///     perform optimizations. This allows us to defer the decision of
-  ///     whether to link all optimizations to the caller.
-  ///
-  /// \return a BCProvider and an empty error, or a null BCProvider and an error
-  ///     message.
+  ///     message (if diagHandler was provided, the error message is "error").
   static std::pair<std::unique_ptr<BCProviderFromSrc>, std::string>
   createBCProviderFromSrc(
       std::unique_ptr<Buffer> buffer,
@@ -160,7 +165,9 @@ class BCProviderFromSrc final : public BCProviderBase {
       std::unique_ptr<SourceMap> sourceMap,
       const CompileFlags &compileFlags,
       const ScopeChain &scopeChain,
-      const std::function<void(Module &)> &runOptimizationPasses);
+      SourceErrorManager::DiagHandlerTy diagHandler = nullptr,
+      void *diagContext = nullptr,
+      const std::function<void(Module &)> &runOptimizationPasses = {});
 
   RuntimeFunctionHeader getFunctionHeader(uint32_t functionID) const override {
     return RuntimeFunctionHeader(&module_->getFunction(functionID).getHeader());
@@ -199,31 +206,16 @@ class BCProviderFromSrc final : public BCProviderBase {
   hbc::BytecodeModule *getBytecodeModule() {
     return module_.get();
   }
-
-#ifdef HERMESVM_SERIALIZE
-  /// Serialize this BCProviderFromSrc.
-  void serialize(vm::Serializer &s) const override;
-#endif
-
-#ifndef HERMESVM_LEAN
-  llvh::SMRange getFunctionSourceRange(uint32_t functionID) const override {
-    return module_->getFunctionSourceRange(functionID);
-  }
-#endif
 };
 
 /// BCProviderLazy is used during lazy compilation. When a function is created
 /// to be lazily compiled later, we create a BCProviderLazy object with
 /// a pointer to such BytecodeFunction.
 class BCProviderLazy final : public BCProviderBase {
-  hbc::BytecodeModule *bytecodeModule_;
-
   /// Pointer to the BytecodeFunction.
   hbc::BytecodeFunction *bytecodeFunction_;
 
-  explicit BCProviderLazy(
-      hbc::BytecodeModule *bytecodeModule,
-      hbc::BytecodeFunction *bytecodeFunction);
+  explicit BCProviderLazy(hbc::BytecodeFunction *bytecodeFunction);
 
   /// No debug information will be available without compiling it.
   void createDebugInfo() override {
@@ -232,10 +224,9 @@ class BCProviderLazy final : public BCProviderBase {
 
  public:
   static std::unique_ptr<BCProviderBase> createBCProviderLazy(
-      hbc::BytecodeModule *bytecodeModule,
       hbc::BytecodeFunction *bytecodeFunction) {
     return std::unique_ptr<BCProviderBase>(
-        new BCProviderLazy(bytecodeModule, bytecodeFunction));
+        new BCProviderLazy(bytecodeFunction));
   }
 
   RuntimeFunctionHeader getFunctionHeader(uint32_t) const override {
@@ -270,19 +261,6 @@ class BCProviderLazy final : public BCProviderBase {
   /// \return the pointer to the BytecodeFunction.
   hbc::BytecodeFunction *getBytecodeFunction() {
     return bytecodeFunction_;
-  }
-
-  hbc::BytecodeModule *getBytecodeModule() {
-    return bytecodeModule_;
-  }
-
-#ifdef HERMESVM_SERIALIZE
-  /// Serialize this BCProviderLazy.
-  void serialize(vm::Serializer &s) const override;
-#endif
-
-  llvh::SMRange getFunctionSourceRange(uint32_t functionID) const override {
-    return bytecodeModule_->getFunctionSourceRange(functionID);
   }
 };
 #endif // HERMESVM_LEAN

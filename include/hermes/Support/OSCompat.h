@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -189,53 +189,6 @@ std::vector<bool> sched_getaffinity();
 /// \return the CPU core where this thread is currently scheduled,
 /// or -1 on error.
 int sched_getcpu();
-
-/// Converts a value to its string representation.  Only works for
-/// numeric values, e.g. 0 becomes "0", not '\0'.
-///
-/// NOTE: This is here because Android does not have to_string defined in its
-/// standard library.
-template <typename T>
-inline ::std::string to_string(T value);
-
-/// Same API as std::isxdigit. Windows does not have isxdigit in its standard
-/// library.
-inline bool isxdigit(unsigned char c);
-
-/// The following functions are defined in Android's standard library, but not
-/// in the \c std namespace.
-inline double log2(double n);
-inline double trunc(double n);
-inline double copysign(double x, double y);
-inline double nextafter(double x, double y);
-
-template <typename T>
-inline ::std::string to_string(T value) {
-  ::std::ostringstream os;
-  os << +value;
-  return os.str();
-}
-
-inline bool isxdigit(unsigned char c) {
-  return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') ||
-      (c >= 'A' && c <= 'F');
-}
-
-inline double log2(double n) {
-  return ::log(n) / ::log(2.0);
-}
-
-inline double trunc(double n) {
-  return ::trunc(n);
-}
-
-inline double copysign(double x, double y) {
-  return ::copysign(x, y);
-}
-
-inline double nextafter(double x, double y) {
-  return ::nextafter(x, y);
-}
 
 #ifdef _WINDOWS
 

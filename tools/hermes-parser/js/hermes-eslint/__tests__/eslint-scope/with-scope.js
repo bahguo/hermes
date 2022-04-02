@@ -1,5 +1,5 @@
 /**
- * Portions Copyright (c) Facebook, Inc. and its affiliates.
+ * Portions Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -36,7 +36,7 @@ const {parseForESLint} = require('./eslint-scope-test-utils');
 
 describe('with', () => {
   it('creates scope', () => {
-    const {ast, scopeManager} = parseForESLint(
+    const {scopeManager} = parseForESLint(
       `
             (function () {
                 with (obj) {

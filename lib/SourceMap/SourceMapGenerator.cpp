@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -229,7 +229,7 @@ void SourceMapGenerator::outputAsJSONImpl(llvh::raw_ostream &OS) const {
     json.openDict();
     for (const auto &entry : functionOffsets_) {
       const auto &segmentFunctionOffsets = entry.second;
-      json.emitKey(oscompat::to_string(entry.first));
+      json.emitKey(std::to_string(entry.first));
       json.openArray();
       json.emitValues((llvh::ArrayRef<uint32_t>)segmentFunctionOffsets);
       json.closeArray();

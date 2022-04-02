@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -9,7 +9,7 @@
 
 #include "hermes/Platform/Intl/PlatformIntl.h"
 
-#ifdef HERMES_PLATFORM_INTL
+#ifdef HERMES_ENABLE_INTL
 
 #include "hermes/VM/ArrayLike.h"
 #include "hermes/VM/JSLib/DateUtil.h"
@@ -33,20 +33,20 @@ namespace vm {
 namespace {
 
 CallResult<std::u16string> stringFromJS(
-    Runtime *runtime,
+    Runtime &runtime,
     PseudoHandle<> value) {
   CallResult<PseudoHandle<StringPrimitive>> strRes =
-      toString_RJS(runtime, runtime->makeHandle(std::move(value)));
+      toString_RJS(runtime, runtime.makeHandle(std::move(value)));
   if (LLVM_UNLIKELY(strRes == ExecutionStatus::EXCEPTION)) {
     return ExecutionStatus::EXCEPTION;
   }
   auto view = vm::StringPrimitive::createStringView(
-      runtime, runtime->makeHandle(std::move(*strRes)));
+      runtime, runtime.makeHandle(std::move(*strRes)));
   return std::u16string(view.begin(), view.end());
 }
 
 CallResult<HermesValue> localesToJS(
-    Runtime *runtime,
+    Runtime &runtime,
     CallResult<std::vector<std::u16string>> result) {
   if (LLVM_UNLIKELY(result == ExecutionStatus::EXCEPTION)) {
     return ExecutionStatus::EXCEPTION;
@@ -76,13 +76,13 @@ CallResult<HermesValue> localesToJS(
 }
 
 CallResult<HermesValue> optionsToJS(
-    Runtime *runtime,
+    Runtime &runtime,
     platform_intl::Options result) {
   CallResult<PseudoHandle<JSObject>> objRes = JSObject::create(runtime);
   if (LLVM_UNLIKELY(objRes == ExecutionStatus::EXCEPTION)) {
     return ExecutionStatus::EXCEPTION;
   }
-  Handle<JSObject> obj = runtime->makeHandle(std::move(*objRes));
+  Handle<JSObject> obj = runtime.makeHandle(std::move(*objRes));
   MutableHandle<> key{runtime};
   MutableHandle<> value{runtime};
   GCScopeMarkerRAII marker{runtime};
@@ -117,13 +117,13 @@ CallResult<HermesValue> optionsToJS(
 }
 
 CallResult<Handle<JSObject>> partToJS(
-    Runtime *runtime,
+    Runtime &runtime,
     std::unordered_map<std::u16string, std::u16string> result) {
   CallResult<PseudoHandle<JSObject>> objRes = JSObject::create(runtime);
   if (LLVM_UNLIKELY(objRes == ExecutionStatus::EXCEPTION)) {
     return ExecutionStatus::EXCEPTION;
   }
-  Handle<JSObject> obj = runtime->makeHandle(std::move(*objRes));
+  Handle<JSObject> obj = runtime.makeHandle(std::move(*objRes));
   MutableHandle<> key{runtime};
   MutableHandle<> value{runtime};
   GCScopeMarkerRAII marker{runtime};
@@ -154,7 +154,7 @@ CallResult<Handle<JSObject>> partToJS(
 }
 
 CallResult<HermesValue> partsToJS(
-    Runtime *runtime,
+    Runtime &runtime,
     CallResult<std::vector<std::unordered_map<std::u16string, std::u16string>>>
         result) {
   if (LLVM_UNLIKELY(result == ExecutionStatus::EXCEPTION)) {
@@ -168,7 +168,9 @@ CallResult<HermesValue> partsToJS(
   }
   Handle<JSArray> array = *arrayRes;
   uint64_t index = 0;
+  GCScopeMarkerRAII marker{runtime};
   for (auto &part : *result) {
+    marker.flush();
     CallResult<Handle<JSObject>> partRes = partToJS(runtime, std::move(part));
     if (LLVM_UNLIKELY(partRes == ExecutionStatus::EXCEPTION)) {
       return ExecutionStatus::EXCEPTION;
@@ -179,7 +181,7 @@ CallResult<HermesValue> partsToJS(
 }
 
 CallResult<std::vector<std::u16string>> normalizeLocales(
-    Runtime *runtime,
+    Runtime &runtime,
     Handle<> locales) {
   std::vector<std::u16string> ret;
 
@@ -198,7 +200,7 @@ CallResult<std::vector<std::u16string>> normalizeLocales(
   if (LLVM_UNLIKELY(objRes == ExecutionStatus::EXCEPTION)) {
     return ExecutionStatus::EXCEPTION;
   }
-  auto localeObj = runtime->makeHandle(vmcast<JSObject>(*objRes));
+  auto localeObj = runtime.makeHandle(vmcast<JSObject>(*objRes));
 
   CallResult<uint64_t> lengthRes = getArrayLikeLength(localeObj, runtime);
   if (LLVM_UNLIKELY(lengthRes == ExecutionStatus::EXCEPTION)) {
@@ -214,13 +216,13 @@ CallResult<std::vector<std::u16string>> normalizeLocales(
               runtime,
               *lengthRes,
               [&ret, isProxy](
-                  Runtime *runtime, uint64_t index, PseudoHandle<> value) {
+                  Runtime &runtime, uint64_t index, PseudoHandle<> value) {
                 // When the locales list is a proxy object, gaps are allowed.
                 if (isProxy && value->isUndefined())
                   return ExecutionStatus::RETURNED;
 
                 if (!value->isString() && !value->isObject()) {
-                  return runtime->raiseTypeError("Incorrect object type");
+                  return runtime.raiseTypeError("Incorrect object type");
                 }
                 CallResult<std::u16string> strRes =
                     stringFromJS(runtime, std::move(value));
@@ -261,6 +263,7 @@ const OptionData kCollatorOptions[] = {
     {u"caseFirst", platform_intl::Option::Kind::String, 0},
     {u"sensitivity", platform_intl::Option::Kind::String, 0},
     {u"ignorePunctuation", platform_intl::Option::Kind::Bool, 0},
+    {u"collation", platform_intl::Option::Kind::String, 0},
     {nullptr, platform_intl::Option::Kind::Bool, 0},
 };
 
@@ -316,13 +319,13 @@ const OptionData kNumberFormatOptions[] = {
 };
 
 CallResult<platform_intl::Options> normalizeOptions(
-    Runtime *runtime,
+    Runtime &runtime,
     Handle<> options,
     const OptionData optionData[]) {
   platform_intl::Options ret;
 
   if (options->isNull())
-    return runtime->raiseTypeError("Options object can't be null !");
+    return runtime.raiseTypeError("Options object can't be null !");
 
   auto optionsObj = Handle<JSObject>::dyn_vmcast(options);
   if (!optionsObj) {
@@ -385,13 +388,13 @@ CallResult<platform_intl::Options> normalizeOptions(
 }
 
 template <typename T>
-ExecutionStatus checkOptions(Runtime *runtime, const platform_intl::Options &) {
+ExecutionStatus checkOptions(Runtime &runtime, const platform_intl::Options &) {
   return ExecutionStatus::RETURNED;
 }
 
 template <>
 ExecutionStatus checkOptions<platform_intl::NumberFormat>(
-    Runtime *runtime,
+    Runtime &runtime,
     const platform_intl::Options &options) {
   // As best as I can tell, there are only two places (in
   // SetNumberFormatUnitOptions) where option value handling can throw
@@ -406,12 +409,12 @@ ExecutionStatus checkOptions<platform_intl::NumberFormat>(
   if (styleIt->second.isString() &&
       styleIt->second.getString() == u"currency" &&
       options.count(u"currency") == 0) {
-    return runtime->raiseTypeError(
+    return runtime.raiseTypeError(
         "Style 'currency' requires option 'currency'");
   }
   if (styleIt->second.isString() && styleIt->second.getString() == u"unit" &&
       options.count(u"unit") == 0) {
-    return runtime->raiseTypeError("Style 'unit' requires option 'unit'");
+    return runtime.raiseTypeError("Style 'unit' requires option 'unit'");
   }
   return ExecutionStatus::RETURNED;
 }
@@ -420,7 +423,7 @@ ExecutionStatus checkOptions<platform_intl::NumberFormat>(
 // duplicating code, since all the ctors are basically the same.
 template <typename T>
 CallResult<HermesValue> intlServiceConstructor(
-    Runtime *runtime,
+    Runtime &runtime,
     NativeArgs args,
     const OptionData optionData[],
     Handle<JSObject> servicePrototype,
@@ -451,24 +454,38 @@ CallResult<HermesValue> intlServiceConstructor(
     return ExecutionStatus::EXCEPTION;
   }
 
+  auto typeHandle = runtime.makeHandle(
+      HermesValue::encodeNumberValue((uint32_t)T::getNativeType()));
+  auto setType = [&](Handle<DecoratedObject> obj) {
+    auto res = JSObject::defineNewOwnProperty(
+        obj,
+        runtime,
+        Predefined::getSymbolID(Predefined::InternalPropertyIntlNativeType),
+        PropertyFlags::defaultNewNamedPropertyFlags(),
+        typeHandle);
+    assert(res != ExecutionStatus::EXCEPTION && "Setting type cannot fail.");
+  };
+
   // If constructor, use the allocated object
   if (args.isConstructorCall()) {
     Handle<DecoratedObject> selfHandle = args.vmcastThis<DecoratedObject>();
     selfHandle->setDecoration(std::move(native));
+    setType(selfHandle);
     return HermesValue::encodeUndefinedValue();
   }
 
   // Otherwise allocate a new one.
-  return DecoratedObject::create(
-             runtime, servicePrototype, std::move(native), additionalSlots)
-      .getHermesValue();
+  auto newHandle = runtime.makeHandle(DecoratedObject::create(
+      runtime, servicePrototype, std::move(native), additionalSlots));
+  setType(newHandle);
+  return newHandle.getHermesValue();
 }
 
 // T is a class from platform_intl which has an appropriate
 // supportedLocalesOf method.
 template <typename T>
 CallResult<HermesValue> intlServiceSupportedLocalesOf(
-    Runtime *runtime,
+    Runtime &runtime,
     NativeArgs args) {
   CallResult<std::vector<std::u16string>> localesRes =
       normalizeLocales(runtime, args.getArgHandle(0));
@@ -490,24 +507,31 @@ CallResult<HermesValue> intlServiceSupportedLocalesOf(
 // dyn_vmcast to make it), and that the native decoration on the
 // handle corresponds to the expected class.
 template <typename T>
-CallResult<T> verifyDecoration(
-    Runtime *runtime,
+CallResult<T *> verifyDecoration(
+    Runtime &runtime,
     Handle<DecoratedObject> handle,
     const char *what) {
   if (!handle) {
-    return runtime->raiseTypeError(
+    return runtime.raiseTypeError(
         TwineChar16(what) + " called with incompatible 'this'");
   }
 
-  // TODO how can I ensure DecoratedObject has the right decoration
-  // type, without using RTTI or introducing another CellKind?
-  T service = static_cast<T>(handle->getDecoration());
-  if (!service) {
-    return runtime->raiseTypeError(
+  NamedPropertyDescriptor desc;
+  bool exists = JSObject::getOwnNamedDescriptor(
+      handle,
+      runtime,
+      Predefined::getSymbolID(Predefined::InternalPropertyIntlNativeType),
+      desc);
+  if (!exists) {
+    return runtime.raiseTypeError(
         TwineChar16(what) + " called with incompatible 'this'");
   }
-
-  return service;
+  auto val = JSObject::getNamedSlotValueUnsafe(*handle, runtime, desc);
+  if (val.getNumber(runtime) != (uint32_t)T::getNativeType()) {
+    return runtime.raiseTypeError(
+        TwineChar16(what) + " called with incompatible 'this'");
+  }
+  return static_cast<T *>(handle->getDecoration());
 }
 
 } // namespace
@@ -519,7 +543,7 @@ enum class CollatorSlotIndexes { boundCompare, COUNT };
 
 PseudoHandle<NativeFunction> getBoundCompare(
     DecoratedObject *collator,
-    Runtime *runtime) {
+    Runtime &runtime) {
   return createPseudoHandle(dyn_vmcast<NativeFunction>(
       DecoratedObject::getAdditionalSlotValue(
           collator,
@@ -530,7 +554,7 @@ PseudoHandle<NativeFunction> getBoundCompare(
 
 void setBoundCompare(
     DecoratedObject *collator,
-    Runtime *runtime,
+    Runtime &runtime,
     PseudoHandle<NativeFunction> value) {
   DecoratedObject::setAdditionalSlotValue(
       collator,
@@ -544,7 +568,7 @@ enum class CollatorCompareSlotIndexes { collator, COUNT };
 
 PseudoHandle<DecoratedObject> getCollator(
     PseudoHandle<NativeFunction> compare,
-    Runtime *runtime) {
+    Runtime &runtime) {
   return createPseudoHandle(vmcast<DecoratedObject>(
       NativeFunction::getAdditionalSlotValue(
           compare.get(),
@@ -555,7 +579,7 @@ PseudoHandle<DecoratedObject> getCollator(
 
 void setCollator(
     PseudoHandle<NativeFunction> compare,
-    Runtime *runtime,
+    Runtime &runtime,
     PseudoHandle<DecoratedObject> value) {
   NativeFunction::setAdditionalSlotValue(
       compare.get(),
@@ -565,7 +589,7 @@ void setCollator(
 }
 
 CallResult<PseudoHandle<JSObject>>
-intlCollatorCreator(Runtime *runtime, Handle<JSObject> parentHandle, void *) {
+intlCollatorCreator(Runtime &runtime, Handle<JSObject> parentHandle, void *) {
   return createPseudoHandle<JSObject>(
       DecoratedObject::create(
           runtime,
@@ -575,10 +599,10 @@ intlCollatorCreator(Runtime *runtime, Handle<JSObject> parentHandle, void *) {
           .get());
 }
 
-void defineIntlCollator(Runtime *runtime, Handle<JSObject> intl) {
+void defineIntlCollator(Runtime &runtime, Handle<JSObject> intl) {
   // Create %CollatorPrototype% intrinsic.  Properties will be added later.
-  Handle<JSObject> prototype = runtime->makeHandle(JSObject::create(runtime));
-  runtime->intlCollatorPrototype = prototype.getHermesValue();
+  Handle<JSObject> prototype = runtime.makeHandle(JSObject::create(runtime));
+  runtime.intlCollatorPrototype = prototype.getHermesValue();
 
   // Create %Collator% intrinsic.
   Handle<NativeConstructor> constructor = defineSystemConstructor(
@@ -589,7 +613,7 @@ void defineIntlCollator(Runtime *runtime, Handle<JSObject> intl) {
       0,
       intlCollatorCreator,
       CellKind::DecoratedObjectKind);
-  runtime->intlCollator = constructor.getHermesValue();
+  runtime.intlCollator = constructor.getHermesValue();
 
   {
     DefinePropertyFlags dpf{};
@@ -620,16 +644,15 @@ void defineIntlCollator(Runtime *runtime, Handle<JSObject> intl) {
       constructor);
 
   {
-    DefinePropertyFlags dpf{};
-    dpf.setConfigurable = 1;
-    dpf.configurable = 1;
-    dpf.setValue = 1;
+    auto dpf = DefinePropertyFlags::getDefaultNewPropertyFlags();
+    dpf.writable = 0;
+    dpf.enumerable = 0;
 
     defineProperty(
         runtime,
         prototype,
         Predefined::getSymbolID(Predefined::SymbolToStringTag),
-        runtime->getPredefinedStringHandle(Predefined::Object),
+        runtime.getPredefinedStringHandle(Predefined::IntlCollator),
         dpf);
   }
 
@@ -663,26 +686,26 @@ void defineIntlCollator(Runtime *runtime, Handle<JSObject> intl) {
 } // namespace
 
 CallResult<HermesValue>
-intlCollatorConstructor(void *, Runtime *runtime, NativeArgs args) {
+intlCollatorConstructor(void *, Runtime &runtime, NativeArgs args) {
   return intlServiceConstructor<platform_intl::Collator>(
       runtime,
       args,
       kCollatorOptions,
-      Handle<JSObject>::vmcast(&runtime->intlCollatorPrototype),
+      Handle<JSObject>::vmcast(&runtime.intlCollatorPrototype),
       static_cast<unsigned int>(CollatorSlotIndexes::COUNT));
 }
 
 CallResult<HermesValue>
-intlCollatorSupportedLocalesOf(void *, Runtime *runtime, NativeArgs args) {
+intlCollatorSupportedLocalesOf(void *, Runtime &runtime, NativeArgs args) {
   return intlServiceSupportedLocalesOf<platform_intl::Collator>(runtime, args);
 }
 
 CallResult<HermesValue>
-intlCollatorCompare(void *, Runtime *runtime, NativeArgs args) {
-  PseudoHandle<Callable> cc =
-      createPseudoHandle(runtime->getCurrentFrame()->getCalleeClosure());
+intlCollatorCompare(void *, Runtime &runtime, NativeArgs args) {
+  auto *nf = vmcast<NativeFunction>(
+      runtime.getCurrentFrame()->getCalleeClosureUnsafe());
   PseudoHandle<DecoratedObject> collatorHandle =
-      getCollator(PseudoHandle<NativeFunction>::vmcast(std::move(cc)), runtime);
+      getCollator(createPseudoHandle(nf), runtime);
 
   // Since collatorHandle came out of an internal slot, it's an
   // assertable failure if it has the wrong type.
@@ -704,11 +727,11 @@ intlCollatorCompare(void *, Runtime *runtime, NativeArgs args) {
 }
 
 CallResult<HermesValue>
-intlCollatorPrototypeCompareGetter(void *, Runtime *runtime, NativeArgs args) {
+intlCollatorPrototypeCompareGetter(void *, Runtime &runtime, NativeArgs args) {
   Handle<DecoratedObject> collatorHandle = args.dyncastThis<DecoratedObject>();
 
   CallResult<platform_intl::Collator *> collatorRes =
-      verifyDecoration<platform_intl::Collator *>(
+      verifyDecoration<platform_intl::Collator>(
           runtime, collatorHandle, "Intl.Collator.prototype.compare getter");
   if (LLVM_UNLIKELY(collatorRes == ExecutionStatus::EXCEPTION)) {
     return ExecutionStatus::EXCEPTION;
@@ -736,13 +759,13 @@ intlCollatorPrototypeCompareGetter(void *, Runtime *runtime, NativeArgs args) {
 
 CallResult<HermesValue> intlCollatorPrototypeResolvedOptions(
     void *,
-    Runtime *runtime,
+    Runtime &runtime,
     NativeArgs args) {
   Handle<DecoratedObject> collatorHandle = args.dyncastThis<DecoratedObject>();
 
   CallResult<platform_intl::Collator *> collatorRes =
-      verifyDecoration<platform_intl::Collator *>(
-          runtime, collatorHandle, "Intl.Collator.prototype.resolvedOption");
+      verifyDecoration<platform_intl::Collator>(
+          runtime, collatorHandle, "Intl.Collator.prototype.resolvedOptions");
   if (LLVM_UNLIKELY(collatorRes == ExecutionStatus::EXCEPTION)) {
     return ExecutionStatus::EXCEPTION;
   }
@@ -757,7 +780,7 @@ enum class DTFSlotIndexes { boundFormat, COUNT };
 
 PseudoHandle<NativeFunction> getDTFBoundFormat(
     PseudoHandle<DecoratedObject> dtf,
-    Runtime *runtime) {
+    Runtime &runtime) {
   return createPseudoHandle(dyn_vmcast<NativeFunction>(
       DecoratedObject::getAdditionalSlotValue(
           dtf.get(),
@@ -768,7 +791,7 @@ PseudoHandle<NativeFunction> getDTFBoundFormat(
 
 void setDTFBoundFormat(
     PseudoHandle<DecoratedObject> dtf,
-    Runtime *runtime,
+    Runtime &runtime,
     PseudoHandle<NativeFunction> value) {
   DecoratedObject::setAdditionalSlotValue(
       dtf.get(),
@@ -782,7 +805,7 @@ enum class DTFFormatSlotIndexes { dateTimeFormat, COUNT };
 
 PseudoHandle<DecoratedObject> getDateTimeFormat(
     PseudoHandle<NativeFunction> format,
-    Runtime *runtime) {
+    Runtime &runtime) {
   return createPseudoHandle(vmcast<DecoratedObject>(
       NativeFunction::getAdditionalSlotValue(
           format.get(),
@@ -793,7 +816,7 @@ PseudoHandle<DecoratedObject> getDateTimeFormat(
 
 void setDateTimeFormat(
     PseudoHandle<NativeFunction> format,
-    Runtime *runtime,
+    Runtime &runtime,
     PseudoHandle<DecoratedObject> value) {
   NativeFunction::setAdditionalSlotValue(
       format.get(),
@@ -803,7 +826,7 @@ void setDateTimeFormat(
 }
 
 CallResult<PseudoHandle<JSObject>> intlDateTimeFormatCreator(
-    Runtime *runtime,
+    Runtime &runtime,
     Handle<JSObject> parentHandle,
     void *) {
   return createPseudoHandle<JSObject>(
@@ -815,11 +838,11 @@ CallResult<PseudoHandle<JSObject>> intlDateTimeFormatCreator(
           .get());
 }
 
-void defineIntlDateTimeFormat(Runtime *runtime, Handle<JSObject> intl) {
+void defineIntlDateTimeFormat(Runtime &runtime, Handle<JSObject> intl) {
   // Create %DateTimeFormatPrototype% intrinsic.  Properties will be added
   // later.
-  Handle<JSObject> prototype = runtime->makeHandle(JSObject::create(runtime));
-  runtime->intlDateTimeFormatPrototype = prototype.getHermesValue();
+  Handle<JSObject> prototype = runtime.makeHandle(JSObject::create(runtime));
+  runtime.intlDateTimeFormatPrototype = prototype.getHermesValue();
 
   // Create %DateTimeFormat% intrinsic.
   Handle<NativeConstructor> constructor = defineSystemConstructor(
@@ -830,7 +853,7 @@ void defineIntlDateTimeFormat(Runtime *runtime, Handle<JSObject> intl) {
       0,
       intlDateTimeFormatCreator,
       CellKind::DecoratedObjectKind);
-  runtime->intlDateTimeFormat = constructor.getHermesValue();
+  runtime.intlDateTimeFormat = constructor.getHermesValue();
 
   {
     DefinePropertyFlags dpf{};
@@ -861,16 +884,15 @@ void defineIntlDateTimeFormat(Runtime *runtime, Handle<JSObject> intl) {
       constructor);
 
   {
-    DefinePropertyFlags dpf{};
-    dpf.setConfigurable = 1;
-    dpf.configurable = 1;
-    dpf.setValue = 1;
+    auto dpf = DefinePropertyFlags::getDefaultNewPropertyFlags();
+    dpf.writable = 0;
+    dpf.enumerable = 0;
 
     defineProperty(
         runtime,
         prototype,
         Predefined::getSymbolID(Predefined::SymbolToStringTag),
-        runtime->getPredefinedStringHandle(Predefined::Object),
+        runtime.getPredefinedStringHandle(Predefined::IntlDateTimeFormat),
         dpf);
   }
 
@@ -912,18 +934,18 @@ void defineIntlDateTimeFormat(Runtime *runtime, Handle<JSObject> intl) {
 } // namespace
 
 CallResult<HermesValue>
-intlDateTimeFormatConstructor(void *, Runtime *runtime, NativeArgs args) {
+intlDateTimeFormatConstructor(void *, Runtime &runtime, NativeArgs args) {
   return intlServiceConstructor<platform_intl::DateTimeFormat>(
       runtime,
       args,
       kDTFOptions,
-      Handle<JSObject>::vmcast(&runtime->intlDateTimeFormatPrototype),
+      Handle<JSObject>::vmcast(&runtime.intlDateTimeFormatPrototype),
       static_cast<unsigned int>(DTFSlotIndexes::COUNT));
 }
 
 CallResult<HermesValue> intlDateTimeFormatSupportedLocalesOf(
     void *,
-    Runtime *runtime,
+    Runtime &runtime,
     NativeArgs args) {
   return intlServiceSupportedLocalesOf<platform_intl::DateTimeFormat>(
       runtime, args);
@@ -931,7 +953,7 @@ CallResult<HermesValue> intlDateTimeFormatSupportedLocalesOf(
 
 namespace {
 
-CallResult<double> dateNowValue(Runtime *runtime, NativeArgs args) {
+CallResult<double> dateNowValue(Runtime &runtime, NativeArgs args) {
   // ECMA 402 13.1.5:
   // 1 and 2 are implicit in the callers.
   // 3. If date is not provided or is undefined, then
@@ -956,8 +978,8 @@ CallResult<double> dateNowValue(Runtime *runtime, NativeArgs args) {
   // 1. Let x be TimeClip(x).
   double x = timeClip(xRes->getNumber());
   // 2. If x is NaN, throw a RangeError exception.
-  if (isnan(x)) {
-    return runtime->raiseRangeError("Invalid time value");
+  if (std::isnan(x)) {
+    return runtime.raiseRangeError("Invalid time value");
   }
 
   return x;
@@ -966,11 +988,11 @@ CallResult<double> dateNowValue(Runtime *runtime, NativeArgs args) {
 } // namespace
 
 CallResult<HermesValue>
-intlDateTimeFormatFormat(void *, Runtime *runtime, NativeArgs args) {
-  PseudoHandle<Callable> cc =
-      createPseudoHandle(runtime->getCurrentFrame()->getCalleeClosure());
-  PseudoHandle<DecoratedObject> dateTimeFormatHandle = getDateTimeFormat(
-      PseudoHandle<NativeFunction>::vmcast(std::move(cc)), runtime);
+intlDateTimeFormatFormat(void *, Runtime &runtime, NativeArgs args) {
+  auto *nf = vmcast<NativeFunction>(
+      runtime.getCurrentFrame()->getCalleeClosureUnsafe());
+  PseudoHandle<DecoratedObject> dateTimeFormatHandle =
+      getDateTimeFormat(createPseudoHandle(nf), runtime);
 
   // Since dateTimeFormatHandle came out of an internal slot, it's an
   // assertable failure if it has the wrong type.
@@ -993,13 +1015,13 @@ intlDateTimeFormatFormat(void *, Runtime *runtime, NativeArgs args) {
 
 CallResult<HermesValue> intlDateTimeFormatPrototypeFormatGetter(
     void *,
-    Runtime *runtime,
+    Runtime &runtime,
     NativeArgs args) {
   Handle<DecoratedObject> dateTimeFormatHandle =
       args.dyncastThis<DecoratedObject>();
 
   CallResult<platform_intl::DateTimeFormat *> dateTimeFormatRes =
-      verifyDecoration<platform_intl::DateTimeFormat *>(
+      verifyDecoration<platform_intl::DateTimeFormat>(
           runtime,
           dateTimeFormatHandle,
           "Intl.DateTimeFormat.prototype.format getter");
@@ -1029,13 +1051,13 @@ CallResult<HermesValue> intlDateTimeFormatPrototypeFormatGetter(
 
 CallResult<HermesValue> intlDateTimeFormatPrototypeFormatToParts(
     void *,
-    Runtime *runtime,
+    Runtime &runtime,
     NativeArgs args) {
   Handle<DecoratedObject> dateTimeFormatHandle =
       args.dyncastThis<DecoratedObject>();
 
   CallResult<platform_intl::DateTimeFormat *> dateTimeFormatRes =
-      verifyDecoration<platform_intl::DateTimeFormat *>(
+      verifyDecoration<platform_intl::DateTimeFormat>(
           runtime,
           dateTimeFormatHandle,
           "Intl.DateTimeFormat.prototype.formatToParts");
@@ -1052,13 +1074,13 @@ CallResult<HermesValue> intlDateTimeFormatPrototypeFormatToParts(
 
 CallResult<HermesValue> intlDateTimeFormatPrototypeResolvedOptions(
     void *,
-    Runtime *runtime,
+    Runtime &runtime,
     NativeArgs args) {
   Handle<DecoratedObject> dateTimeFormatHandle =
       args.dyncastThis<DecoratedObject>();
 
   CallResult<platform_intl::DateTimeFormat *> dateTimeFormatRes =
-      verifyDecoration<platform_intl::DateTimeFormat *>(
+      verifyDecoration<platform_intl::DateTimeFormat>(
           runtime,
           dateTimeFormatHandle,
           "Intl.DateTimeFormat.prototype.resolvedOptions");
@@ -1076,7 +1098,7 @@ enum class NFSlotIndexes { boundFormat, COUNT };
 
 PseudoHandle<NativeFunction> getNFBoundFormat(
     PseudoHandle<DecoratedObject> nf,
-    Runtime *runtime) {
+    Runtime &runtime) {
   return createPseudoHandle(dyn_vmcast<NativeFunction>(
       DecoratedObject::getAdditionalSlotValue(
           nf.get(),
@@ -1087,7 +1109,7 @@ PseudoHandle<NativeFunction> getNFBoundFormat(
 
 void setNFBoundFormat(
     PseudoHandle<DecoratedObject> nf,
-    Runtime *runtime,
+    Runtime &runtime,
     PseudoHandle<NativeFunction> value) {
   DecoratedObject::setAdditionalSlotValue(
       nf.get(),
@@ -1101,7 +1123,7 @@ enum class NFFormatSlotIndexes { numberFormat, COUNT };
 
 PseudoHandle<DecoratedObject> getNumberFormat(
     PseudoHandle<NativeFunction> format,
-    Runtime *runtime) {
+    Runtime &runtime) {
   return createPseudoHandle(vmcast<DecoratedObject>(
       NativeFunction::getAdditionalSlotValue(
           format.get(),
@@ -1112,7 +1134,7 @@ PseudoHandle<DecoratedObject> getNumberFormat(
 
 void setNumberFormat(
     PseudoHandle<NativeFunction> format,
-    Runtime *runtime,
+    Runtime &runtime,
     PseudoHandle<DecoratedObject> value) {
   NativeFunction::setAdditionalSlotValue(
       format.get(),
@@ -1122,7 +1144,7 @@ void setNumberFormat(
 }
 
 CallResult<PseudoHandle<JSObject>> intlNumberFormatCreator(
-    Runtime *runtime,
+    Runtime &runtime,
     Handle<JSObject> parentHandle,
     void *) {
   return createPseudoHandle<JSObject>(
@@ -1134,10 +1156,10 @@ CallResult<PseudoHandle<JSObject>> intlNumberFormatCreator(
           .get());
 }
 
-void defineIntlNumberFormat(Runtime *runtime, Handle<JSObject> intl) {
+void defineIntlNumberFormat(Runtime &runtime, Handle<JSObject> intl) {
   // Create %NumberFormatPrototype% intrinsic.  Properties will be added later.
-  Handle<JSObject> prototype = runtime->makeHandle(JSObject::create(runtime));
-  runtime->intlNumberFormatPrototype = prototype.getHermesValue();
+  Handle<JSObject> prototype = runtime.makeHandle(JSObject::create(runtime));
+  runtime.intlNumberFormatPrototype = prototype.getHermesValue();
 
   // Create %NumberFormat% intrinsic.
   Handle<NativeConstructor> constructor = defineSystemConstructor(
@@ -1148,7 +1170,7 @@ void defineIntlNumberFormat(Runtime *runtime, Handle<JSObject> intl) {
       0,
       intlNumberFormatCreator,
       CellKind::DecoratedObjectKind);
-  runtime->intlNumberFormat = constructor.getHermesValue();
+  runtime.intlNumberFormat = constructor.getHermesValue();
 
   {
     DefinePropertyFlags dpf{};
@@ -1179,16 +1201,15 @@ void defineIntlNumberFormat(Runtime *runtime, Handle<JSObject> intl) {
       constructor);
 
   {
-    DefinePropertyFlags dpf{};
-    dpf.setConfigurable = 1;
-    dpf.configurable = 1;
-    dpf.setValue = 1;
+    auto dpf = DefinePropertyFlags::getDefaultNewPropertyFlags();
+    dpf.writable = 0;
+    dpf.enumerable = 0;
 
     defineProperty(
         runtime,
         prototype,
         Predefined::getSymbolID(Predefined::SymbolToStringTag),
-        runtime->getPredefinedStringHandle(Predefined::Object),
+        runtime.getPredefinedStringHandle(Predefined::IntlNumberFormat),
         dpf);
   }
 
@@ -1230,27 +1251,27 @@ void defineIntlNumberFormat(Runtime *runtime, Handle<JSObject> intl) {
 } // namespace
 
 CallResult<HermesValue>
-intlNumberFormatConstructor(void *, Runtime *runtime, NativeArgs args) {
+intlNumberFormatConstructor(void *, Runtime &runtime, NativeArgs args) {
   return intlServiceConstructor<platform_intl::NumberFormat>(
       runtime,
       args,
       kNumberFormatOptions,
-      Handle<JSObject>::vmcast(&runtime->intlNumberFormatPrototype),
+      Handle<JSObject>::vmcast(&runtime.intlNumberFormatPrototype),
       static_cast<unsigned int>(NFSlotIndexes::COUNT));
 }
 
 CallResult<HermesValue>
-intlNumberFormatSupportedLocalesOf(void *, Runtime *runtime, NativeArgs args) {
+intlNumberFormatSupportedLocalesOf(void *, Runtime &runtime, NativeArgs args) {
   return intlServiceSupportedLocalesOf<platform_intl::NumberFormat>(
       runtime, args);
 }
 
 CallResult<HermesValue>
-intlNumberFormatFormat(void *, Runtime *runtime, NativeArgs args) {
-  PseudoHandle<Callable> cc =
-      createPseudoHandle(runtime->getCurrentFrame()->getCalleeClosure());
-  PseudoHandle<DecoratedObject> numberFormatHandle = getNumberFormat(
-      PseudoHandle<NativeFunction>::vmcast(std::move(cc)), runtime);
+intlNumberFormatFormat(void *, Runtime &runtime, NativeArgs args) {
+  auto *nf = vmcast<NativeFunction>(
+      runtime.getCurrentFrame()->getCalleeClosureUnsafe());
+  PseudoHandle<DecoratedObject> numberFormatHandle =
+      getNumberFormat(createPseudoHandle(nf), runtime);
 
   // Since numberFormatHandle came out of an internal slot, it's an
   // assertable failure if it has the wrong type.
@@ -1274,13 +1295,13 @@ intlNumberFormatFormat(void *, Runtime *runtime, NativeArgs args) {
 
 CallResult<HermesValue> intlNumberFormatPrototypeFormatGetter(
     void *,
-    Runtime *runtime,
+    Runtime &runtime,
     NativeArgs args) {
   Handle<DecoratedObject> numberFormatHandle =
       args.dyncastThis<DecoratedObject>();
 
   CallResult<platform_intl::NumberFormat *> numberFormatRes =
-      verifyDecoration<platform_intl::NumberFormat *>(
+      verifyDecoration<platform_intl::NumberFormat>(
           runtime,
           numberFormatHandle,
           "Intl.NumberFormat.prototype.format getter");
@@ -1310,13 +1331,13 @@ CallResult<HermesValue> intlNumberFormatPrototypeFormatGetter(
 
 CallResult<HermesValue> intlNumberFormatPrototypeFormatToParts(
     void *,
-    Runtime *runtime,
+    Runtime &runtime,
     NativeArgs args) {
   Handle<DecoratedObject> numberFormatHandle =
       args.dyncastThis<DecoratedObject>();
 
   CallResult<platform_intl::NumberFormat *> numberFormatRes =
-      verifyDecoration<platform_intl::NumberFormat *>(
+      verifyDecoration<platform_intl::NumberFormat>(
           runtime,
           numberFormatHandle,
           "Intl.NumberFormat.prototype.formatToParts");
@@ -1334,13 +1355,13 @@ CallResult<HermesValue> intlNumberFormatPrototypeFormatToParts(
 
 CallResult<HermesValue> intlNumberFormatPrototypeResolvedOptions(
     void *,
-    Runtime *runtime,
+    Runtime &runtime,
     NativeArgs args) {
   Handle<DecoratedObject> numberFormatHandle =
       args.dyncastThis<DecoratedObject>();
 
   CallResult<platform_intl::NumberFormat *> numberFormatRes =
-      verifyDecoration<platform_intl::NumberFormat *>(
+      verifyDecoration<platform_intl::NumberFormat>(
           runtime,
           numberFormatHandle,
           "Intl.NumberFormat.prototype.resolvedOptions");
@@ -1393,13 +1414,13 @@ void toDateTimeOptions(platform_intl::Options &options, int dtoFlags) {
 }
 
 CallResult<HermesValue> intlDatePrototypeToSomeLocaleString(
-    Runtime *runtime,
+    Runtime &runtime,
     const NativeArgs &args,
     JSDate *date,
     int dtoFlags) {
-  double x = JSDate::getPrimitiveValue(date).getNumber(runtime);
+  double x = date->getPrimitiveValue();
   std::u16string str;
-  if (isnan(x)) {
+  if (std::isnan(x)) {
     str = u"Invalid Date";
   } else {
     CallResult<std::vector<std::u16string>> localesRes =
@@ -1439,20 +1460,20 @@ CallResult<HermesValue> intlDatePrototypeToSomeLocaleString(
 } // namespace
 
 CallResult<HermesValue>
-intlDatePrototypeToLocaleDateString(void *, Runtime *runtime, NativeArgs args) {
+intlDatePrototypeToLocaleDateString(void *, Runtime &runtime, NativeArgs args) {
   JSDate *date = dyn_vmcast<JSDate>(args.getThisArg());
   if (!date) {
-    return runtime->raiseTypeError(
+    return runtime.raiseTypeError(
         "Date.prototype.toLocaleString() called on non-Date object");
   }
   return intlDatePrototypeToSomeLocaleString(runtime, args, date, kDTODate);
 }
 
 CallResult<HermesValue>
-intlDatePrototypeToLocaleString(void *, Runtime *runtime, NativeArgs args) {
+intlDatePrototypeToLocaleString(void *, Runtime &runtime, NativeArgs args) {
   JSDate *date = dyn_vmcast<JSDate>(args.getThisArg());
   if (!date) {
-    return runtime->raiseTypeError(
+    return runtime.raiseTypeError(
         "Date.prototype.toLocaleString() called on non-Date object");
   }
   return intlDatePrototypeToSomeLocaleString(
@@ -1460,27 +1481,27 @@ intlDatePrototypeToLocaleString(void *, Runtime *runtime, NativeArgs args) {
 }
 
 CallResult<HermesValue>
-intlDatePrototypeToLocaleTimeString(void *, Runtime *runtime, NativeArgs args) {
+intlDatePrototypeToLocaleTimeString(void *, Runtime &runtime, NativeArgs args) {
   JSDate *date = dyn_vmcast<JSDate>(args.getThisArg());
   if (!date) {
-    return runtime->raiseTypeError(
+    return runtime.raiseTypeError(
         "Date.prototype.toLocaleString() called on non-Date object");
   }
   return intlDatePrototypeToSomeLocaleString(runtime, args, date, kDTOTime);
 }
 
 CallResult<HermesValue>
-intlNumberPrototypeToLocaleString(void *, Runtime *runtime, NativeArgs args) {
+intlNumberPrototypeToLocaleString(void *, Runtime &runtime, NativeArgs args) {
   double x;
   if (args.getThisArg().isNumber()) {
     x = args.getThisArg().getNumber();
   } else {
     auto numPtr = Handle<JSNumber>::dyn_vmcast(args.getThisHandle());
     if (LLVM_UNLIKELY(!numPtr)) {
-      return runtime->raiseTypeError(
+      return runtime.raiseTypeError(
           "Number.prototype.toLocaleString() can only be used on numbers");
     }
-    x = JSNumber::getPrimitiveValue(*numPtr).getNumber(runtime);
+    x = numPtr->getPrimitiveNumber();
   }
 
   CallResult<std::vector<std::u16string>> localesRes =
@@ -1510,9 +1531,9 @@ intlNumberPrototypeToLocaleString(void *, Runtime *runtime, NativeArgs args) {
 }
 
 CallResult<HermesValue>
-intlStringPrototypeLocaleCompare(void *, Runtime *runtime, NativeArgs args) {
+intlStringPrototypeLocaleCompare(void *, Runtime &runtime, NativeArgs args) {
   if (args.getThisArg().isUndefined() || args.getThisArg().isNull()) {
-    return runtime->raiseTypeError(
+    return runtime.raiseTypeError(
         "String.prototype.localeCompare called on null or undefined");
   }
   CallResult<std::u16string> thisRes =
@@ -1548,10 +1569,10 @@ intlStringPrototypeLocaleCompare(void *, Runtime *runtime, NativeArgs args) {
 
 CallResult<HermesValue> intlStringPrototypeToLocaleLowerCase(
     void *,
-    Runtime *runtime,
+    Runtime &runtime,
     NativeArgs args) {
-  if (args.getThisArg().isUndefined() || args.getThisArg().isNumber()) {
-    return runtime->raiseTypeError(
+  if (args.getThisArg().isUndefined() || args.getThisArg().isNull()) {
+    return runtime.raiseTypeError(
         "String.prototype.localeCompare called on null or undefined");
   }
   CallResult<std::u16string> thisRes =
@@ -1567,7 +1588,7 @@ CallResult<HermesValue> intlStringPrototypeToLocaleLowerCase(
 
   CallResult<std::u16string> lowerRes =
       platform_intl::toLocaleLowerCase(runtime, *localesRes, *thisRes);
-  if (LLVM_UNLIKELY(localesRes == ExecutionStatus::EXCEPTION)) {
+  if (LLVM_UNLIKELY(lowerRes == ExecutionStatus::EXCEPTION)) {
     return ExecutionStatus::EXCEPTION;
   }
 
@@ -1576,10 +1597,10 @@ CallResult<HermesValue> intlStringPrototypeToLocaleLowerCase(
 
 CallResult<HermesValue> intlStringPrototypeToLocaleUpperCase(
     void *,
-    Runtime *runtime,
+    Runtime &runtime,
     NativeArgs args) {
-  if (args.getThisArg().isUndefined() || args.getThisArg().isNumber()) {
-    return runtime->raiseTypeError(
+  if (args.getThisArg().isUndefined() || args.getThisArg().isNull()) {
+    return runtime.raiseTypeError(
         "String.prototype.localeCompare called on null or undefined");
   }
   CallResult<std::u16string> thisRes =
@@ -1595,7 +1616,7 @@ CallResult<HermesValue> intlStringPrototypeToLocaleUpperCase(
 
   CallResult<std::u16string> upperRes =
       platform_intl::toLocaleUpperCase(runtime, *localesRes, *thisRes);
-  if (LLVM_UNLIKELY(localesRes == ExecutionStatus::EXCEPTION)) {
+  if (LLVM_UNLIKELY(upperRes == ExecutionStatus::EXCEPTION)) {
     return ExecutionStatus::EXCEPTION;
   }
 
@@ -1609,7 +1630,7 @@ namespace intl {
 namespace { // Intl impl stuff.
 
 vm::CallResult<vm::HermesValue>
-intlGetCanonicalLocales(void *, vm::Runtime *runtime, vm::NativeArgs args) {
+intlGetCanonicalLocales(void *, vm::Runtime &runtime, vm::NativeArgs args) {
   vm::CallResult<std::vector<std::u16string>> localesRes =
       vm::normalizeLocales(runtime, args.getArgHandle(0));
   if (LLVM_UNLIKELY(localesRes == vm::ExecutionStatus::EXCEPTION)) {
@@ -1622,9 +1643,9 @@ intlGetCanonicalLocales(void *, vm::Runtime *runtime, vm::NativeArgs args) {
 
 } // namespace
 
-vm::Handle<vm::JSObject> createIntlObject(vm::Runtime *runtime) {
+vm::Handle<vm::JSObject> createIntlObject(vm::Runtime &runtime) {
   vm::Handle<vm::JSObject> intl =
-      runtime->makeHandle(vm::JSObject::create(runtime));
+      runtime.makeHandle(vm::JSObject::create(runtime));
   defineMethod(
       runtime,
       intl,
@@ -1632,6 +1653,19 @@ vm::Handle<vm::JSObject> createIntlObject(vm::Runtime *runtime) {
       nullptr,
       intlGetCanonicalLocales,
       1);
+
+  {
+    auto dpf = vm::DefinePropertyFlags::getDefaultNewPropertyFlags();
+    dpf.writable = 0;
+    dpf.enumerable = 0;
+
+    defineProperty(
+        runtime,
+        intl,
+        vm::Predefined::getSymbolID(vm::Predefined::SymbolToStringTag),
+        runtime.getPredefinedStringHandle(vm::Predefined::Intl),
+        dpf);
+  }
 
   vm::defineIntlCollator(runtime, intl);
   vm::defineIntlDateTimeFormat(runtime, intl);

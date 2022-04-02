@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -16,15 +16,11 @@ namespace vm {
 #if defined(HERMESVM_GC_MALLOC)
 class MallocGC;
 using GC = MallocGC;
-#elif defined(HERMESVM_GC_NONCONTIG_GENERATIONAL)
-class GenGC;
-using GC = GenGC;
 #elif defined(HERMESVM_GC_HADES)
 class HadesGC;
 using GC = HadesGC;
 #elif defined(HERMESVM_GC_RUNTIME)
 class GCBase;
-class GenGC;
 class HadesGC;
 class MallocGC;
 using GC = GCBase;

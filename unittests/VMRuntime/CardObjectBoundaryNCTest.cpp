@@ -1,15 +1,15 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
  */
 
-#ifdef HERMESVM_GC_NONCONTIG_GENERATIONAL
+#ifndef HERMESVM_GC_MALLOC
 
 #include "gtest/gtest.h"
 
-#include "hermes/VM/GenGCHeapSegment.h"
+#include "hermes/VM/AlignedHeapSegment.h"
 #include "hermes/VM/StorageProvider.h"
 
 using namespace hermes::vm;
@@ -33,7 +33,7 @@ struct CardObjectBoundaryNCTest : public ::testing::Test {
   }
 
   std::unique_ptr<StorageProvider> provider;
-  GenGCHeapSegment segment;
+  AlignedHeapSegment segment;
   CardTable::Boundary boundary;
 
   size_t segStartIndex;
@@ -64,14 +64,14 @@ TEST_F(CardObjectBoundaryNCTest, NextBoundaryOnBoundary) {
 }
 
 TEST_F(CardObjectBoundaryNCTest, FirstAlloc) {
-  void *res = alloc(sizeof(GCCell));
+  void *res = alloc(cellSize<GCCell>());
   EXPECT_EQ(segment.start(), reinterpret_cast<char *>(res));
   EXPECT_EQ(res, segment.cardTable().firstObjForCard(segStartIndex));
   EXPECT_EQ(segment.start() + CardTable::kCardSize, boundary.address());
 }
 
 TEST_F(CardObjectBoundaryNCTest, CrossingSmallAlloc) {
-  (void)alloc(sizeof(GCCell));
+  (void)alloc(cellSize<GCCell>());
   void *res1 = alloc(CardTable::kCardSize);
   EXPECT_EQ(res1, segment.cardTable().firstObjForCard(segStartIndex + 1));
   EXPECT_EQ(segment.start() + 2 * CardTable::kCardSize, boundary.address());
@@ -80,7 +80,7 @@ TEST_F(CardObjectBoundaryNCTest, CrossingSmallAlloc) {
 TEST_F(CardObjectBoundaryNCTest, CrossingSmallAllocAtCardStart) {
   // Do an alloc to get to the start of the next card.
   (void)alloc(CardTable::kCardSize);
-  void *res = alloc(sizeof(GCCell));
+  void *res = alloc(cellSize<GCCell>());
   EXPECT_EQ(
       reinterpret_cast<char *>(res),
       segment.cardTable().indexToAddress(segStartIndex + 1));
@@ -88,7 +88,7 @@ TEST_F(CardObjectBoundaryNCTest, CrossingSmallAllocAtCardStart) {
 }
 
 TEST_F(CardObjectBoundaryNCTest, CrossingLargeAlloc) {
-  (void)alloc(sizeof(GCCell));
+  (void)alloc(cellSize<GCCell>());
   const size_t kNumCards = 20;
   void *res1 = alloc(kNumCards * CardTable::kCardSize);
   EXPECT_EQ(segment.start() + 21 * CardTable::kCardSize, boundary.address());
@@ -99,4 +99,4 @@ TEST_F(CardObjectBoundaryNCTest, CrossingLargeAlloc) {
 
 } // namespace
 
-#endif // HERMESVM_GC_NONCONTIG_GENERATIONAL
+#endif // HERMESVM_GC_MALLOC

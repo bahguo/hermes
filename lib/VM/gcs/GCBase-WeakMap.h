@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -28,7 +28,7 @@ void GCBase::clearEntriesWithUnreachableKeys(
   for (auto iter = weakMap->keys_begin(), end = weakMap->keys_end();
        iter != end;
        iter++) {
-    JSObject *keyObj = iter->getObject(gc);
+    JSObject *keyObj = iter->getObjectInGC(gc);
     if (!keyObj || !objIsMarked(keyObj)) {
       weakMap->clearEntryDirect(gc, *iter);
     }
@@ -61,7 +61,7 @@ bool GCBase::markFromReachableWeakMapKeys(
       keyList->end(),
       [weakMap, gc, objIsMarked, markFromVal, &newlyMarkedValue](
           detail::WeakRefKey *key) {
-        GCCell *cell = key->getObject(gc);
+        GCCell *cell = key->getObjectInGC(gc);
         if (!cell) {
           // Remove key from list.
           return true;
@@ -141,11 +141,11 @@ gcheapsize_t GCBase::completeWeakMapMarking(
         // normally, and thus mark *all* objects reachable from it.
         // So we temporarily null out the field, and restore it after.
         auto &valueStorageRef = weakMap->getValueStorageRef(gc);
-        GCPointerBase::StorageType valueStorage = valueStorageRef;
-        valueStorageRef = GCPointer<BigStorage>(nullptr).getStorageType();
+        CompressedPointer valueStorage = valueStorageRef;
+        valueStorageRef.setInGC(CompressedPointer{nullptr});
         gc->markCell(weakMap, skipWeakAcceptor);
         drainMarkStack(acceptor);
-        valueStorageRef = valueStorage;
+        valueStorageRef.setInGC(valueStorage);
         scannedWeakMaps.insert(weakMap);
         // This handles an obscure potential bug: if we've already
         // determined reachable keys for weak map 0, the scanning

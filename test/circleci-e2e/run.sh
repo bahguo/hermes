@@ -1,5 +1,5 @@
 #!/bin/bash -xe
-# Copyright (c) Facebook, Inc. and its affiliates.
+# Copyright (c) Meta Platforms, Inc. and affiliates.
 #
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
@@ -24,7 +24,7 @@ while (( "$#" )); do
    shift
 done
 
-# Clone a fresh copy of RN master
+# Clone a fresh copy of RN main
 git clone --depth=1 https://github.com/facebook/react-native
 
 cd react-native

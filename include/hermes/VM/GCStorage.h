@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -18,16 +18,14 @@ namespace vm {
 class GCStorage {
  public:
   GCStorage(
-      MetadataTable metaTable,
-      GCBase::GCCallbacks *gcCallbacks,
-      PointerBase *pointerBase,
+      GCBase::GCCallbacks &gcCallbacks,
+      PointerBase &pointerBase,
       const GCConfig &gcConfig,
       std::shared_ptr<CrashManager> crashMgr,
       std::shared_ptr<StorageProvider> provider,
       experiments::VMExperimentFlags vmExperimentFlags)
 #ifndef HERMESVM_GC_RUNTIME
       : heap_(
-            metaTable,
             gcCallbacks,
             pointerBase,
             gcConfig,
@@ -37,34 +35,23 @@ class GCStorage {
   }
 #else
   {
-    GCBase::HeapKind heapKind = (vmExperimentFlags & experiments::GenGC)
-        ? GCBase::HeapKind::NCGEN
-        : GCBase::HeapKind::HADES;
+    GCBase::HeapKind heapKind = GCBase::HeapKind::HadesGC;
     GC *heap;
     switch (heapKind) {
-      case GCBase::HeapKind::HADES:
-        heap = new (storage_.buffer) HadesGC(
-            metaTable,
-            gcCallbacks,
-            pointerBase,
-            gcConfig,
-            crashMgr,
-            provider,
-            vmExperimentFlags);
-        break;
-      case GCBase::HeapKind::NCGEN:
-        heap = new (storage_.buffer) GenGC(
-            metaTable,
-            gcCallbacks,
-            pointerBase,
-            gcConfig,
-            crashMgr,
-            provider,
-            vmExperimentFlags);
-        break;
-      case GCBase::HeapKind::MALLOC:
-        llvm_unreachable(
-            "MallocGC should not be used with the RuntimeGC build config");
+#define GC_KIND(kind)            \
+  case GCBase::HeapKind::kind:   \
+    heap = new (&storage_) kind( \
+        gcCallbacks,             \
+        pointerBase,             \
+        gcConfig,                \
+        crashMgr,                \
+        provider,                \
+        vmExperimentFlags);      \
+    break;
+      RUNTIME_GC_KINDS
+#undef GC_KIND
+      default:
+        llvm_unreachable("No other valid GC for RuntimeGC");
     }
     assert(heap == get() && "Cannot safely cast buffer to GC");
     (void)heap;
@@ -77,7 +64,7 @@ class GCStorage {
 
   GC *get() {
 #ifdef HERMESVM_GC_RUNTIME
-    return reinterpret_cast<GC *>(storage_.buffer);
+    return reinterpret_cast<GC *>(&storage_);
 #else
     return &heap_;
 #endif
@@ -85,7 +72,11 @@ class GCStorage {
 
  private:
 #ifdef HERMESVM_GC_RUNTIME
-  llvh::AlignedCharArrayUnion<HadesGC, GenGC> storage_;
+  std::aligned_storage<std::max({
+#define GC_KIND(kind) sizeof(kind),
+      RUNTIME_GC_KINDS
+#undef GC_KIND
+  })>::type storage_;
 #else
   GC heap_;
 #endif

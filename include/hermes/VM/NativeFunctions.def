@@ -1,12 +1,12 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
  */
 
-// Updated June 04, 2020
-#define NATIVE_FUNCTION_VERSION_VALUE 10
+// Updated January 28, 2022
+#define NATIVE_FUNCTION_VERSION_VALUE 12
 
 #ifndef NATIVE_FUNCTION
 #define NATIVE_FUNCTION(func)
@@ -14,18 +14,6 @@
 
 #ifndef NATIVE_CONSTRUCTOR
 #define NATIVE_CONSTRUCTOR(func)
-#endif
-
-#ifndef NATIVE_FUNCTION_TYPED
-#define NATIVE_FUNCTION_TYPED(func, type)
-#endif
-
-#ifndef NATIVE_FUNCTION_TYPED_2
-#define NATIVE_FUNCTION_TYPED_2(func, type, type2)
-#endif
-
-#ifndef NATIVE_CONSTRUCTOR_TYPED
-#define NATIVE_CONSTRUCTOR_TYPED(classname, type, type2, func)
 #endif
 
 NATIVE_FUNCTION(arrayBufferConstructor)
@@ -54,6 +42,7 @@ NATIVE_FUNCTION(arrayPrototypeEvery)
 NATIVE_FUNCTION(arrayPrototypeFill)
 NATIVE_FUNCTION(arrayPrototypeFilter)
 NATIVE_FUNCTION(arrayPrototypeFind)
+NATIVE_FUNCTION(arrayPrototypeFindLast)
 NATIVE_FUNCTION(arrayPrototypeIncludes)
 NATIVE_FUNCTION(arrayPrototypeIndexOf)
 NATIVE_FUNCTION(arrayPrototypeLastIndexOf)
@@ -72,24 +61,37 @@ NATIVE_FUNCTION(asyncFunctionConstructor)
 NATIVE_FUNCTION(booleanConstructor)
 NATIVE_FUNCTION(booleanPrototypeToString)
 NATIVE_FUNCTION(booleanPrototypeValueOf)
+NATIVE_FUNCTION(callSitePrototypeGetFunctionName)
+NATIVE_FUNCTION(callSitePrototypeGetFileName)
+NATIVE_FUNCTION(callSitePrototypeGetLineNumber)
+NATIVE_FUNCTION(callSitePrototypeGetColumnNumber)
+NATIVE_FUNCTION(callSitePrototypeGetBytecodeAddress)
+NATIVE_FUNCTION(callSitePrototypeIsNative)
+NATIVE_FUNCTION(callSitePrototypeGetThis)
+NATIVE_FUNCTION(callSitePrototypeGetTypeName)
+NATIVE_FUNCTION(callSitePrototypeGetFunction)
+NATIVE_FUNCTION(callSitePrototypeGetMethodName)
+NATIVE_FUNCTION(callSitePrototypeGetEvalOrigin)
+NATIVE_FUNCTION(callSitePrototypeIsToplevel)
+NATIVE_FUNCTION(callSitePrototypeIsEval)
+NATIVE_FUNCTION(callSitePrototypeIsConstructor)
+NATIVE_FUNCTION(callSitePrototypeIsAsync)
+NATIVE_FUNCTION(callSitePrototypeIsPromiseAll)
+NATIVE_FUNCTION(callSitePrototypeGetPromiseIndex)
 NATIVE_FUNCTION(dataViewConstructor)
 NATIVE_FUNCTION(dataViewPrototypeBuffer)
 NATIVE_FUNCTION(dataViewPrototypeByteLength)
 NATIVE_FUNCTION(dataViewPrototypeByteOffset)
 
-// NATIVE_FUNCTION_TYPED for template with one type.
-// NATIVE_FUNCTION_TYPED_2 for template with two types.
-#define TYPED_ARRAY(name, type)                     \
-  NATIVE_FUNCTION_TYPED(dataViewPrototypeGet, type) \
-  NATIVE_FUNCTION_TYPED_2(dataViewPrototypeSet, type, CellKind::name##ArrayKind)
+#define TYPED_ARRAY(name, type)               \
+  NATIVE_FUNCTION(dataViewPrototypeGet##name) \
+  NATIVE_FUNCTION(dataViewPrototypeSet##name)
 #define TYPED_ARRAY_NO_CLAMP
 #include "hermes/VM/TypedArrays.def"
 #undef TYPED_ARRAY
 #undef TYPED_ARRAY_NO_CLAMP
 
-#define TYPED_ARRAY(name, type) \
-  NATIVE_FUNCTION_TYPED_2(      \
-      typedArrayConstructor, type, CellKind::name##ArrayKind)
+#define TYPED_ARRAY(name, type) NATIVE_FUNCTION(name##ArrayConstructor)
 #include "hermes/VM/TypedArrays.def"
 #undef TYPED_ARRAY
 
@@ -170,6 +172,7 @@ NATIVE_FUNCTION(shouldPauseOnThrow)
 NATIVE_FUNCTION(isFinite)
 NATIVE_FUNCTION(isNaN)
 NATIVE_FUNCTION(iteratorPrototypeIterator)
+NATIVE_FUNCTION(errorCaptureStackTrace)
 NATIVE_FUNCTION(errorStackGetter)
 NATIVE_FUNCTION(errorStackSetter)
 NATIVE_FUNCTION(jsonParse)
@@ -219,6 +222,7 @@ NATIVE_FUNCTION(objectGetOwnPropertyDescriptors)
 NATIVE_FUNCTION(objectGetOwnPropertyNames)
 NATIVE_FUNCTION(objectGetOwnPropertySymbols)
 NATIVE_FUNCTION(objectGetPrototypeOf)
+NATIVE_FUNCTION(objectHasOwn)
 NATIVE_FUNCTION(objectIs)
 NATIVE_FUNCTION(objectIsExtensible)
 NATIVE_FUNCTION(objectIsFrozen)
@@ -347,6 +351,7 @@ NATIVE_FUNCTION(typedArrayPrototypeCopyWithin)
 NATIVE_FUNCTION(typedArrayPrototypeEverySome)
 NATIVE_FUNCTION(typedArrayPrototypeFill)
 NATIVE_FUNCTION(typedArrayPrototypeFind)
+NATIVE_FUNCTION(typedArrayPrototypeFindLast)
 NATIVE_FUNCTION(typedArrayPrototypeForEach)
 NATIVE_FUNCTION(typedArrayPrototypeIndexOf)
 NATIVE_FUNCTION(typedArrayPrototypeIterator)
@@ -404,16 +409,12 @@ NATIVE_CONSTRUCTOR(NativeConstructor::creatorFunction<JSWeakSet>)
 NATIVE_CONSTRUCTOR(NativeConstructor::creatorFunction<JSGeneratorFunction>)
 NATIVE_CONSTRUCTOR(NativeConstructor::creatorFunction<JSAsyncFunction>)
 
-#define TYPED_ARRAY(name, type)  \
-  NATIVE_CONSTRUCTOR_TYPED(      \
-      JSTypedArray,              \
-      type,                      \
-      CellKind::name##ArrayKind, \
-      NativeConstructor::creatorFunction)
+#define TYPED_ARRAY(name, type) \
+  NATIVE_CONSTRUCTOR(NativeConstructor::creatorFunction<name##Array>)
 #include "hermes/VM/TypedArrays.def"
 #undef TYPED_ARRAY
 
-#ifdef HERMES_PLATFORM_INTL
+#ifdef HERMES_ENABLE_INTL
 // TODO T65916424: Consider how we can move these somewhere more modular.
 // I would prefer these be in the ::hermes::intl namespace, but the current
 // macros make that difficult.
@@ -448,6 +449,3 @@ NATIVE_FUNCTION(intlStringPrototypeToLocaleUpperCase)
 
 #undef NATIVE_FUNCTION
 #undef NATIVE_CONSTRUCTOR
-#undef NATIVE_FUNCTION_TYPED
-#undef NATIVE_FUNCTION_TYPED_2
-#undef NATIVE_CONSTRUCTOR_TYPED

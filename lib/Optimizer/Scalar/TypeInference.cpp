@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -78,8 +78,12 @@ static bool inferUnaryInst(UnaryOperatorInst *UOI) {
       return true;
     case OpKind::PlusKind: // +
     case OpKind::MinusKind: // -
-    case OpKind::TildeKind: // ~
+    case OpKind::IncKind: // ++
+    case OpKind::DecKind: // --
       UOI->setType(Type::createNumber());
+      return true;
+    case OpKind::TildeKind: // ~
+      UOI->setType(Type::createInt32());
       return true;
     case OpKind::BangKind: // !
       UOI->setType(Type::createBoolean());
@@ -265,13 +269,17 @@ static bool inferBinaryInst(BinaryOperatorInst *BOI) {
     case BinaryOperatorInst::OpKind::ModuloKind:
     // https://es5.github.io/#x11.6.2
     case BinaryOperatorInst::OpKind::SubtractKind:
+      BOI->setType(Type::createNumber());
+      return true;
     // https://es5.github.io/#x11.7.1
     case BinaryOperatorInst::OpKind::LeftShiftKind:
     // https://es5.github.io/#x11.7.2
     case BinaryOperatorInst::OpKind::RightShiftKind:
+      BOI->setType(Type::createInt32());
+      return true;
     // https://es5.github.io/#x11.7.3
     case BinaryOperatorInst::OpKind::UnsignedRightShiftKind:
-      BOI->setType(Type::createNumber());
+      BOI->setType(Type::createUint32());
       return true;
 
     // The Add operator is special:
@@ -310,7 +318,7 @@ static bool inferBinaryInst(BinaryOperatorInst *BOI) {
     case BinaryOperatorInst::OpKind::OrKind:
     case BinaryOperatorInst::OpKind::XorKind:
     case BinaryOperatorInst::OpKind::AndKind:
-      BOI->setType(Type::createNumber());
+      BOI->setType(Type::createInt32());
       return true;
 
     default:

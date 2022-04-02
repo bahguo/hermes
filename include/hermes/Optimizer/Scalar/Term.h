@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -10,7 +10,6 @@
 
 #include "hermes/IR/IR.h"
 #include "hermes/IR/Instrs.h"
-#include "hermes/Support/OSCompat.h"
 #include "llvh/ADT/DenseSet.h"
 
 using llvh::isa;
@@ -354,13 +353,13 @@ class ModuleTerm : public Term {
 #ifndef NDEBUG
   std::string getPrintStr() {
     std::string part1("Module(");
-    std::string part2 = oscompat::to_string(modId_);
+    std::string part2 = std::to_string(modId_);
     std::string part3(")");
     return part1 + part2 + part3;
   }
 #else
   std::string getPrintStr() {
-    return oscompat::to_string(modId_);
+    return std::to_string(modId_);
   }
 #endif
   static bool classof(const ModuleTerm *) {

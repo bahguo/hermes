@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -11,17 +11,14 @@ import java.util.HashSet;
 import java.util.Set;
 import org.junit.Test;
 
-// Run "./gradlew :intltest:preparetest262" from the root to download and copy the test files to the
+// Run "./gradlew :intltest:prepareTests" from the root to copy the test files to the
 // APK assets.
 public class HermesIntlCollatorTest extends HermesIntlTest262Base {
-
-  private static final String LOG_TAG = "HermesIntlCollatorTest";
 
   @Test
   public void testIntlCollator() throws IOException {
 
-    String basePath = "test262-main/test/intl402/Collator";
-    Set<String> whilteList = new HashSet<>();
+    String basePath = "test262/test/intl402/Collator";
 
     Set<String> deviations =
         new HashSet<>(
@@ -41,25 +38,20 @@ public class HermesIntlCollatorTest extends HermesIntlTest262Base {
                 "proto-from-ctor-realm.js" // Hermes doesn't support Realms (Isolated Environments).
                 ));
 
-    Set<String> blackList = new HashSet<>();
-    blackList.addAll(testIssueList);
-    blackList.addAll(deviations);
+    Set<String> skipList = new HashSet<>();
+    skipList.addAll(testIssueList);
+    skipList.addAll(deviations);
 
-    runTests(basePath, blackList, whilteList);
+    runTests(basePath, skipList);
   }
 
   public void testIntlCollator_prototype() throws IOException {
-    String basePath = "test262-main/test/intl402/Collator/prototype";
-    Set<String> whilteList = new HashSet<>();
-    Set<String> blackList = new HashSet<>();
-
-    runTests(basePath, blackList, whilteList);
+    String basePath = "test262/test/intl402/Collator/prototype";
+    runTests(basePath);
   }
 
   public void testIntlCollator_prototype_resolvedOptions() throws IOException {
-    String basePath = "test262-main/test/intl402/Collator/prototype/resolvedOptions";
-
-    Set<String> whilteList = new HashSet<>();
+    String basePath = "test262/test/intl402/Collator/prototype/resolvedOptions";
 
     Set<String> deviations =
         new HashSet<>(
@@ -74,26 +66,22 @@ public class HermesIntlCollatorTest extends HermesIntlTest262Base {
 
     Set<String> testIssueList = new HashSet<>();
 
-    Set<String> blackList = new HashSet<>();
-    blackList.addAll(deviations);
-    blackList.addAll(testIssueList);
+    Set<String> skipList = new HashSet<>();
+    skipList.addAll(deviations);
+    skipList.addAll(testIssueList);
 
-    runTests(basePath, blackList, whilteList);
+    runTests(basePath, skipList);
   }
 
   public void testIntlCollator_prototype_constructor() throws IOException {
-    String basePath = "test262-main/test/intl402/Collator/prototype/constructor";
-    Set<String> whilteList = new HashSet<>();
-    Set<String> blackList = new HashSet<>();
-
-    runTests(basePath, blackList, whilteList);
+    String basePath = "test262/test/intl402/Collator/prototype/constructor";
+    runTests(basePath);
   }
 
   public void testIntlCollator_prototype_compare() throws IOException {
-    String basePath = "test262-main/test/intl402/Collator/prototype/compare";
+    String basePath = "test262/test/intl402/Collator/prototype/compare";
 
-    Set<String> whilteList = new HashSet<>();
-    Set<String> blackList = new HashSet<>();
+    Set<String> skipList = new HashSet<>();
 
     // ICU APIs not available prior to 24.
     Set<String> pre24Issues = new HashSet<>();
@@ -111,8 +99,13 @@ public class HermesIntlCollatorTest extends HermesIntlTest262Base {
               ));
     }
 
-    blackList.addAll(pre24Issues);
+    skipList.addAll(pre24Issues);
 
-    runTests(basePath, blackList, whilteList);
+    runTests(basePath, skipList);
+  }
+
+  public void testIntlCollator_prototype_toStringTag() throws IOException {
+    String basePath = "test262/test/intl402/Collator/prototype/toStringTag";
+    runTests(basePath);
   }
 }

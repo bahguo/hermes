@@ -1,18 +1,28 @@
 /**
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
  *
+ * @flow
  * @format
  */
 
-'use strict';
+/*
+This class does some very "javascripty" things in the name of
+performance which are ultimately impossible to soundly type.
 
-const HermesASTAdapter = require('./HermesASTAdapter');
+So instead of adding strict types and a large number of suppression
+comments, instead it is left untyped and subclasses are strictly
+typed via a separate flow declaration file.
+*/
 
-class HermesToBabelAdapter extends HermesASTAdapter {
-  fixSourceLocation(node) {
+import type {HermesNode} from './HermesAST';
+
+import HermesASTAdapter from './HermesASTAdapter';
+
+export default class HermesToBabelAdapter extends HermesASTAdapter {
+  fixSourceLocation(node: HermesNode): void {
     const loc = node.loc;
     if (loc == null) {
       return;
@@ -28,7 +38,7 @@ class HermesToBabelAdapter extends HermesASTAdapter {
     node.end = loc.rangeEnd;
   }
 
-  mapNode(node) {
+  mapNode(node: HermesNode): HermesNode {
     this.fixSourceLocation(node);
     switch (node.type) {
       case 'Program':
@@ -63,18 +73,23 @@ class HermesToBabelAdapter extends HermesASTAdapter {
         return this.mapRestElement(node);
       case 'ImportExpression':
         return this.mapImportExpression(node);
+      case 'JSXStringLiteral':
+        return this.mapJSXStringLiteral(node);
       case 'PrivateName':
       case 'ClassPrivateProperty':
         return this.mapPrivateProperty(node);
       case 'FunctionDeclaration':
       case 'FunctionExpression':
         return this.mapFunction(node);
+      case 'IndexedAccessType':
+      case 'OptionalIndexedAccessType':
+        return this.mapUnsupportedTypeAnnotation(node);
       default:
         return this.mapNodeDefault(node);
     }
   }
 
-  mapProgram(node) {
+  mapProgram(node: HermesNode): HermesNode {
     // Visit child nodes and convert to directives
     const {comments, ...program} = this.mapNodeWithDirectives(node);
 
@@ -104,7 +119,7 @@ class HermesToBabelAdapter extends HermesASTAdapter {
     };
   }
 
-  mapNodeWithDirectives(node) {
+  mapNodeWithDirectives(node: HermesNode): HermesNode {
     const directives = [];
     for (const child of node.body) {
       if (child.type === 'ExpressionStatement' && child.directive != null) {
@@ -146,12 +161,12 @@ class HermesToBabelAdapter extends HermesASTAdapter {
     return node;
   }
 
-  mapIdentifier(node) {
+  mapIdentifier(node: HermesNode): HermesNode {
     node.loc.identifierName = node.name;
     return this.mapNodeDefault(node);
   }
 
-  mapTemplateElement(node) {
+  mapTemplateElement(node: HermesNode): HermesNode {
     // Adjust start loc to exclude "`" at beginning of template literal if this is the first quasi,
     // otherwise exclude "}" from previous expression.
     const startCharsToExclude = 1;
@@ -182,10 +197,10 @@ class HermesToBabelAdapter extends HermesASTAdapter {
     };
   }
 
-  mapGenericTypeAnnotation(node) {
+  mapGenericTypeAnnotation(node: HermesNode): HermesNode {
     // Convert simple `this` generic type to ThisTypeAnnotation
     if (
-      node.typeParameters === null &&
+      node.typeParameters == null &&
       node.id.type === 'Identifier' &&
       node.id.name === 'this'
     ) {
@@ -200,7 +215,7 @@ class HermesToBabelAdapter extends HermesASTAdapter {
     return this.mapNodeDefault(node);
   }
 
-  mapSymbolTypeAnnotation(node) {
+  mapSymbolTypeAnnotation(node: HermesNode): HermesNode {
     return {
       type: 'GenericTypeAnnotation',
       loc: node.loc,
@@ -217,7 +232,7 @@ class HermesToBabelAdapter extends HermesASTAdapter {
     };
   }
 
-  mapProperty(node) {
+  mapProperty(node: HermesNode): HermesNode {
     const key = this.mapNode(node.key);
     const value = this.mapNode(node.value);
 
@@ -261,7 +276,7 @@ class HermesToBabelAdapter extends HermesASTAdapter {
     }
   }
 
-  mapMethodDefinition(node) {
+  mapMethodDefinition(node: HermesNode): HermesNode {
     const key = this.mapNode(node.key);
     const value = this.mapNode(node.value);
 
@@ -298,7 +313,7 @@ class HermesToBabelAdapter extends HermesASTAdapter {
     };
   }
 
-  mapRestElement(node) {
+  mapRestElement(node: HermesNode): HermesNode {
     const restElement = this.mapNodeDefault(node);
 
     // Hermes puts type annotations on rest elements on the argument node,
@@ -312,7 +327,7 @@ class HermesToBabelAdapter extends HermesASTAdapter {
     return restElement;
   }
 
-  mapImportExpression(node) {
+  mapImportExpression(node: HermesNode): HermesNode {
     // Babel expects ImportExpression to be structued as a regular
     // CallExpression where the callee is an Import node.
     return {
@@ -330,7 +345,20 @@ class HermesToBabelAdapter extends HermesASTAdapter {
     };
   }
 
-  mapFunction(node) {
+  mapJSXStringLiteral(node: HermesNode): HermesNode {
+    // Babel expects StringLiterals in JSX,
+    // but Hermes uses JSXStringLiteral to attach the raw value without
+    // having to internally attach it to every single string literal.
+    return {
+      type: 'StringLiteral',
+      loc: node.loc,
+      start: node.start,
+      end: node.end,
+      value: node.value,
+    };
+  }
+
+  mapFunction(node: HermesNode): HermesNode {
     // Remove the first parameter if it is a this-type annotation,
     // which is not recognized by Babel.
     if (node.params.length !== 0 && node.params[0].name === 'this') {
@@ -339,6 +367,17 @@ class HermesToBabelAdapter extends HermesASTAdapter {
 
     return this.mapNodeDefault(node);
   }
-}
 
-module.exports = HermesToBabelAdapter;
+  /**
+   * If Babel (the version we target) does not support a type annotation we
+   * parse, we need to return some other valid type annotation in its place.
+   */
+  mapUnsupportedTypeAnnotation(node: HermesNode): HermesNode {
+    return {
+      type: 'AnyTypeAnnotation',
+      loc: node.loc,
+      start: node.start,
+      end: node.end,
+    };
+  }
+}

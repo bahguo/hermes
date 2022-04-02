@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -18,17 +18,11 @@ using namespace hermes::vm;
 // and only in dbg, where we can set the test page size.
 
 #ifndef NDEBUG
-#ifdef HERMESVM_GC_NONCONTIG_GENERATIONAL
 
 namespace {
 
 static constexpr size_t kK = 1024;
 static constexpr size_t kM = kK * kK;
-
-MetadataTableForTests getMetadataTable() {
-  static const Metadata storage[] = {Metadata()};
-  return MetadataTableForTests(storage);
-}
 
 // The arguments are <heap size, page size>
 struct GCInitTests
@@ -43,7 +37,7 @@ TEST_P(GCInitTests, InitSizeTest) {
                         .withMaxHeapSize(32 * kM)
                         .build();
 
-  auto runtime = DummyRuntime::create(getMetadataTable(), config);
+  auto runtime = DummyRuntime::create(config);
   oscompat::reset_test_page_size();
 }
 
@@ -66,5 +60,4 @@ INSTANTIATE_TEST_CASE_P(
 
 } // namespace
 
-#endif
 #endif

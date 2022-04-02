@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -110,7 +110,8 @@ struct VTable {
   /// isn't.
   using FinalizeCallback = void(GCCell *, GC *gc);
   FinalizeCallback *const finalize_;
-  /// Call gc functions on weak-reference-holding objects.
+  /// Call GC functions on weak-reference-holding objects. In a concurrent GC,
+  /// guaranteed to be called while the weak ref mutex is held.
   using MarkWeakCallback = void(GCCell *, WeakRefAcceptor &);
   MarkWeakCallback *const markWeak_;
   /// Report if there is any size contribution from an object beyond the GC.
@@ -121,15 +122,17 @@ struct VTable {
   /// This should not modify the cell.
   using TrimSizeCallback = gcheapsize_t(const GCCell *);
   TrimSizeCallback *const trimSize_;
-  /// Trim the cell, decreasing any size-related fields inside the cell.
-  using TrimCallback = void(GCCell *);
-  TrimCallback *const trim_;
-  /// Calculate the external memory size.
-  using ExternalMemorySize = gcheapsize_t(const GCCell *);
-  ExternalMemorySize *const externalMemorySize_;
 
   /// Any metadata associated with heap snapshots.
   const HeapSnapshotMetadata snapshotMetaData;
+
+  /// Static array storing the VTable corresponding to each CellKind. This is
+  /// initialized by buildMetadataTable.
+  static std::array<const VTable *, kNumCellKinds> vtableArray;
+
+  static const VTable *getVTable(CellKind c) {
+    return vtableArray[static_cast<size_t>(c)];
+  }
 
   constexpr explicit VTable(
       CellKind kind,
@@ -138,8 +141,6 @@ struct VTable {
       MarkWeakCallback *markWeak = nullptr,
       MallocSizeCallback *mallocSize = nullptr,
       TrimSizeCallback *trimSize = nullptr,
-      TrimCallback *trim = nullptr,
-      ExternalMemorySize *externalMemorySize = nullptr,
       HeapSnapshotMetadata snapshotMetaData =
           HeapSnapshotMetadata{
               HeapSnapshot::NodeType::Object,
@@ -153,8 +154,6 @@ struct VTable {
         markWeak_(markWeak),
         mallocSize_(mallocSize),
         trimSize_(trimSize),
-        trim_(trim),
-        externalMemorySize_(externalMemorySize),
         snapshotMetaData(snapshotMetaData) {}
 
   bool isVariableSize() const {
@@ -176,11 +175,9 @@ struct VTable {
     finalize_(cell, gc);
   }
 
-  void markWeakIfExists(GCCell *cell, WeakRefAcceptor &acceptor) const {
+  MarkWeakCallback *getMarkWeakCallback() const {
     assert(isValid());
-    if (markWeak_) {
-      markWeak_(cell, acceptor);
-    }
+    return markWeak_;
   }
 
   size_t getMallocSize(GCCell *cell) const {
@@ -192,24 +189,11 @@ struct VTable {
   /// trimming. Otherwise, return \p origSize.
   gcheapsize_t getTrimmedSize(GCCell *cell, size_t origSize) const {
     const size_t trimmedSize =
-        trim_ ? heapAlignSize(trimSize_(cell)) : origSize;
+        trimSize_ ? heapAlignSize(trimSize_(cell)) : origSize;
     assert(
         isValid() && trimmedSize <= origSize &&
         "Growing objects is not supported.");
     return trimmedSize;
-  }
-
-  void trim(GCCell *cell) const {
-    assert(
-        isValid() && isVariableSize() &&
-        "A trimmable cell must be variable sized");
-    trim_(cell);
-  }
-
-  /// If the cell has any associated external memory, return the size (in bytes)
-  /// of that external memory, else zero.
-  gcheapsize_t externalMemorySize(const GCCell *cell) const {
-    return externalMemorySize_ ? (*externalMemorySize_)(cell) : 0;
   }
 
   /// \return true iff this VTable is valid.

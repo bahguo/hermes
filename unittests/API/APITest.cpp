@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -50,8 +50,6 @@ class HermesRuntimeTest : public HermesRuntimeTestBase {
                                   .withES6Promise(true)
                                   .build()) {}
 };
-
-using HermesRuntimeDeathTest = HermesRuntimeTest;
 
 // In JSC there's a bug where host functions are always ran with a this in
 // nonstrict mode so this must be a hermes only test. See
@@ -212,9 +210,19 @@ TEST_F(HermesRuntimeTest, NoCorruptionOnJSError) {
 // use the ASSERT_DEATH macros when testing that implementation.
 // Asserts are compiled out of opt builds
 #if !defined(NDEBUG) && defined(ASSERT_DEATH)
-TEST_F(HermesRuntimeDeathTest, ValueTest) {
-  ASSERT_DEATH(eval("'slay'").getNumber(), "Assertion.*isNumber");
-  ASSERT_DEATH(eval("123").getString(*rt), "Assertion.*isString");
+TEST(HermesRuntimeDeathTest, ValueTest) {
+  auto eval = [](Runtime &rt, const char *code) {
+    return rt.global().getPropertyAsFunction(rt, "eval").call(rt, code);
+  };
+
+  ASSERT_DEATH(
+      eval(*makeHermesRuntime(), "'slay'").getNumber(), "Assertion.*isNumber");
+  ASSERT_DEATH(
+      {
+        auto rt = makeHermesRuntime();
+        eval(*rt, "123").getString(*rt);
+      },
+      "Assertion.*isString");
 }
 #endif
 
@@ -258,6 +266,97 @@ TEST_F(HermesRuntimeTest, ReferencesCanEscapeScope) {
     v = std::move(o2);
   });
   EXPECT_EQ(rootsDelta, 1);
+}
+
+TEST(HermesWatchTimeLimitTest, WatchTimeLimit) {
+  // Some code that exercies the async break checks.
+  const char *forABit = "var t = Date.now(); while (Date.now() < t + 100) {}";
+  const char *forEver = "for (;;){}";
+  {
+    // Single runtime with ~20 minute limit that will not be reached.
+    auto rt = makeHermesRuntime();
+    rt->watchTimeLimit(1234567);
+    rt->evaluateJavaScript(std::make_unique<StringBuffer>(forABit), "");
+  }
+  {
+    // Multiple runtimes, but neither will time out.
+    auto rt1 = makeHermesRuntime();
+    rt1->watchTimeLimit(1234567);
+    auto rt2 = makeHermesRuntime();
+    rt2->watchTimeLimit(1234567 / 2);
+    rt1->evaluateJavaScript(std::make_unique<StringBuffer>(forABit), "");
+    rt2->evaluateJavaScript(std::make_unique<StringBuffer>(forABit), "");
+  }
+  {
+    // Timeout in one of the runtimes.
+    auto rt1 = makeHermesRuntime();
+    rt1->watchTimeLimit(1234567);
+    auto rt2 = makeHermesRuntime();
+    rt2->watchTimeLimit(123);
+    ASSERT_THROW(
+        rt2->evaluateJavaScript(std::make_unique<StringBuffer>(forEver), ""),
+        JSIException);
+  }
+}
+
+TEST(HermesRuntimeCrashManagerTest, CrashGetStackTrace) {
+  class CrashManagerImpl : public hermes::vm::CrashManager {
+   public:
+    void registerMemory(void *, size_t) override {}
+    void unregisterMemory(void *) override {}
+    void setCustomData(const char *, const char *) override {}
+    void removeCustomData(const char *) override {}
+    void setContextualCustomData(const char *, const char *) override {}
+    void removeContextualCustomData(const char *) override {}
+    CallbackKey registerCallback(CallbackFunc cb) override {
+      auto key = callbacks.size();
+      callbacks.push_back(std::move(cb));
+      return key;
+    }
+    void unregisterCallback(CallbackKey /*key*/) override {}
+    void setHeapInfo(const HeapInformation & /*heapInfo*/) override {}
+
+    std::vector<CallbackFunc> callbacks;
+  };
+
+  auto cm = std::make_shared<CrashManagerImpl>();
+  auto rt = makeHermesRuntime(
+      hermes::vm::RuntimeConfig::Builder().withCrashMgr(cm).build());
+  Function runCrashCallbacks = Function::createFromHostFunction(
+      *rt,
+      PropNameID::forAscii(*rt, "runCrashCallbacks"),
+      0,
+      [&](Runtime &rt, const Value &, const Value *, size_t) {
+        // Create a temporary file to write the crash manager data to.
+        FILE *f = tmpfile();
+        for (const auto &cb : cm->callbacks)
+          cb(fileno(f));
+        const auto sz = ftell(f);
+        rewind(f);
+        // Dump the crash manager data to a std::string.
+        std::string out;
+        out.resize(sz);
+        const auto readsz = fread(&out[0], 1, sz, f);
+        EXPECT_EQ(readsz, sz);
+        fclose(f);
+        return String::createFromUtf8(rt, std::move(out));
+      });
+  rt->global().setProperty(
+      *rt, "runCrashCallbacks", std::move(runCrashCallbacks));
+  std::string jsCode = R"(
+function baz(){ return runCrashCallbacks(); }
+function bar(){ return baz(); }
+function foo(){ return bar(); }
+var out = foo();
+// Extract just the source locations of the call stack.
+JSON.stringify(JSON.parse(out).callstack.map(x => x.SourceLocation));
+)";
+  auto buf = std::make_shared<StringBuffer>(std::move(jsCode));
+  std::string callstack =
+      rt->evaluateJavaScript(buf, "crashCode.js").asString(*rt).utf8(*rt);
+  const char *expected =
+      "[\"crashCode.js:2:41\",\"crashCode.js:3:27\",\"crashCode.js:4:27\",\"crashCode.js:5:14\",null]";
+  EXPECT_EQ(callstack, expected);
 }
 
 TEST_F(HermesRuntimeTest, HostObjectWithOwnProperties) {
@@ -438,6 +537,21 @@ TEST_F(HermesRuntimeTest, HostObjectAsParentTest) {
       eval("var subClass = {__proto__: ho}; subClass.prop1 == 10;").getBool());
 }
 
+TEST_F(HermesRuntimeTest, PropNameIDFromSymbol) {
+  auto strProp = PropNameID::forAscii(*rt, "a");
+  auto secretProp = PropNameID::forSymbol(
+      *rt, eval("var secret = Symbol('a'); secret;").getSymbol(*rt));
+  auto globalProp =
+      PropNameID::forSymbol(*rt, eval("Symbol.for('a');").getSymbol(*rt));
+  auto x =
+      eval("({a : 'str', [secret] : 'secret', [Symbol.for('a')] : 'global'});")
+          .getObject(*rt);
+
+  EXPECT_EQ(x.getProperty(*rt, strProp).getString(*rt).utf8(*rt), "str");
+  EXPECT_EQ(x.getProperty(*rt, secretProp).getString(*rt).utf8(*rt), "secret");
+  EXPECT_EQ(x.getProperty(*rt, globalProp).getString(*rt).utf8(*rt), "global");
+}
+
 TEST_F(HermesRuntimeTest, HasComputedTest) {
   // The only use of JSObject::hasComputed() is in HermesRuntimeImpl,
   // so we test its Proxy support here, instead of from JS.
@@ -471,45 +585,6 @@ TEST_F(HermesRuntimeTest, GlobalObjectTest) {
   EXPECT_EQ(eval("f(10)").getNumber(), 15);
 }
 
-TEST_F(HermesRuntimeTest, WithoutAllowFunctionToString) {
-  std::string fooFuncDef = "function foo() { 'bar'; }";
-  eval(fooFuncDef.c_str());
-  EXPECT_EQ(
-      eval("foo.toString()").getString(*rt).utf8(*rt),
-      "function foo() { [bytecode] }");
-
-  std::string fooLazyFuncDef =
-      "function fooLazy() { '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'; }";
-  eval(fooLazyFuncDef.c_str());
-  EXPECT_EQ(
-      eval("fooLazy.toString()").getString(*rt).utf8(*rt),
-      "function fooLazy() { [bytecode] }");
-}
-
-class HermesRuntimeTestWithAllowFunctionToString
-    : public HermesRuntimeTestBase {
- public:
-  HermesRuntimeTestWithAllowFunctionToString()
-      : HermesRuntimeTestBase(
-            ::hermes::vm::RuntimeConfig::Builder()
-                .withES6Proxy(true)
-                .withES6Promise(true)
-                .withAllowFunctionToStringWithRuntimeSource(true)
-                .build()) {}
-};
-
-TEST_F(HermesRuntimeTestWithAllowFunctionToString, WithAllowFunctionToString) {
-  std::string fooFuncDef = "function foo() { 'bar'; }";
-  eval(fooFuncDef.c_str());
-  EXPECT_EQ(eval("foo.toString()").getString(*rt).utf8(*rt), fooFuncDef);
-
-  std::string fooLazyFuncDef =
-      "function fooLazy() { '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'; }";
-  eval(fooLazyFuncDef.c_str());
-  EXPECT_EQ(
-      eval("fooLazy.toString()").getString(*rt).utf8(*rt), fooLazyFuncDef);
-}
-
 class HermesRuntimeTestWithDisableGenerator : public HermesRuntimeTestBase {
  public:
   HermesRuntimeTestWithDisableGenerator()
@@ -540,6 +615,55 @@ TEST_F(HermesRuntimeTestWithDisableGenerator, WithDisableGenerator) {
     FAIL() << "Expected JSIException";
   } catch (const facebook::jsi::JSIException &err) {
   }
+}
+
+TEST_F(HermesRuntimeTest, DiagnosticHandlerTestError) {
+  using DiagnosticHandler = hermes::DiagnosticHandler;
+
+  struct BufferingDiagnosticHandler : DiagnosticHandler {
+    void handle(const DiagnosticHandler::Diagnostic &d) {
+      ds.push_back(d);
+    }
+    std::vector<DiagnosticHandler::Diagnostic> ds;
+  } diagHandler;
+  std::string bytecode;
+  ASSERT_FALSE(hermes::compileJS("x++1", "", bytecode, true, &diagHandler));
+  ASSERT_EQ(1, diagHandler.ds.size());
+  EXPECT_EQ(DiagnosticHandler::Error, diagHandler.ds[0].kind);
+  EXPECT_EQ(1, diagHandler.ds[0].line);
+  EXPECT_EQ(4, diagHandler.ds[0].column);
+}
+
+TEST_F(HermesRuntimeTest, DiagnosticHandlerTestWarning) {
+  using DiagnosticHandler = hermes::DiagnosticHandler;
+
+  struct BufferingDiagnosticHandler : DiagnosticHandler {
+    void handle(const DiagnosticHandler::Diagnostic &d) {
+      ds.push_back(d);
+    }
+    std::vector<DiagnosticHandler::Diagnostic> ds;
+  } diagHandler;
+  std::string bytecode;
+  // Succeeds with a warning + associated note.
+  ASSERT_TRUE(
+      hermes::compileJS("({a:1,a:2})", "", bytecode, true, &diagHandler));
+  ASSERT_EQ(2, diagHandler.ds.size());
+
+  // warning: the property "a" was set multiple times in the object definition.
+  EXPECT_EQ(DiagnosticHandler::Warning, diagHandler.ds[0].kind);
+  EXPECT_EQ(1, diagHandler.ds[0].line);
+  EXPECT_EQ(7, diagHandler.ds[0].column);
+  ASSERT_EQ(1, diagHandler.ds[0].ranges.size());
+  EXPECT_EQ(6, diagHandler.ds[0].ranges[0].first);
+  EXPECT_EQ(9, diagHandler.ds[0].ranges[0].second);
+
+  // The first definition was here.
+  EXPECT_EQ(DiagnosticHandler::Note, diagHandler.ds[1].kind);
+  EXPECT_EQ(1, diagHandler.ds[1].line);
+  EXPECT_EQ(3, diagHandler.ds[1].column);
+  ASSERT_EQ(1, diagHandler.ds[1].ranges.size());
+  EXPECT_EQ(2, diagHandler.ds[1].ranges[0].first);
+  EXPECT_EQ(5, diagHandler.ds[1].ranges[0].second);
 }
 
 } // namespace

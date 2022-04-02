@@ -1,4 +1,4 @@
-# Copyright (c) Facebook, Inc. and its affiliates.
+# Copyright (c) Meta Platforms, Inc. and affiliates.
 #
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
@@ -12,11 +12,10 @@ set(source_files
   CellKind.cpp
   CheckHeapWellFormedAcceptor.cpp
   CodeBlock.cpp
-  Deserializer.cpp
   DictPropertyMap.cpp
   Domain.cpp
+  DummyObject.cpp
   GCBase.cpp
-  GCCell.cpp
   OrderedHashMap.cpp
   HandleRootOwner.cpp
   HeapSnapshot.cpp
@@ -26,6 +25,7 @@ set(source_files
   Interpreter.cpp InstLayout.inc Interpreter-slowpaths.cpp
   JSArray.cpp
   JSArrayBuffer.cpp
+  JSCallSite.cpp
   JSCallableProxy.cpp
   JSDataView.cpp
   JSDate.cpp
@@ -54,7 +54,6 @@ set(source_files
   Profiler/CodeCoverageProfiler.cpp
   Profiler/InlineCacheProfiler.cpp
   Profiler/SamplingProfilerPosix.cpp
-  Serializer.cpp
   SegmentedArray.cpp
   SerializedLiteralParser.cpp
   SingleObject.cpp
@@ -76,6 +75,7 @@ set(source_files
   JSLib/ArrayBuffer.cpp
   JSLib/ArrayIterator.cpp
   JSLib/AsyncFunction.cpp
+  JSLib/CallSite.cpp
   JSLib/DataView.cpp
   JSLib/TypedArray.cpp
   JSLib/Error.cpp
@@ -117,14 +117,7 @@ set(source_files
   JSLib/require.cpp
 )
 
-if (${HERMESVM_GCKIND} STREQUAL "NONCONTIG_GENERATIONAL")
-  list(APPEND source_files gcs/AlignedHeapSegment.cpp gcs/AlignedStorage.cpp
-                           gcs/CardTableNC.cpp gcs/FillerCell.cpp
-                           gcs/CompleteMarkState.cpp gcs/GCGeneration.cpp
-                           gcs/GCSegmentAddressIndex.cpp gcs/GenGCNC.cpp
-                           gcs/OldGenNC.cpp gcs/OldGenSegmentRanges.cpp
-                           gcs/YoungGenNC.cpp gcs/GenGCHeapSegment.cpp)
-elseif (${HERMESVM_GCKIND} STREQUAL "MALLOC")
+if (${HERMESVM_GCKIND} STREQUAL "MALLOC")
   list(APPEND source_files gcs/MallocGC.cpp gcs/FillerCell.cpp)
 elseif (${HERMESVM_GCKIND} STREQUAL "HADES")
   list(APPEND source_files
@@ -139,10 +132,6 @@ elseif (${HERMESVM_GCKIND} STREQUAL "RUNTIME")
           gcs/AlignedHeapSegment.cpp gcs/AlignedStorage.cpp
           gcs/CardTableNC.cpp gcs/FillerCell.cpp
           gcs/HadesGC.cpp
-          gcs/CompleteMarkState.cpp gcs/GCGeneration.cpp
-          gcs/GCSegmentAddressIndex.cpp gcs/GenGCNC.cpp
-          gcs/OldGenNC.cpp gcs/OldGenSegmentRanges.cpp
-          gcs/YoungGenNC.cpp gcs/GenGCHeapSegment.cpp
   )
 else()
   message(WARNING "Not linking garbage collector")
@@ -170,20 +159,28 @@ set(link_libs
   hermesADT
   hermesInst
   hermesSupport
-  hermesParser
   hermesPlatform
-  hermesPlatformIntl
-  hermesHBCBackend
   hermesInternalBytecode
+  hermesPublic
   dtoa
-  ${CORE_FOUNDATION}
 )
+
+if(HERMES_ENABLE_INTL)
+  list(APPEND link_libs hermesPlatformIntl)
+endif()
 
 add_hermes_library(hermesVMRuntime STATIC ${source_files}
     LINK_LIBS
     ${link_libs}
+    hermesHBCBackend
+    hermesParser
 )
 
-hermes_link_icu(hermesVMRuntime)
+add_hermes_library(hermesVMRuntimeLean STATIC ${source_files}
+    LINK_LIBS
+    ${link_libs}
+    hermesHBCBackendLean
+)
+target_compile_definitions(hermesVMRuntimeLean PUBLIC HERMESVM_LEAN)
 
 add_subdirectory(Instrumentation)

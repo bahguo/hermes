@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -21,7 +21,7 @@ namespace hermes {
 /// the integer are then returned.
 int32_t truncateToInt32SlowPath(double d) {
   double tmp = d; // Allow d to stay in a register.
-  uint64_t bits = safeTypeCast<double, uint64_t>(tmp);
+  uint64_t bits = llvh::DoubleToBits(tmp);
   int exp = (int)(bits >> 52) & 0x7FF;
   // A negative sign is turned into 2, a positive into 0. Subtracting from 1
   // gives us what we need.
@@ -167,3 +167,9 @@ size_t numberToString(double m, char *dest, size_t destSize) {
   return destPtr - dest - 1;
 }
 } // namespace hermes
+
+extern "C" {
+size_t hermes_numberToString(double m, char *dest, size_t destSize) {
+  return hermes::numberToString(m, dest, destSize);
+}
+}

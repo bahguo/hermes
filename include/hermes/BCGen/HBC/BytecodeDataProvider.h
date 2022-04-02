@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -21,15 +21,6 @@
 
 #include <atomic>
 #include <thread>
-
-#ifdef HERMESVM_SERIALIZE
-namespace hermes {
-namespace vm {
-class Serializer;
-class Deserializer;
-} // namespace vm
-} // namespace hermes
-#endif
 
 namespace hermes {
 namespace hbc {
@@ -94,7 +85,7 @@ class RuntimeFunctionHeader {
 };
 
 static_assert(
-    IsTriviallyCopyable<RuntimeFunctionHeader, true>::value,
+    std::is_trivially_copyable<RuntimeFunctionHeader>::value,
     "RuntimeFunctionHeader should be trivially copyable");
 
 /// Base class designed to provide bytecode data. We use this class
@@ -136,6 +127,10 @@ class BCProviderBase {
   /// Table which indicates where to find the different CommonJS modules.
   /// List of unsorted pairs from {global module ID => function index}.
   llvh::ArrayRef<std::pair<uint32_t, uint32_t>> cjsModuleTableStatic_{};
+
+  /// Table which indicates where to find the source string of functions.
+  /// List of unsorted pairs from {function ID => string offset}.
+  llvh::ArrayRef<std::pair<uint32_t, uint32_t>> functionSourceTable_{};
 
   /// Pointer to the global debug info. This will not be eagerly initialized
   /// when loading bytecode from a buffer. Instead it will be constructed
@@ -196,6 +191,9 @@ class BCProviderBase {
   llvh::ArrayRef<std::pair<uint32_t, uint32_t>> getCJSModuleTableStatic()
       const {
     return cjsModuleTableStatic_;
+  }
+  llvh::ArrayRef<std::pair<uint32_t, uint32_t>> getFunctionSourceTable() const {
+    return functionSourceTable_;
   }
   const std::string getErrorStr() const {
     return errstr_;
@@ -301,21 +299,6 @@ class BCProviderBase {
   /// given function under a virtual scenario where no dedup happens, i.e.
   /// by accumulating the total size of all bytecode prior to this function.
   uint32_t getVirtualOffsetForFunction(uint32_t functionID) const;
-
-#ifdef HERMESVM_SERIALIZE
-  /// Serialize this BCProvider.
-  virtual void serialize(vm::Serializer &s) const = 0;
-#endif
-
-#ifndef HERMESVM_LEAN
-  /// Return a reference to the source code for a function. In general this will
-  /// NOT be available, however it may be when compiling from source at
-  /// run-time, and lazy compilation or Function.toString() returning soruce is
-  /// enabled.
-  virtual llvh::SMRange getFunctionSourceRange(uint32_t functionID) const {
-    return {};
-  }
-#endif
 };
 
 /// BCProviderFromBuffer will be used when we are loading bytecode from
@@ -512,15 +495,6 @@ class BCProviderFromBuffer final : public BCProviderBase {
   bool isLazy() const override {
     return false;
   }
-
-#ifdef HERMESVM_SERIALIZE
-  /// Serialize this BCProviderFromBuffer.
-  void serialize(vm::Serializer &s) const override;
-
-  /// Read serialized data and create a BCProviderFromBuffer. \return pointer to
-  /// the newly created BCProviderFromBuffer.
-  static std::unique_ptr<BCProviderFromBuffer> deserialize(vm::Deserializer &d);
-#endif
 };
 
 } // namespace hbc

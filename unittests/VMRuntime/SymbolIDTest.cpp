@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -8,7 +8,6 @@
 #include "gtest/gtest.h"
 
 #include "TestHelpers.h"
-#include "hermes/Support/OSCompat.h"
 #include "hermes/VM/StringPrimitive.h"
 #include "hermes/VM/SymbolID.h"
 
@@ -47,19 +46,19 @@ TEST_F(SymbolIDRuntimeTest, WriteBarrier) {
   MutableHandle<StringPrimitive> str{runtime};
   for (JSArray::size_type i = 0; i < 100; i++) {
     GCScopeMarkerRAII marker{runtime};
-    std::string iAsStr = oscompat::to_string(i);
+    std::string iAsStr = std::to_string(i);
     auto strRes = StringPrimitive::create(
         runtime, ASCIIRef{iAsStr.c_str(), iAsStr.length()});
     ASSERT_FALSE(isException(strRes));
     str = vmcast<StringPrimitive>(*strRes);
     auto symbolRes =
-        runtime->getIdentifierTable().createNotUniquedSymbol(runtime, str);
+        runtime.getIdentifierTable().createNotUniquedSymbol(runtime, str);
     ASSERT_FALSE(isException(symbolRes));
     symbol = *symbolRes;
     JSArray::setElementAt(array, runtime, i, symbol);
   }
   // Move everything to OG.
-  runtime->collect("test");
+  runtime.collect("test");
   // Copy symbols between arrays, and delete the symbols in the old array.
   // Do some allocation along the way to try and start a second OG collection.
   // Repeat this a few times to increase confidence that a write barrier happens
@@ -69,7 +68,7 @@ TEST_F(SymbolIDRuntimeTest, WriteBarrier) {
       symbol = array->at(runtime, i).getSymbol();
       JSArray::setElementAt(otherArray, runtime, i, symbol);
       // Set to undefined to execute a write barrier.
-      JSArray::setElementAt(array, runtime, i, runtime->getUndefinedValue());
+      JSArray::setElementAt(array, runtime, i, runtime.getUndefinedValue());
       // Create some garbage to try and start an OG collection.
       for (int allocs = 0; allocs < 100; allocs++) {
         JSObject::create(runtime);

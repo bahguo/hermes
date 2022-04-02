@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright (c) Facebook, Inc. and its affiliates.
+# Copyright (c) Meta Platforms, Inc. and affiliates.
 #
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
@@ -21,6 +21,7 @@ def main():
         # Copy binaries from pkg_resources into the temporary directory.
         resources = [
             ("hermes", "hermes"),
+            ("hermesc", "hermesc"),
             (args.hvm_filename, args.hvm_filename),
             ("icudt/stubdata/icudt55l.dat", "icudt55l.dat"),
         ]
@@ -44,6 +45,7 @@ def main():
             args.keep_tmp,
             args.show_all,
             args.lazy,
+            args.test_intl,
         )
 
 

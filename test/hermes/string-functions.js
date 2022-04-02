@@ -1,5 +1,5 @@
 /**
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -223,6 +223,8 @@ print(JSON.stringify(result));
 print(result[1], result[7]);
 // CHECK-NEXT: ["A",null,"B","bold","/","B","and",null,"CODE","coded","/","CODE",""]
 // CHECK-NEXT: undefined undefined
+print('  '.split(/()()()()()()()()()()/).length);
+// CHECK-NEXT: 12
 
 // Ensure we step over surrogate pairs iff Unicode is set.
 print("\u{12345}".split(/(?:)/u).length);

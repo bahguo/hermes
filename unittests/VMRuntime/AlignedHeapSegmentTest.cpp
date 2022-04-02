@@ -1,11 +1,11 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
  */
 
-#ifdef HERMESVM_GC_NONCONTIG_GENERATIONAL
+#ifndef HERMESVM_GC_MALLOC
 
 #include "gtest/gtest.h"
 
@@ -93,7 +93,7 @@ TEST_F(AlignedHeapSegmentTest, FullSize) {
   AllocResult res = s.alloc(s.size());
 
   EXPECT_TRUE(res.success);
-  EXPECT_NE(nullptr, res.ptr);
+  EXPECT_TRUE(nullptr != res.ptr);
 }
 
 TEST_F(AlignedHeapSegmentTest, SmallSize) {
@@ -105,18 +105,18 @@ TEST_F(AlignedHeapSegmentTest, SmallSize) {
 
   AllocResult failed = s.alloc(heapAlignSize(s.available() + 1));
   EXPECT_FALSE(failed.success);
-  EXPECT_EQ(nullptr, failed.ptr);
+  EXPECT_TRUE(nullptr == failed.ptr);
 
   AllocResult res = s.alloc(PS);
   EXPECT_TRUE(res.ptr);
-  EXPECT_NE(nullptr, res.ptr);
+  EXPECT_TRUE(nullptr != res.ptr);
 }
 
 TEST_F(AlignedHeapSegmentTest, ResetLevel) {
   s.growToLimit();
 
   // Make the level different from the start of the region.
-  AllocResult res = s.alloc(sizeof(GCCell));
+  AllocResult res = s.alloc(cellSize<GCCell>());
   ASSERT_TRUE(res.success);
   ASSERT_NE(s.start(), s.level());
 
@@ -196,4 +196,4 @@ TEST_F(AlignedHeapSegmentDeathTest, GrowToTooBig) {
 
 } // namespace
 
-#endif // HERMESVM_GC_NONCONTIG_GENERATIONAL
+#endif // !HERMESVM_GC_MALLOC

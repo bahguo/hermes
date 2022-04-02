@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -20,9 +20,9 @@ namespace vm {
 /// An acceptor for checking that the heap is full of valid objects, with
 /// pointers to valid objects.
 struct CheckHeapWellFormedAcceptor final : public RootAndSlotAcceptorDefault,
-                                           public WeakRootAcceptorDefault {
+                                           public WeakAcceptorDefault {
   using RootAndSlotAcceptorDefault::accept;
-  using WeakRootAcceptorDefault::acceptWeak;
+  using WeakAcceptorDefault::acceptWeak;
 
   explicit CheckHeapWellFormedAcceptor(GCBase &gc);
 

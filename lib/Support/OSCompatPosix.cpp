@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -491,10 +491,14 @@ static bool overlap(uintptr_t a, size_t asize, uintptr_t b, size_t bsize) {
 std::vector<std::string> get_vm_protect_modes(const void *p, size_t sz) {
   std::vector<std::string> modes;
 #if defined(__linux__)
-  FILE *fp = fopen("/proc/self/maps", "r");
   unsigned long long begin;
   unsigned long long end;
   char mode[4 + 1];
+  FILE *fp = fopen("/proc/self/maps", "r");
+  if (!fp) {
+    modes.emplace_back("unknown");
+    return modes;
+  }
   while (fscanf(fp, "%llx-%llx %4s", &begin, &end, mode) == 3) {
     if (overlap(
             reinterpret_cast<uintptr_t>(p),

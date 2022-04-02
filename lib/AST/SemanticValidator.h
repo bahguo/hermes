@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -36,12 +36,24 @@ class Keywords {
   const UniqueString *const identThis;
   /// Identifier for "use strict".
   const UniqueString *const identUseStrict;
+  /// Identifier for "show source ".
+  const UniqueString *const identShowSource;
+  /// Identifier for "hide source ".
+  const UniqueString *const identHideSource;
+  /// Identifier for "sensitive".
+  const UniqueString *const identSensitive;
   /// Identifier for "var".
   const UniqueString *const identVar;
   /// Identifier for "let".
   const UniqueString *const identLet;
   /// Identifier for "const".
   const UniqueString *const identConst;
+  /// "+".
+  const UniqueString *const identPlus;
+  /// "-".
+  const UniqueString *const identMinus;
+  /// "=".
+  const UniqueString *const identAssign;
 
   Keywords(Context &astContext);
 };
@@ -79,16 +91,6 @@ class SemanticValidator {
   /// erroring on features which we parse but don't compile and transforming
   /// the AST. False if we just want to validate the AST.
   bool compile_;
-
-#ifndef NDEBUG
-  /// Our parser detects strictness and initializes the flag in every node,
-  /// but if we are reading an external AST, we must look for "use strict" and
-  /// initialize the flag ourselves here.
-  /// For consistency we always perform the detection, but in debug mode we also
-  /// want to ensure that our results match what the parser generated. This
-  /// flag indicates whether strictness is preset or not.
-  bool strictnessIsPreset_{false};
-#endif
 
   /// The maximum AST nesting level. Once we reach it, we report an error and
   /// stop.
@@ -163,11 +165,13 @@ class SemanticValidator {
   void visit(ForOfStatementNode *forOf);
   void visitForInOf(LoopStatementNode *loopNode, Node *left);
 
+  void visit(BinaryExpressionNode *bin);
   void visit(AssignmentExpressionNode *assignment);
   void visit(UpdateExpressionNode *update);
 
   void visit(LabeledStatementNode *labelStmt);
 
+  void visit(BigIntLiteralNode *bigint);
   void visit(RegExpLiteralNode *regexp);
 
   void visit(TryStatementNode *tryStatement);
@@ -182,6 +186,7 @@ class SemanticValidator {
 
   void visit(ReturnStatementNode *returnStmt);
   void visit(YieldExpressionNode *yieldExpr);
+  void visit(AwaitExpressionNode *awaitExpr);
 
   void visit(UnaryExpressionNode *unaryExpr);
 
@@ -235,11 +240,10 @@ class SemanticValidator {
   void
   visitFunction(FunctionLikeNode *node, Node *id, NodeList &params, Node *body);
 
-  /// Scan a list of directives in the beginning of a program of function
+  /// Scan a list of directives in the beginning of a program or function
   /// (see ES5.1 4.1 - a directive is a statement consisting of a single
   /// string literal).
-  /// Update the flags in the function context to reflect the directives. (We
-  /// currently only recognize "use strict".)
+  /// Update the flags in the function context to reflect the directives.
   /// \return the node containing "use strict" or nullptr.
   Node *scanDirectivePrologue(NodeList &body);
 
@@ -265,10 +269,15 @@ class SemanticValidator {
   /// (used by elision).
   void validateAssignmentTarget(const Node *node);
 
-  /// A debugging method to set the strictness of a function-like node to
-  /// the curent strictness, asserting that it doesn't change if it had been
-  /// preset.
-  void updateNodeStrictness(FunctionLikeNode *node);
+  /// Set directives derived information (e.g. strictness, source visibility)
+  /// to a function-like node.
+  /// Data is retrieved from \c curFunction().
+  void setDirectiveDerivedInfo(FunctionLikeNode *node);
+
+  /// Called when the any of the source visibility directives are seen.
+  /// Only a stronger source visibility from inner function scope can override
+  /// the current source visibility set by outer function scope.
+  void tryOverrideSourceVisibility(SourceVisibility newSourceVisibility);
 
   /// Get the LabelDecorationBase depending on the node type.
   static LabelDecorationBase *getLabelDecorationBase(StatementNode *node);
@@ -300,6 +309,9 @@ class FunctionContext {
     StatementNode *targetStatement;
   };
 
+  /// The AST node for the function.
+  FunctionLikeNode *node;
+
   /// The associated seminfo object
   sem::FunctionInfo *const semInfo;
 
@@ -309,6 +321,8 @@ class FunctionContext {
   StatementNode *activeSwitchOrLoop = nullptr;
   /// Is this function in strict mode.
   bool strictMode = false;
+  /// Source visibility of this function.
+  SourceVisibility sourceVisibility{SourceVisibility::Default};
 
   /// The currently active labels in the function.
   llvh::DenseMap<NodeLabel, Label> labelMap;
@@ -316,7 +330,8 @@ class FunctionContext {
   explicit FunctionContext(
       SemanticValidator *validator,
       bool strictMode,
-      FunctionLikeNode *node);
+      FunctionLikeNode *node,
+      SourceVisibility sourceVisibility = SourceVisibility::Default);
 
   ~FunctionContext();
 

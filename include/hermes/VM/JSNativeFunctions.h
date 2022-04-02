@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -17,13 +17,7 @@ namespace hermes {
 namespace vm {
 
 #define NATIVE_FUNCTION(func) \
-  CallResult<HermesValue> func(void *, Runtime *, NativeArgs);
-#define NATIVE_FUNCTION_TYPED(func, type) \
-  template <typename T>                   \
-  CallResult<HermesValue> func(void *, Runtime *, NativeArgs);
-#define NATIVE_FUNCTION_TYPED_2(func, type, type2) \
-  template <typename T, CellKind C>                \
-  CallResult<HermesValue> func(void *, Runtime *, NativeArgs);
+  CallResult<HermesValue> func(void *, Runtime &, NativeArgs);
 #include "hermes/VM/NativeFunctions.def"
 
 /// Get a human-readable name of a native function.

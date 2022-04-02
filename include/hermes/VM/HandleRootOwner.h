@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -78,25 +78,6 @@ class HandleRootOwner {
   template <class T>
   Handle<T> makeHandle(PseudoHandle<HermesValue> &&pseudo);
 
-  /// @name Creating handles in the parent scope
-  /// @{
-  Handle<HermesValue> makeHandleInParentScope(HermesValue value);
-
-  template <class T>
-  Handle<T> makeHandleInParentScope(T *p);
-
-  template <class T>
-  Handle<T> makeHandleInParentScope(HermesValue value);
-
-  Handle<SymbolID> makeHandleInParentScope(SymbolID value);
-
-  template <class T>
-  Handle<T> makeHandleInParentScope(PseudoHandle<T> &&pseudo);
-
-  template <class T>
-  Handle<T> makeHandleInParentScope(PseudoHandle<HermesValue> &&pseudo);
-  /// @}
-
   /// Convenience function to create a MutableHandle.
   MutableHandle<HermesValue> makeMutableHandle(HermesValue value);
   /// Convenience function to create a MutableHandle from a pointer.
@@ -129,12 +110,6 @@ class HandleRootOwner {
   /// An efficient way to pass -1 to a function accepting Handle.
   static Handle<HermesValue> getNegOneValue();
 
-  /// Return the top-most \c GCScope.
-  GCScope *getTopGCScope();
-
-  /// Return the parent of the top-most \c GCScope.
-  GCScope *getTopGCScopesParent();
-
  protected:
   /// Used for efficient construction of Handle<>(..., nullptr).
   static const PinnedHermesValue nullPointer_;
@@ -159,8 +134,12 @@ class HandleRootOwner {
   /// Mark the WeakRefs in the weakRefs_ list.
   void markWeakRefs(WeakRefAcceptor &acceptor);
 
+  /// Return the top-most \c GCScope.
+  GCScope *getTopGCScope();
+
  private:
   friend class GCScope;
+  friend class GCScopeMarkerRAII;
   friend class HandleBase;
 
   /// The top-most GC scope.
@@ -172,7 +151,7 @@ class HandleRootOwner {
       GCScope *inScope,
       HermesValue value);
 
-  /// Allocate storage for a new PinnedHermesValye in the top-most GCScope and
+  /// Allocate storage for a new PinnedHermesValue in the top-most GCScope and
   /// initialize it with \p value.
   PinnedHermesValue *newPinnedHermesValue(HermesValue value);
 };
@@ -249,7 +228,7 @@ class GCScope : public GCScopeDebugBase {
   static constexpr size_t CHUNK_SIZE = 16;
 
   /// Pointer to the runtime this scope is associated with.
-  HandleRootOwner *const runtime_;
+  HandleRootOwner &runtime_;
 
 #ifndef NDEBUG
   /// Maximum number of handles the scope is allowed to allocate in debug mode.
@@ -302,7 +281,7 @@ class GCScope : public GCScopeDebugBase {
   ///   default limit. If we don't want to set a limit at all, \c UINT_MAX
   ///   should be used.
   explicit GCScope(
-      HandleRootOwner *runtime,
+      HandleRootOwner &runtime,
       const char *name = nullptr,
       unsigned handlesLimit = HERMESVM_DEBUG_MAX_GCSCOPE_HANDLES)
       : runtime_(runtime),
@@ -312,9 +291,9 @@ class GCScope : public GCScopeDebugBase {
 #ifdef HERMESVM_DEBUG_TRACK_GCSCOPE_HANDLES
         name_(name),
 #endif
-        prevScope_(runtime->topGCScope_),
+        prevScope_(runtime.topGCScope_),
         chunks_({(PinnedHermesValue *)inlineStorage_}) {
-    runtime->topGCScope_ = this;
+    runtime.topGCScope_ = this;
   }
 
   ~GCScope();
@@ -494,8 +473,8 @@ class GCScopeMarkerRAII {
 
  public:
   /// Record a marker for the currently active scope.
-  explicit GCScopeMarkerRAII(HandleRootOwner *runtime)
-      : gcScope_(runtime->getTopGCScope()), marker_(gcScope_->createMarker()) {}
+  explicit GCScopeMarkerRAII(HandleRootOwner &runtime)
+      : gcScope_(runtime.getTopGCScope()), marker_(gcScope_->createMarker()) {}
   /// Record a new a marker for the specified scope.
   explicit GCScopeMarkerRAII(GCScope &gcScope)
       : gcScope_(&gcScope), marker_(gcScope_->createMarker()) {}

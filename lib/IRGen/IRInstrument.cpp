@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -26,8 +26,8 @@ Value *IRInstrument::getIID(ESTree::Node *node) {
   auto &sem = M_->getContext().getSourceErrorManager();
   auto *buffer = sem.findBufferForLoc(start);
   uint64_t bufferId = sem.findBufferIdForLoc(start);
-  uint64_t offset = (uint64_t)(
-      (uintptr_t)start.getPointer() - (uintptr_t)buffer->getBufferStart());
+  uint64_t offset =
+      (uint64_t)((uintptr_t)start.getPointer() - (uintptr_t)buffer->getBufferStart());
 
   double id = (double)((bufferId << 32) | offset);
   return builder_.getLiteralNumber(id);

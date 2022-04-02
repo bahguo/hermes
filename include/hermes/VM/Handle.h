@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -38,10 +38,10 @@ class MutableHandle;
 ///
 /// For example:
 /// \code
-///   bool checkFlag(PseudoHandle<Foo> foo, Runtime *runtime) {
+///   bool checkFlag(PseudoHandle<Foo> foo, Runtime &runtime) {
 ///     if (foo->cheapCheck())
 ///       return true;
-///     auto fooHandle = runtime->makeHandle(std::move(foo));
+///     auto fooHandle = runtime.makeHandle(std::move(foo));
 ///     return expensiveCheck(fooHandle, runtime);
 ///  }
 /// \endcode
@@ -201,14 +201,9 @@ class HandleBase {
   }
 
  public:
-  /// Allocate a new handle in the specified GCScope.
-  explicit HandleBase(
-      GCScope *inScope,
-      HermesValue value = HermesValue::encodeUndefinedValue());
-
   /// Allocate a new handle in the current GCScope
   explicit HandleBase(
-      HandleRootOwner *runtime,
+      HandleRootOwner &runtime,
       HermesValue value = HermesValue::encodeUndefinedValue());
 
   /// Create a Handle aliasing a non-movable HermesValue without
@@ -264,7 +259,7 @@ class HandleBase {
 
 #ifdef NDEBUG
 static_assert(
-    hermes::IsTriviallyCopyable<HandleBase, true>::value &&
+    std::is_trivially_copyable<HandleBase>::value &&
         sizeof(HandleBase) == sizeof(void *),
     "Handle must fit in a register and be trivially copyable");
 #endif
@@ -309,20 +304,16 @@ class Handle : public HandleBase {
 
   explicit Handle(const HandleBase &hb, bool) : HandleBase(hb) {}
 
-  explicit Handle(HandleRootOwner *runtime, HermesValue hermesValue, bool)
+  explicit Handle(HandleRootOwner &runtime, HermesValue hermesValue, bool)
       : HandleBase(runtime, hermesValue) {}
 
  public:
   using value_type = typename HermesValueTraits<T>::value_type;
 
   /// Allocate a new handle in the current GCScope
-  explicit Handle(
-      HandleRootOwner *runtime,
-      value_type value = HermesValueTraits<T>::defaultValue())
+  explicit Handle(HandleRootOwner &runtime, value_type value)
       : HandleBase(runtime, HermesValueTraits<T>::encode(value)){};
-  explicit Handle(
-      GCScope *inScope,
-      value_type value = HermesValueTraits<T>::defaultValue())
+  explicit Handle(GCScope *inScope, value_type value)
       : HandleBase(inScope, HermesValueTraits<T>::encode(value)){};
 
   /// Create a Handle aliasing a non-movable HermesValue without
@@ -386,7 +377,7 @@ class Handle : public HandleBase {
 
   /// Allocate a Handle and initialize it with a HermesValue.
   /// Assert that value has the correct type.
-  static Handle<T> vmcast(HandleRootOwner *runtime, HermesValue hermesValue) {
+  static Handle<T> vmcast(HandleRootOwner &runtime, HermesValue hermesValue) {
     HermesValueCast<T>::assertValid(hermesValue);
     return Handle<T>(runtime, hermesValue, true);
   }
@@ -430,7 +421,7 @@ class Handle : public HandleBase {
 
 #ifdef NDEBUG
 static_assert(
-    hermes::IsTriviallyCopyable<Handle<>, true>::value &&
+    std::is_trivially_copyable<Handle<>>::value &&
         sizeof(Handle<>) == sizeof(void *),
     "Handle must fit in a register and be trivially copyable");
 #endif
@@ -452,7 +443,7 @@ class MutableHandle : public Handle<T> {
 
   /// Allocate a new handle in the current GCScope
   explicit MutableHandle(
-      HandleRootOwner *runtime,
+      HandleRootOwner &runtime,
       value_type value = HermesValueTraits<T>::defaultValue())
       : Handle<T>(runtime, value) {}
 
@@ -533,7 +524,7 @@ namespace llvh {
 
 // Instantiating Optional with a T "isPodLike" will result in a specialized
 // OptionalStorage class without move ctor and would only copy T. Since the
-// PseudoHandle is not copyable we spcialized the trait to be always false.
+// PseudoHandle is not copyable we specialized the trait to be always false.
 template <typename T>
 struct isPodLike<hermes::vm::PseudoHandle<T>> {
   static const bool value = false;

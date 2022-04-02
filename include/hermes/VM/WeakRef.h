@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -8,7 +8,6 @@
 #ifndef HERMES_VM_WEAKREF_H
 #define HERMES_VM_WEAKREF_H
 
-#include "hermes/VM/Deserializer.h"
 #include "hermes/VM/GC.h"
 #include "hermes/VM/GCPointer-inline.h"
 #include "hermes/VM/GCPointer.h"
@@ -18,6 +17,35 @@ namespace hermes {
 namespace vm {
 
 class HandleRootOwner;
+
+/// This is a concrete base of \c WeakRef<T> that can be passed to concrete
+/// functions in GC.
+class WeakRefBase {
+ protected:
+  WeakRefSlot *slot_;
+  WeakRefBase(WeakRefSlot *slot) : slot_(slot) {}
+
+ public:
+  /// \return true if the referenced object hasn't been freed.
+  bool isValid() const {
+    return isSlotValid(slot_);
+  }
+
+  /// \return true if the given slot stores a non-empty value.
+  static bool isSlotValid(const WeakRefSlot *slot) {
+    assert(slot && "slot must not be null");
+    return slot->hasValue();
+  }
+
+  /// \return a pointer to the slot used by this WeakRef.
+  /// Used primarily when populating a DenseMap with WeakRef keys.
+  WeakRefSlot *unsafeGetSlot() {
+    return slot_;
+  }
+  const WeakRefSlot *unsafeGetSlot() const {
+    return slot_;
+  }
+};
 
 /// This class encapsulates a weak reference - a reference that does not cause
 /// the object it points to to be retained by the GC. The weak ref is considered
@@ -29,9 +57,7 @@ template <class T>
 class WeakRef : public WeakRefBase {
  public:
   using Traits = HermesValueTraits<T>;
-  explicit WeakRef(
-      GC *gc,
-      typename Traits::value_type value = Traits::defaultValue())
+  explicit WeakRef(GC *gc, typename Traits::value_type value)
       : WeakRefBase(gc->allocWeakSlot(Traits::encode(value))) {
     HermesValueCast<T>::assertValid(slot_->value());
   }
@@ -73,10 +99,10 @@ class WeakRef : public WeakRefBase {
   }
 
   /// Same as \c unsafeGetOptional, but without a read barrier to the GC.
-  /// Do not use this unless it is within a signal handler or on a
-  /// non-mutator thread. If you call this in normal VM operations, the pointer
-  /// might be garbage collected from underneath you at some time in the future,
-  /// even if it's placed in a handle.
+  /// Do not use this unless it is within a signal handler or in the GC itself.
+  /// If you call this in normal VM operations, the pointer might be garbage
+  /// collected from underneath you at some time in the future, even if it's
+  /// placed in a handle.
   OptValue<typename Traits::value_type> unsafeGetOptionalNoReadBarrier() const {
     if (!isValid()) {
       return OptValue<typename Traits::value_type>(llvh::None);
@@ -87,7 +113,7 @@ class WeakRef : public WeakRefBase {
   /// This function returns the stored HermesValue and wraps it into a new
   /// handle, ensuring that it cannot be freed while the handle is alive.
   /// If the weak reference is not live, returns None.
-  llvh::Optional<Handle<T>> get(HandleRootOwner *runtime, GC *gc) const {
+  llvh::Optional<Handle<T>> get(HandleRootOwner &runtime, GC *gc) const {
     if (const auto optValue = unsafeGetOptional(gc)) {
       return Handle<T>::vmcast(runtime, Traits::encode(optValue.getValue()));
     }
@@ -110,81 +136,6 @@ getNoHandle(const WeakRef<T> &wr, GC *gc) {
   }
   return nullptr;
 }
-
-class WeakRootBase {
- protected:
-  explicit WeakRootBase() : ptr_() {}
-  explicit WeakRootBase(std::nullptr_t) : ptr_() {}
-  explicit WeakRootBase(GCPointerBase::StorageType ptr) : ptr_(ptr) {}
-  explicit WeakRootBase(const WeakRootBase &that) : ptr_(that.ptr_) {}
-
-  void *get(PointerBase *base, GC *gc) const {
-    GCCell *ptr = GCPointerBase::storageTypeToPointer(ptr_, base);
-    gc->weakRefReadBarrier(ptr);
-    return ptr;
-  }
-
- public:
-  /// This function should only be used in cases where it is known that no read
-  /// barrier is necessary.
-  GCPointerBase::StorageType &getNoBarrierUnsafe() {
-    return ptr_;
-  }
-
-  WeakRootBase &operator=(GCPointerBase::StorageType ptr) {
-    // No need for a write barrier on weak roots currently.
-    ptr_ = ptr;
-    return *this;
-  }
-
-  bool operator==(GCPointerBase::StorageType that) const {
-    // Checking for equality to another pointer does not change the possible
-    // lifetime of the weak root, so there's no need for a read barrier
-    // here.
-    return ptr_ == that;
-  }
-
-  bool operator!=(GCPointerBase::StorageType that) const {
-    // Checking for equality to another pointer does not change the possible
-    // lifetime of the weak root, so there's no need for a read barrier
-    // here.
-    return !(*this == that);
-  }
-
-  explicit operator bool() const {
-    // Checking for null doesn't change the lifetime of the weak root, so
-    // there's no need for a read barrier here.
-    // NOTE: There can be a race condition between calling this function and
-    // calling get() normally, but the only time ptr_ is changed is during a
-    // STW pause, so there's no way the mutator could observe it.
-    return static_cast<bool>(ptr_);
-  }
-
- private:
-  GCPointerBase::StorageType ptr_;
-};
-
-/// A wrapper around a pointer meant to be used as a weak root. It adds a read
-/// barrier so that the GC is aware when the field is read.
-template <typename T>
-class WeakRoot final : public WeakRootBase {
- public:
-  explicit WeakRoot() : WeakRootBase() {}
-  explicit WeakRoot(std::nullptr_t) : WeakRootBase(nullptr) {}
-
-  T *get(PointerBase *base, GC *gc) const {
-    return static_cast<T *>(WeakRootBase::get(base, gc));
-  }
-
-  void set(PointerBase *base, T *ptr) {
-    WeakRootBase::operator=(GCPointerBase::pointerToStorageType(ptr, base));
-  }
-
-  WeakRoot &operator=(GCPointerBase::StorageType ptr) {
-    WeakRootBase::operator=(ptr);
-    return *this;
-  }
-};
 
 } // namespace vm
 } // namespace hermes

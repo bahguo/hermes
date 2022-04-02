@@ -1,4 +1,4 @@
-# Copyright (c) Facebook, Inc. and its affiliates.
+# Copyright (c) Meta Platforms, Inc. and affiliates.
 #
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
@@ -12,7 +12,6 @@ set(CMAKE_UNITY_BUILD OFF)
 set(RTSources
   AlignedHeapSegmentTest.cpp
   AlignedStorageTest.cpp
-  Array.cpp
   ArrayTest.cpp
   ArrayStorageTest.cpp
   BytecodeProviderTest.cpp
@@ -26,8 +25,6 @@ set(RTSources
   DateUtilTest.cpp
   DecoratedObjectTest.cpp
   DictPropertyMapTest.cpp
-  ExtStringForTest.cpp
-  ExternalMemAccountingTest.cpp
   GCBasicsTest.cpp
   GCFinalizerTest.cpp
   GCFragmentationTest.cpp
@@ -39,9 +36,6 @@ set(RTSources
   GCOOMTest.cpp
   GCReturnUnusedMemoryTest.cpp
   GCSanitizeHandlesTest.cpp
-  GCSegmentAddressIndexTest.cpp
-  GCSegmentRangeTest.cpp
-  GCSizingTest.cpp
   HeapSnapshotTest.cpp
   HermesValueTest.cpp
   HiddenClassTest.cpp
@@ -61,8 +55,8 @@ set(RTSources
   HandleTest.cpp
   RuntimeConfigTest.cpp
   SamplingHeapProfilerTest.cpp
+  SamplingProfilerPosixTest.cpp
   SegmentedArrayTest.cpp
-  SerializerTest.cpp
   SmallHermesValueTest.cpp
   SmallXStringTest.cpp
   StaticBuiltinsTest.cpp
@@ -93,9 +87,6 @@ target_link_libraries(HermesVMRuntimeTests
   hermesParser
   hermesSupport
   dtoa
-  ${CORE_FOUNDATION}
  )
-
-hermes_link_icu(HermesVMRuntimeTests)
 
 add_subdirectory(Instrumentation)

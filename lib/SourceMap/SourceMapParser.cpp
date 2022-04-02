@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -81,8 +81,7 @@ std::unique_ptr<SourceMap> SourceMapParser::parse(
     if (file == nullptr) {
       sm.error(
           genericLoc,
-          "Source filename #" + oscompat::to_string(i) +
-              " not found or not string");
+          "Source filename #" + std::to_string(i) + " not found or not string");
       return nullptr;
     }
     const JSONValue *metadata = nullptr;
