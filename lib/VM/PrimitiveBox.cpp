@@ -7,6 +7,7 @@
 
 #include "hermes/VM/PrimitiveBox.h"
 
+#include "hermes/VM/BigIntPrimitive.h"
 #include "hermes/VM/BuildMetadata.h"
 #include "hermes/VM/Runtime-inline.h"
 #include "hermes/VM/StringPrimitive.h"
@@ -80,7 +81,7 @@ void JSString::setPrimitiveString(
   auto shv =
       SmallHermesValue::encodeNumberValue(string->getStringLength(), runtime);
   JSObject::setNamedSlotValueUnsafe(*selfHandle, runtime, desc, shv);
-  selfHandle->primitiveValue_.set(runtime, *string, &runtime.getHeap());
+  selfHandle->primitiveValue_.set(runtime, *string, runtime.getHeap());
 }
 
 bool JSString::_haveOwnIndexedImpl(
@@ -112,12 +113,21 @@ std::pair<uint32_t, uint32_t> JSString::_getOwnIndexedRangeImpl(
   return {0, str->getStringLength()};
 }
 
-HermesValue
-JSString::_getOwnIndexedImpl(JSObject *self, Runtime &runtime, uint32_t index) {
-  auto *str = getPrimitiveString(vmcast<JSString>(self), runtime);
-  return LLVM_LIKELY(index < str->getStringLength())
-      ? runtime.getCharacterString(str->at(index)).getHermesValue()
-      : HermesValue::encodeEmptyValue();
+HermesValue JSString::_getOwnIndexedImpl(
+    PseudoHandle<JSObject> self,
+    Runtime &runtime,
+    uint32_t index) {
+  auto *str = getPrimitiveString(vmcast<JSString>(self.get()), runtime);
+
+  NoAllocScope noAllocs{runtime};
+
+  if (LLVM_LIKELY(index < str->getStringLength())) {
+    auto chr = str->at(index);
+    noAllocs.release();
+    return runtime.getCharacterString(chr).getHermesValue();
+  }
+
+  return HermesValue::encodeEmptyValue();
 }
 
 CallResult<bool> JSString::_setOwnIndexedImpl(
@@ -218,7 +228,7 @@ CallResult<HermesValue> JSStringIterator::nextElement(
   if (position >= len) {
     // 8a. Set the value of the [[IteratedString]] internal slot of O to
     // undefined.
-    self->iteratedString_.setNull(&runtime.getHeap());
+    self->iteratedString_.setNull(runtime.getHeap());
     // 8b. Return CreateIterResultObject(undefined, true).
     return createIterResultObject(runtime, Runtime::getUndefinedValue(), true)
         .getHermesValue();
@@ -257,6 +267,40 @@ CallResult<HermesValue> JSStringIterator::nextElement(
 
   // 14. Return CreateIterResultObject(resultString, false).
   return createIterResultObject(runtime, resultString, false).getHermesValue();
+}
+
+//===----------------------------------------------------------------------===//
+// class JSBigInt
+
+const ObjectVTable JSBigInt::vt{
+    VTable(CellKind::JSBigIntKind, cellSize<JSBigInt>()),
+    JSBigInt::_getOwnIndexedRangeImpl,
+    JSBigInt::_haveOwnIndexedImpl,
+    JSBigInt::_getOwnIndexedPropertyFlagsImpl,
+    JSBigInt::_getOwnIndexedImpl,
+    JSBigInt::_setOwnIndexedImpl,
+    JSBigInt::_deleteOwnIndexedImpl,
+    JSBigInt::_checkAllOwnIndexedImpl,
+};
+
+void JSBigIntBuildMeta(const GCCell *cell, Metadata::Builder &mb) {
+  mb.addJSObjectOverlapSlots(JSObject::numOverlapSlots<JSBigInt>());
+  JSObjectBuildMeta(cell, mb);
+  const auto *self = static_cast<const JSBigInt *>(cell);
+  mb.setVTable(&JSBigInt::vt);
+  mb.addField(&self->primitiveValue_);
+}
+
+Handle<JSBigInt> JSBigInt::create(
+    Runtime &runtime,
+    Handle<BigIntPrimitive> value,
+    Handle<JSObject> parentHandle) {
+  auto clazzHandle = runtime.getHiddenClassForPrototype(
+      *parentHandle, numOverlapSlots<JSBigInt>());
+  auto obj =
+      runtime.makeAFixed<JSBigInt>(runtime, value, parentHandle, clazzHandle);
+
+  return JSObjectInit::initToHandle(runtime, obj);
 }
 
 //===----------------------------------------------------------------------===//

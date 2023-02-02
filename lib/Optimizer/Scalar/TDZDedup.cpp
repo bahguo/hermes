@@ -18,7 +18,6 @@
 #include "llvh/ADT/DenseSet.h"
 #include "llvh/ADT/Hashing.h"
 #include "llvh/ADT/STLExtras.h"
-#include "llvh/Support/Debug.h"
 #include "llvh/Support/RecyclingAllocator.h"
 
 STATISTIC(NumTDZFrameDedup, "Number of TDZ frame checks eliminated");
@@ -27,9 +26,6 @@ STATISTIC(NumTDZOtherDedup, "Number of TDZ other checks eliminated");
 STATISTIC(NumTDZDedup, "Number of TDZ instructions eliminated");
 
 namespace hermes {
-
-using llvh::dbgs;
-using llvh::isa;
 
 namespace {
 
@@ -102,7 +98,7 @@ bool TDZDedupContext::run() {
       Value *tdzStorage;
 
       if (auto *LFI = llvh::dyn_cast<LoadFrameInst>(checkedValue)) {
-        tdzStorage = LFI->getSingleOperand();
+        tdzStorage = LFI->getLoadVariable();
       } else if (auto *LSI = llvh::dyn_cast<LoadStackInst>(checkedValue)) {
         tdzStorage = LSI->getSingleOperand();
       } else {
@@ -134,7 +130,7 @@ bool TDZDedupContext::processNode(StackNode *SN) {
       auto *checkedValue = TIE->getCheckedValue();
 
       if (auto *LFI = llvh::dyn_cast<LoadFrameInst>(checkedValue)) {
-        tdzStorage = LFI->getSingleOperand();
+        tdzStorage = LFI->getLoadVariable();
       } else if (auto *LSI = llvh::dyn_cast<LoadStackInst>(checkedValue)) {
         tdzStorage = LSI->getSingleOperand();
       } else {
@@ -209,8 +205,8 @@ bool TDZDedup::runOnFunction(Function *F) {
   return CCtx.run();
 }
 
-Pass *createTDZDedup() {
-  return new TDZDedup();
+std::unique_ptr<Pass> createTDZDedup() {
+  return std::make_unique<TDZDedup>();
 }
 
 } // namespace hermes

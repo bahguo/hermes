@@ -19,7 +19,11 @@
 #include "hermes/VM/StringView.h"
 
 #include "llvh/ADT/ScopeExit.h"
+#pragma GCC diagnostic push
 
+#ifdef HERMES_COMPILER_SUPPORTS_WSHORTEN_64_TO_32
+#pragma GCC diagnostic ignored "-Wshorten-64-to-32"
+#endif
 namespace hermes {
 namespace vm {
 //===----------------------------------------------------------------------===//
@@ -54,18 +58,18 @@ CallResult<Handle<JSError>> JSError::getErrorFromStackTarget_RJS(
     Runtime &runtime,
     Handle<JSObject> targetHandle) {
   if (targetHandle) {
-    auto capturedErrorRes = JSObject::getNamed_RJS(
+    NamedPropertyDescriptor desc;
+    bool exists = JSObject::getOwnNamedDescriptor(
         targetHandle,
         runtime,
-        Predefined::getSymbolID(Predefined::InternalPropertyCapturedError));
-    if (capturedErrorRes == ExecutionStatus::EXCEPTION) {
-      return ExecutionStatus::EXCEPTION;
+        Predefined::getSymbolID(Predefined::InternalPropertyCapturedError),
+        desc);
+    if (exists) {
+      auto sv = JSObject::getNamedSlotValueUnsafe(*targetHandle, runtime, desc);
+      return runtime.makeHandle(vmcast<JSError>(sv.getObject(runtime)));
     }
-    auto capturedErrorHandle = runtime.makeHandle(std::move(*capturedErrorRes));
-    auto errorHandle = Handle<JSError>::dyn_vmcast(
-        capturedErrorHandle ? capturedErrorHandle : targetHandle);
-    if (errorHandle) {
-      return errorHandle;
+    if (vmisa<JSError>(*targetHandle)) {
+      return Handle<JSError>::vmcast(targetHandle);
     }
   }
   return runtime.raiseTypeError(
@@ -363,7 +367,7 @@ static Handle<PropStorage> getCallStackFunctionNames(
     }
     auto shv =
         SmallHermesValue::encodeHermesValue(name.getHermesValue(), runtime);
-    names->set(namesIndex, shv, &runtime.getHeap());
+    names->set(namesIndex, shv, runtime.getHeap());
     ++namesIndex;
     gcScope.flushToMarker(marker);
   }
@@ -385,7 +389,7 @@ ExecutionStatus JSError::recordStackTrace(
   // Check if the top frame is a JSFunction and we don't have the current
   // CodeBlock, do nothing.
   if (!skipTopFrame && !codeBlock && frames.begin() != frames.end() &&
-      frames.begin()->getCalleeCodeBlock()) {
+      frames.begin()->getCalleeCodeBlock(runtime)) {
     return ExecutionStatus::RETURNED;
   }
 
@@ -437,7 +441,7 @@ ExecutionStatus JSError::recordStackTrace(
     // the interpreter.
     StackFramePtr prev = cf->getPreviousFrame();
     if (prev != framesEnd) {
-      if (CodeBlock *parentCB = prev->getCalleeCodeBlock()) {
+      if (CodeBlock *parentCB = prev->getCalleeCodeBlock(runtime)) {
         savedCodeBlock = parentCB;
       }
     }
@@ -451,7 +455,7 @@ ExecutionStatus JSError::recordStackTrace(
       stack->emplace_back(nullptr, 0);
     }
   }
-  selfHandle->domains_.set(runtime, domains.get(), &runtime.getHeap());
+  selfHandle->domains_.set(runtime, domains.get(), runtime.getHeap());
 
   // Remove the last entry.
   stack->pop_back();
@@ -465,7 +469,7 @@ ExecutionStatus JSError::recordStackTrace(
       "Function names and stack trace must have same size.");
 
   selfHandle->stacktrace_ = std::move(stack);
-  selfHandle->funcNames_.set(runtime, *funcNames, &runtime.getHeap());
+  selfHandle->funcNames_.set(runtime, *funcNames, runtime.getHeap());
   return ExecutionStatus::RETURNED;
 }
 
@@ -731,7 +735,7 @@ static const CodeBlock *getLeafCodeBlock(
   const Callable *callable = callableHandle.get();
   while (callable) {
     if (auto *asFunction = dyn_vmcast<const JSFunction>(callable)) {
-      return asFunction->getCodeBlock();
+      return asFunction->getCodeBlock(runtime);
     }
     if (auto *asBoundFunction = dyn_vmcast<const BoundFunction>(callable)) {
       callable = asBoundFunction->getTarget(runtime);
@@ -764,7 +768,7 @@ void JSError::popFramesUntilInclusive(
   }
 }
 
-void JSError::_finalizeImpl(GCCell *cell, GC *) {
+void JSError::_finalizeImpl(GCCell *cell, GC &) {
   JSError *self = vmcast<JSError>(cell);
   self->~JSError();
 }

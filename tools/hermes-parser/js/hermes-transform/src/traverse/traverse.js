@@ -15,7 +15,7 @@ import type {EmitterListener} from './SafeEmitter';
 import {codeFrameColumns} from '@babel/code-frame';
 import {NodeEventGenerator} from './NodeEventGenerator';
 import {SafeEmitter} from './SafeEmitter';
-import {SimpleTraverser} from './SimpleTraverser';
+import {SimpleTraverser} from 'hermes-parser';
 
 export type TraversalContextBase = $ReadOnly<{
   /**
@@ -55,6 +55,17 @@ export type TraversalContextBase = $ReadOnly<{
    * (where 56:44 represents L56, Col44)
    */
   buildSimpleCodeFrame: (node: ESNode, message: string) => string,
+  /**
+   * Can be called at any point during the traversal to immediately stop traversal
+   * entirely.
+   */
+  stopTraversal: () => void,
+  /**
+   * Can be called within the traversal "enter" function to prevent the traverser
+   * from traversing the node any further, essentially culling the remainder of the
+   * AST branch from traversal.
+   */
+  skipTraversal: () => void,
 }>;
 export type TraversalContext<T> = $ReadOnly<{
   ...TraversalContextBase,
@@ -77,21 +88,10 @@ export function traverseWithContext<T = TraversalContextBase>(
   visitor: Visitor<T>,
 ): void {
   const emitter = new SafeEmitter();
-  const nodeQueue: Array<{isEntering: boolean, node: ESNode}> = [];
 
   let currentNode: ESNode = ast;
-
-  // set parent pointers and build up the traversal queue
-  SimpleTraverser.traverse(ast, {
-    enter(node, parent) {
-      // $FlowExpectedError[cannot-write] - hermes doesn't set this
-      node.parent = parent;
-      nodeQueue.push({isEntering: true, node});
-    },
-    leave(node) {
-      nodeQueue.push({isEntering: false, node});
-    },
-  });
+  let shouldSkipTraversal = false;
+  let shouldStopTraversal = false;
 
   const getScope = (givenNode: ESNode = currentNode) => {
     // On Program node, get the outermost scope to avoid return Node.js special function scope or ES modules scope.
@@ -140,7 +140,7 @@ export function traverseWithContext<T = TraversalContextBase>(
       scopeManager.getDeclaredVariables(node),
 
     getBinding: (name: string) => {
-      let currentScope = getScope();
+      let currentScope: null | Scope = getScope();
 
       while (currentScope != null) {
         for (const variable of currentScope.variables) {
@@ -155,6 +155,14 @@ export function traverseWithContext<T = TraversalContextBase>(
     },
 
     getScope,
+
+    stopTraversal: () => {
+      shouldStopTraversal = true;
+    },
+
+    skipTraversal: () => {
+      shouldSkipTraversal = true;
+    },
   });
 
   const traversalContext: TraversalContext<T> = Object.freeze({
@@ -176,19 +184,30 @@ export function traverseWithContext<T = TraversalContextBase>(
   });
 
   const eventGenerator = new NodeEventGenerator(emitter);
-  nodeQueue.forEach(traversalInfo => {
-    currentNode = traversalInfo.node;
 
-    try {
-      if (traversalInfo.isEntering) {
-        eventGenerator.enterNode(currentNode);
-      } else {
-        eventGenerator.leaveNode(currentNode);
-      }
-    } catch (err) {
-      err.currentNode = currentNode;
-      throw err;
+  function checkTraversalFlags(): void {
+    if (shouldStopTraversal) {
+      // No need to reset the flag since we won't enter any more nodes.
+      throw SimpleTraverser.Break;
     }
+
+    if (shouldSkipTraversal) {
+      shouldSkipTraversal = false;
+      throw SimpleTraverser.Skip;
+    }
+  }
+
+  SimpleTraverser.traverse(ast, {
+    enter(node) {
+      currentNode = node;
+      eventGenerator.enterNode(node);
+      checkTraversalFlags();
+    },
+    leave(node) {
+      currentNode = node;
+      eventGenerator.leaveNode(node);
+      checkTraversalFlags();
+    },
   });
 }
 

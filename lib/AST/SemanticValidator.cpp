@@ -7,20 +7,16 @@
 
 #include "SemanticValidator.h"
 
-#include "hermes/Support/RegExpSerialization.h"
+#include "hermes/Regex/RegexSerialization.h"
 
 #include "llvh/ADT/ScopeExit.h"
 #include "llvh/ADT/SmallSet.h"
 #include "llvh/Support/SaveAndRestore.h"
 
-using llvh::cast;
 using llvh::cast_or_null;
 using llvh::dyn_cast;
-using llvh::dyn_cast_or_null;
 using llvh::isa;
 using llvh::SaveAndRestore;
-
-using namespace hermes::ESTree;
 
 namespace hermes {
 namespace sem {
@@ -122,6 +118,14 @@ void SemanticValidator::visit(MetaPropertyNode *metaProp) {
     return;
   }
 
+  if (meta->_name->str() == "import" && property->_name->str() == "meta") {
+    if (compile_) {
+      sm_.error(
+          metaProp->getSourceRange(), "'import.meta' is currently unsupported");
+    }
+    return;
+  }
+
   sm_.error(
       metaProp->getSourceRange(),
       "invalid meta property " + meta->_name->str() + "." +
@@ -166,8 +170,9 @@ void SemanticValidator::visit(ArrowFunctionExpressionNode *arrowFunc) {
   visitFunction(arrowFunc, nullptr, arrowFunc->_params, arrowFunc->_body);
 
   curFunction()->semInfo->containsArrowFunctions = true;
-  curFunction()->semInfo->containsArrowFunctionsUsingArguments |=
-      arrowFunc->getSemInfo()->containsArrowFunctionsUsingArguments |
+  curFunction()->semInfo->containsArrowFunctionsUsingArguments =
+      curFunction()->semInfo->containsArrowFunctionsUsingArguments ||
+      arrowFunc->getSemInfo()->containsArrowFunctionsUsingArguments ||
       arrowFunc->getSemInfo()->usesArguments;
 }
 
@@ -310,22 +315,19 @@ void SemanticValidator::visit(LabeledStatementNode *labelStmt) {
   visitESTreeChildren(*this, labelStmt);
 }
 
-void SemanticValidator::visit(BigIntLiteralNode *bigint) {
-  if (compile_) {
-    sm_.error(bigint->getSourceRange(), "BigInt literal is not supported");
-  }
-  visitESTreeChildren(*this, bigint);
-}
-
 /// Check RegExp syntax.
 void SemanticValidator::visit(RegExpLiteralNode *regexp) {
   llvh::StringRef regexpError;
-  if (compile_ &&
-      !CompiledRegExp::tryCompile(
-          regexp->_pattern->str(), regexp->_flags->str(), &regexpError)) {
-    sm_.error(
-        regexp->getSourceRange(),
-        "Invalid regular expression: " + Twine(regexpError));
+  if (compile_) {
+    if (auto compiled = CompiledRegExp::tryCompile(
+            regexp->_pattern->str(), regexp->_flags->str(), &regexpError)) {
+      astContext_.addCompiledRegExp(
+          regexp->_pattern, regexp->_flags, std::move(*compiled));
+    } else {
+      sm_.error(
+          regexp->getSourceRange(),
+          "Invalid regular expression: " + Twine(regexpError));
+    }
   }
   visitESTreeChildren(*this, regexp);
 }

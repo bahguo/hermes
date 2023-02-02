@@ -9,6 +9,7 @@
 
 #include "hermes/BCGen/HBC/BytecodeProviderFromSrc.h"
 #include "hermes/Optimizer/PassManager/Pipeline.h"
+#include "hermes/SourceMap/SourceMapParser.h"
 #include "hermes/Support/Algorithms.h"
 
 #include "llvh/Support/SHA1.h"
@@ -46,16 +47,30 @@ bool compileJS(
     const std::string &sourceURL,
     std::string &bytecode,
     bool optimize,
-    DiagnosticHandler *diagHandler) {
+    bool emitAsyncBreakCheck,
+    DiagnosticHandler *diagHandler,
+    std::optional<std::string_view> sourceMapBuf) {
   hbc::CompileFlags flags{};
   flags.format = EmitBundle;
+  flags.emitAsyncBreakCheck = emitAsyncBreakCheck;
+
+  std::unique_ptr<hermes::SourceMap> sourceMap{};
+  // parse the source map if one was provided
+  if (sourceMapBuf.has_value()) {
+    hermes::SourceErrorManager sm;
+    sourceMap = hermes::SourceMapParser::parse(
+        llvh::StringRef{sourceMapBuf->data(), sourceMapBuf->size()}, sm);
+    if (!sourceMap) {
+      return false;
+    }
+  }
 
   // Note that we are relying the zero termination provided by str.data(),
   // because the parser requires it.
   auto res = hbc::BCProviderFromSrc::createBCProviderFromSrc(
       std::make_unique<hermes::Buffer>((const uint8_t *)str.data(), str.size()),
       sourceURL,
-      nullptr /* sourceMap */,
+      std::move(sourceMap),
       flags,
       {} /* scopeChain */,
       diagHandler ? diagHandlerAdapter : nullptr,
@@ -81,7 +96,7 @@ bool compileJS(
 }
 
 bool compileJS(const std::string &str, std::string &bytecode, bool optimize) {
-  return compileJS(str, "", bytecode, optimize, nullptr);
+  return compileJS(str, "", bytecode, optimize, false, nullptr);
 }
 
 bool compileJS(
@@ -89,7 +104,7 @@ bool compileJS(
     const std::string &sourceURL,
     std::string &bytecode,
     bool optimize) {
-  return compileJS(str, sourceURL, bytecode, optimize, nullptr);
+  return compileJS(str, sourceURL, bytecode, optimize, false, nullptr);
 }
 
 } // namespace hermes

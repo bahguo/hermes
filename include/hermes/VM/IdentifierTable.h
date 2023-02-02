@@ -23,7 +23,11 @@
 
 #include "llvh/ADT/BitVector.h"
 #include "llvh/ADT/DenseMap.h"
+#pragma GCC diagnostic push
 
+#ifdef HERMES_COMPILER_SUPPORTS_WSHORTEN_64_TO_32
+#pragma GCC diagnostic ignored "-Wshorten-64-to-32"
+#endif
 namespace hermes {
 namespace vm {
 
@@ -147,11 +151,13 @@ class IdentifierTable {
   }
 
   /// Mark all identifiers for the garbage collector.
-  void markIdentifiers(RootAcceptor &acceptor, GC *gc);
+  void markIdentifiers(RootAcceptor &acceptor, GC &gc);
 
+#ifdef HERMES_MEMORY_INSTRUMENTATION
   /// Add native nodes and edges to heap snapshots.
   void snapshotAddNodes(HeapSnapshot &snap);
   void snapshotAddEdges(HeapSnapshot &snap);
+#endif
 
   /// Visits every entry in the identifier table and calls acceptor with
   /// the entry and its id as arguments. This is intended to be used only for
@@ -473,5 +479,6 @@ class IdentifierTable {
 
 } // end namespace vm
 } // end namespace hermes
+#pragma GCC diagnostic pop
 
 #endif

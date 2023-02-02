@@ -154,6 +154,9 @@ class RuntimeDecorator : public Base, private jsi::Instrumentation {
   Runtime::PointerValue* cloneSymbol(const Runtime::PointerValue* pv) override {
     return plain_.cloneSymbol(pv);
   };
+  Runtime::PointerValue* cloneBigInt(const Runtime::PointerValue* pv) override {
+    return plain_.cloneBigInt(pv);
+  };
   Runtime::PointerValue* cloneString(const Runtime::PointerValue* pv) override {
     return plain_.cloneString(pv);
   };
@@ -190,6 +193,25 @@ class RuntimeDecorator : public Base, private jsi::Instrumentation {
     return plain_.symbolToString(sym);
   }
 
+  BigInt createBigIntFromInt64(int64_t value) override {
+    return plain_.createBigIntFromInt64(value);
+  }
+  BigInt createBigIntFromUint64(uint64_t value) override {
+    return plain_.createBigIntFromUint64(value);
+  }
+  bool bigintIsInt64(const BigInt& b) override {
+    return plain_.bigintIsInt64(b);
+  }
+  bool bigintIsUint64(const BigInt& b) override {
+    return plain_.bigintIsUint64(b);
+  }
+  uint64_t truncate(const BigInt& b) override {
+    return plain_.truncate(b);
+  }
+  String bigintToString(const BigInt& bigint, int radix) override {
+    return plain_.bigintToString(bigint, radix);
+  }
+
   String createStringFromAscii(const char* str, size_t length) override {
     return plain_.createStringFromAscii(str, length);
   };
@@ -219,6 +241,17 @@ class RuntimeDecorator : public Base, private jsi::Instrumentation {
     return dhf.target<DecoratedHostFunction>()->plainHF_;
   };
 
+  bool hasNativeState(const Object& o) override {
+    return plain_.hasNativeState(o);
+  }
+  std::shared_ptr<NativeState> getNativeState(const Object& o) override {
+    return plain_.getNativeState(o);
+  }
+  void setNativeState(const Object& o, std::shared_ptr<NativeState> state)
+      override {
+    plain_.setNativeState(o, state);
+  }
+
   Value getProperty(const Object& o, const PropNameID& name) override {
     return plain_.getProperty(o, name);
   };
@@ -231,11 +264,13 @@ class RuntimeDecorator : public Base, private jsi::Instrumentation {
   bool hasProperty(const Object& o, const String& name) override {
     return plain_.hasProperty(o, name);
   };
-  void setPropertyValue(Object& o, const PropNameID& name, const Value& value)
-      override {
+  void setPropertyValue(
+      const Object& o,
+      const PropNameID& name,
+      const Value& value) override {
     plain_.setPropertyValue(o, name, value);
   };
-  void setPropertyValue(Object& o, const String& name, const Value& value)
+  void setPropertyValue(const Object& o, const String& name, const Value& value)
       override {
     plain_.setPropertyValue(o, name, value);
   };
@@ -262,12 +297,16 @@ class RuntimeDecorator : public Base, private jsi::Instrumentation {
   WeakObject createWeakObject(const Object& o) override {
     return plain_.createWeakObject(o);
   };
-  Value lockWeakObject(WeakObject& wo) override {
+  Value lockWeakObject(const WeakObject& wo) override {
     return plain_.lockWeakObject(wo);
   };
 
   Array createArray(size_t length) override {
     return plain_.createArray(length);
+  };
+  ArrayBuffer createArrayBuffer(
+      std::shared_ptr<MutableBuffer> buffer) override {
+    return plain_.createArrayBuffer(std::move(buffer));
   };
   size_t size(const Array& a) override {
     return plain_.size(a);
@@ -281,7 +320,8 @@ class RuntimeDecorator : public Base, private jsi::Instrumentation {
   Value getValueAtIndex(const Array& a, size_t i) override {
     return plain_.getValueAtIndex(a, i);
   };
-  void setValueAtIndexImpl(Array& a, size_t i, const Value& value) override {
+  void setValueAtIndexImpl(const Array& a, size_t i, const Value& value)
+      override {
     plain_.setValueAtIndexImpl(a, i, value);
   };
 
@@ -313,6 +353,9 @@ class RuntimeDecorator : public Base, private jsi::Instrumentation {
   }
 
   bool strictEquals(const Symbol& a, const Symbol& b) const override {
+    return plain_.strictEquals(a, b);
+  };
+  bool strictEquals(const BigInt& a, const BigInt& b) const override {
     return plain_.strictEquals(a, b);
   };
   bool strictEquals(const String& a, const String& b) const override {
@@ -616,12 +659,14 @@ class WithRuntimeDecorator : public RuntimeDecorator<Plain, Base> {
     Around around{with_};
     return RD::hasProperty(o, name);
   };
-  void setPropertyValue(Object& o, const PropNameID& name, const Value& value)
-      override {
+  void setPropertyValue(
+      const Object& o,
+      const PropNameID& name,
+      const Value& value) override {
     Around around{with_};
     RD::setPropertyValue(o, name, value);
   };
-  void setPropertyValue(Object& o, const String& name, const Value& value)
+  void setPropertyValue(const Object& o, const String& name, const Value& value)
       override {
     Around around{with_};
     RD::setPropertyValue(o, name, value);
@@ -656,7 +701,7 @@ class WithRuntimeDecorator : public RuntimeDecorator<Plain, Base> {
     Around around{with_};
     return RD::createWeakObject(o);
   };
-  Value lockWeakObject(WeakObject& wo) override {
+  Value lockWeakObject(const WeakObject& wo) override {
     Around around{with_};
     return RD::lockWeakObject(wo);
   };
@@ -664,6 +709,10 @@ class WithRuntimeDecorator : public RuntimeDecorator<Plain, Base> {
   Array createArray(size_t length) override {
     Around around{with_};
     return RD::createArray(length);
+  };
+  ArrayBuffer createArrayBuffer(
+      std::shared_ptr<MutableBuffer> buffer) override {
+    return RD::createArrayBuffer(std::move(buffer));
   };
   size_t size(const Array& a) override {
     Around around{with_};
@@ -681,7 +730,8 @@ class WithRuntimeDecorator : public RuntimeDecorator<Plain, Base> {
     Around around{with_};
     return RD::getValueAtIndex(a, i);
   };
-  void setValueAtIndexImpl(Array& a, size_t i, const Value& value) override {
+  void setValueAtIndexImpl(const Array& a, size_t i, const Value& value)
+      override {
     Around around{with_};
     RD::setValueAtIndexImpl(a, i, value);
   };

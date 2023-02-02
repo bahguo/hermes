@@ -133,6 +133,7 @@ function(add_hermes_executable name)
   cmake_parse_arguments(ARG "" "" "LINK_LIBS" ${ARGN})
   add_executable(${name} ${ARG_UNPARSED_ARGUMENTS})
   target_link_libraries(${name} ${ARG_LINK_LIBS} ${HERMES_LINK_COMPONENTS})
+  target_link_options(${name} PRIVATE ${HERMES_EXTRA_LINKER_FLAGS})
   hermes_update_compile_flags(${name})
 endfunction(add_hermes_executable)
 
@@ -253,12 +254,6 @@ if (MSVC)
     -D_CRT_NONSTDC_NO_WARNINGS
     -D_SCL_SECURE_NO_DEPRECATE
     -D_SCL_SECURE_NO_WARNINGS
-  )
-
-  add_definitions(
-    # Suppress 'The std::iterator class template (used as a base class to provide typedefs)
-    # is deprecated in C++17.'.
-    -D_SILENCE_CXX17_ITERATOR_BASE_CLASS_DEPRECATION_WARNING
   )
 
   # Tell MSVC to use the Unicode version of the Win32 APIs instead of ANSI.

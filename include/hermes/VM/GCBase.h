@@ -19,6 +19,7 @@
 #include "hermes/VM/AllocOptions.h"
 #include "hermes/VM/BuildMetadata.h"
 #include "hermes/VM/CellKind.h"
+#include "hermes/VM/CompressedPointer.h"
 #include "hermes/VM/GCDecl.h"
 #include "hermes/VM/GCExecTrace.h"
 #include "hermes/VM/GCPointer.h"
@@ -48,7 +49,11 @@
 #include <random>
 #include <system_error>
 #include <vector>
+#pragma GCC diagnostic push
 
+#ifdef HERMES_COMPILER_SUPPORTS_WSHORTEN_64_TO_32
+#pragma GCC diagnostic ignored "-Wshorten-64-to-32"
+#endif
 namespace hermes {
 namespace vm {
 
@@ -65,6 +70,9 @@ class GCCell;
 #ifdef HERMESVM_GC_RUNTIME
 #define RUNTIME_GC_KINDS GC_KIND(HadesGC)
 #endif
+
+/// Used by XorPtr to separate encryption keys between uses.
+enum XorPtrKeyID { ArrayBufferData, JSFunctionCodeBlock, _NumKeys };
 
 // A specific GC class extend GCBase, and override its virtual functions.
 // In addition, it must implement the following methods:
@@ -167,8 +175,7 @@ class GCCell;
 ///   A weak ref is about to be read. Executes a read barrier so the GC can
 ///   take action such as extending the lifetime of the reference. The
 ///   HermesValue version does nothing if the value isn't a pointer.
-///     void weakRefReadBarrier(void *value);
-///     void weakRefReadBarrier(HermesValue value);
+///     void weakRefReadBarrier(GCCell *value);
 ///
 ///   We copied HermesValues into the given region.  Note that \p numHVs is
 ///   the number of HermesValues in the the range, not the char length.
@@ -310,6 +317,7 @@ class GCBase {
     /// the current VM stack-trace. It's "slow" because it's virtual.
     virtual const inst::Inst *getCurrentIPSlow() const = 0;
 
+#ifdef HERMES_MEMORY_INSTRUMENTATION
     /// Return a \c StackTracesTreeNode representing the current VM stack-trace
     /// at this point.
     virtual StackTracesTreeNode *getCurrentStackTracesTreeNode(
@@ -318,6 +326,7 @@ class GCBase {
     /// Get a StackTraceTree which can be used to recover stack-traces from \c
     /// StackTraceTreeNode() as returned by \c getCurrentStackTracesTreeNode() .
     virtual StackTracesTree *getStackTracesTree() = 0;
+#endif
 
 #ifdef HERMES_SLOW_DEBUG
     /// \return true if the given symbol is a live entry in the identifier
@@ -330,13 +339,6 @@ class GCBase {
     /// otherwise.
     virtual const void *getStringForSymbol(SymbolID id) = 0;
 #endif
-  };
-
-  /// Struct that keeps a reference to a GC.  Useful, for example, as a base
-  /// class of Acceptors that need access to the GC.
-  struct GCRef {
-    GC &gc;
-    GCRef(GC &gc) : gc(gc) {}
   };
 
   /// Stats for collections. Time unit, where applicable, is seconds.
@@ -414,6 +416,7 @@ class GCBase {
   };
 #endif
 
+#ifdef HERMES_MEMORY_INSTRUMENTATION
   /// When enabled, every allocation gets an attached stack-trace and an
   /// object ID. When disabled old allocations continue to be tracked but
   /// no new allocations get a stack-trace.
@@ -566,6 +569,7 @@ class GCBase {
     /// \return How many bytes should be waited until the next sample.
     size_t nextSample();
   };
+#endif
 
   class IDTracker final {
    public:
@@ -759,13 +763,6 @@ class GCBase {
     llvh::DenseMap<double, HeapSnapshot::NodeID, DoubleComparator> numberIDMap_;
   };
 
-#ifndef NDEBUG
-  /// Whether the last allocation was fixed size.  For long-lived
-  /// allocations, we do not declare whether they are fixed size;
-  /// Unknown is used in that case.
-  enum class FixedSizeValue { Yes, No, Unknown };
-#endif
-
   enum class HeapKind { HadesGC, MallocGC };
 
   GCBase(
@@ -802,12 +799,6 @@ class GCBase {
       LongLived longLived = LongLived::No,
       class... Args>
   T *makeA(uint32_t size, Args &&...args);
-
-  /// \return true if the "target space" for allocations should be randomized
-  /// (for GCs where that concept makes sense).
-  bool shouldRandomizeAllocSpace() const {
-    return randomizeAllocSpace_;
-  }
 
   /// Name to identify this heap in logs.
   const std::string &getName() const {
@@ -939,7 +930,7 @@ class GCBase {
     return true;
   }
 
-  virtual WeakRefSlot *allocWeakSlot(HermesValue init) = 0;
+  WeakRefSlot *allocWeakSlot(CompressedPointer ptr);
 
 #ifndef NDEBUG
   /// \name Debug APIs
@@ -952,6 +943,7 @@ class GCBase {
   }
   virtual bool dbgContains(const void *ptr) const = 0;
   virtual void trackReachable(CellKind kind, unsigned sz) {}
+  virtual bool needsWriteBarrier(void *loc, GCCell *value) = 0;
   /// \}
 #endif
 
@@ -959,6 +951,7 @@ class GCBase {
   /// fatal out-of-memory error.
   LLVM_ATTRIBUTE_NORETURN void oom(std::error_code reason);
 
+#ifdef HERMES_MEMORY_INSTRUMENTATION
   /// Creates a snapshot of the heap and writes it to the given \p fileName.
   /// \return An error code on failure, else an empty error code.
   std::error_code createSnapshotToFile(const std::string &fileName);
@@ -966,7 +959,7 @@ class GCBase {
   /// Creates a snapshot of the heap, which includes information about what
   /// objects exist, their sizes, and what they point to.
   virtual void createSnapshot(llvh::raw_ostream &os) = 0;
-  void createSnapshot(GC *gc, llvh::raw_ostream &os);
+  void createSnapshot(GC &gc, llvh::raw_ostream &os);
 
   /// Subclasses can override and add more specific native memory usage.
   virtual void snapshotAddGCNativeNodes(HeapSnapshot &snap);
@@ -1003,6 +996,7 @@ class GCBase {
   /// trace to \p os. After this call, any remembered data about sampled objects
   /// will be gone.
   virtual void disableSamplingHeapProfiler(llvh::raw_ostream &os);
+#endif // HERMES_MEMORY_INSTRUMENTATION
 
   /// Inform the GC about external memory retained by objects.
   virtual void creditExternalMemory(GCCell *alloc, uint32_t size) = 0;
@@ -1035,13 +1029,6 @@ class GCBase {
       const GCSmallHermesValue *start,
       uint32_t numHVs);
   void weakRefReadBarrier(GCCell *value);
-  void weakRefReadBarrier(HermesValue value);
-#endif
-
-#ifndef NDEBUG
-  virtual bool needsWriteBarrier(void *loc, GCCell *value) {
-    return false;
-  }
 #endif
 
   /// @name Marking APIs
@@ -1086,7 +1073,7 @@ class GCBase {
   /// The \p gc argument is passed to methods that verify they're only
   /// called during GC.
   static std::vector<detail::WeakRefKey *> buildKeyList(
-      GC *gc,
+      GC &gc,
       JSWeakMap *weakMap);
 
   /// For all non-null keys in \p weakMap that are unreachable, clear
@@ -1094,7 +1081,7 @@ class GCBase {
   /// to undefined).
   template <typename KeyReachableFunc>
   static void clearEntriesWithUnreachableKeys(
-      GC *gc,
+      GC &gc,
       JSWeakMap *weakMap,
       KeyReachableFunc keyReachable);
 
@@ -1127,7 +1114,7 @@ class GCBase {
       typename ObjIsMarkedFunc,
       typename MarkFromValFunc>
   static bool markFromReachableWeakMapKeys(
-      GC *gc,
+      GC &gc,
       JSWeakMap *weakMap,
       Acceptor &acceptor,
       llvh::DenseMap<JSWeakMap *, std::vector<detail::WeakRefKey *>>
@@ -1185,7 +1172,7 @@ class GCBase {
       typename DrainMarkStackFunc,
       typename CheckMarkStackOverflowFunc>
   static gcheapsize_t completeWeakMapMarking(
-      GC *gc,
+      GC &gc,
       Acceptor &acceptor,
       std::vector<JSWeakMap *> &reachableWeakMaps,
       ObjIsMarkedFunc objIsMarked,
@@ -1211,15 +1198,20 @@ class GCBase {
   virtual std::string getKindAsStr() const = 0;
 
   bool isTrackingIDs() {
+#ifdef HERMES_MEMORY_INSTRUMENTATION
     return getIDTracker().isTrackingIDs() ||
         getAllocationLocationTracker().isEnabled() ||
         getSamplingAllocationTracker().isEnabled();
+#else
+    return getIDTracker().isTrackingIDs();
+#endif
   }
 
   IDTracker &getIDTracker() {
     return idTracker_;
   }
 
+#ifdef HERMES_MEMORY_INSTRUMENTATION
   AllocationLocationTracker &getAllocationLocationTracker() {
     return allocationLocationTracker_;
   }
@@ -1227,6 +1219,7 @@ class GCBase {
   SamplingAllocationLocationTracker &getSamplingAllocationTracker() {
     return samplingAllocationTracker_;
   }
+#endif
 
   /// \name Snapshot ID methods
   /// \{
@@ -1266,18 +1259,6 @@ class GCBase {
   uint64_t nextObjectID();
 #endif
 
-  using TimePoint = std::chrono::steady_clock::time_point;
-  /// Return the difference between the two time points (end - start)
-  /// as a double representing the number of seconds in the duration.
-  static double clockDiffSeconds(TimePoint start, TimePoint end);
-
-  /// Return the difference between the two durations (end - start) given in
-  /// microseconds as a double representing the number of seconds in the
-  /// difference.
-  static double clockDiffSeconds(
-      std::chrono::microseconds start,
-      std::chrono::microseconds end);
-
 // Mangling scheme used by MSVC encode public/private into the name.
 // As a result, vanilla "ifdef public" trick leads to link errors.
 #if defined(UNIT_TEST) || defined(_MSC_VER)
@@ -1299,7 +1280,7 @@ class GCBase {
   /// active.
   class GCCycle final {
    public:
-    explicit GCCycle(GCBase *gc, std::string extraInfo = "");
+    explicit GCCycle(GCBase &gc, std::string extraInfo = "");
     ~GCCycle();
 
     const std::string &extraInfo() {
@@ -1307,7 +1288,7 @@ class GCBase {
     }
 
    private:
-    GCBase *const gc_;
+    GCBase &gc_;
     std::string extraInfo_;
     bool previousInGC_;
   };
@@ -1334,6 +1315,17 @@ class GCBase {
   /// initialization, using the context provided then (on this heap).
   void markWeakRoots(WeakRootAcceptor &acceptor, bool markLongLived) {
     gcCallbacks_.markWeakRoots(acceptor, markLongLived);
+    acceptor.beginRootSection(RootAcceptor::Section::WeakRefSlots);
+    for (auto &slot : weakSlots_) {
+      slot.markWeakRoots(acceptor);
+    }
+    acceptor.endRootSection();
+  }
+
+  /// Frees the weak slot, so it can be re-used by future WeakRef allocations.
+  void freeWeakSlot(WeakRefSlot *slot) {
+    slot->free(firstFreeWeak_);
+    firstFreeWeak_ = slot;
   }
 
   /// Print the cumulative statistics.
@@ -1462,6 +1454,10 @@ class GCBase {
   /// Whether or not a GC cycle is currently occurring.
   bool inGC_{false};
 
+  /// Whether the GC has OOMed. Currently only useful for understanding crash
+  /// dumps, particularly when HERMESVM_EXCEPTION_ON_OOM is set.
+  bool hasOOMed_{false};
+
   /// The block of fields below records values of various metrics at
   /// the start of execution, so that we can get the values at the end
   /// and subtract.  The "runtimeWillExecute" method is called at
@@ -1486,8 +1482,13 @@ class GCBase {
   /// weakSlots_ is a list of all the weak pointers in the system. They are
   /// invalidated if they point to an object that is dead, and do not count
   /// towards whether an object is live or dead.
-  /// Protected by weakRefMutex_.
+  /// The state enum of a WeakRefSlot that is not free may be modified
+  /// concurrently, those values are protected by the weakRefMutex_.
   std::deque<WeakRefSlot> weakSlots_;
+
+  /// Pointer to the first free weak reference slot. Free weak refs are chained
+  /// together in a linked list.
+  WeakRefSlot *firstFreeWeak_{nullptr};
 
   /// Any thread that modifies a WeakRefSlot or a data structure containing
   /// WeakRefs that the GC will mark must hold this mutex. The GC will hold this
@@ -1498,11 +1499,13 @@ class GCBase {
   /// snapshots and the memory profiler.
   IDTracker idTracker_;
 
+#ifdef HERMES_MEMORY_INSTRUMENTATION
   /// Attaches stack-traces to objects when enabled.
   AllocationLocationTracker allocationLocationTracker_;
 
   /// Attaches stack-traces to objects when enabled.
   SamplingAllocationLocationTracker samplingAllocationTracker_;
+#endif
 
 #ifndef NDEBUG
   /// The number of reasons why no allocation is allowed in this heap right
@@ -1550,6 +1553,12 @@ class GCBase {
   }
 #endif
 
+  template <typename T, XorPtrKeyID K>
+  friend class XorPtr;
+
+  /// Randomly generated key used to obfuscate pointers in XorPtr.
+  uintptr_t pointerEncryptionKey_[XorPtrKeyID::_NumKeys];
+
   /// Callback called if it's not null when the Live Data Tripwire is
   /// triggered.
   std::function<void(GCTripwireContext &)> tripwireCallback_;
@@ -1559,25 +1568,7 @@ class GCBase {
 
   /// True if the tripwire has already been called on this heap.
   bool tripwireCalled_{false};
-
-/// Whether to randomize the "target space" for allocations, for GC's in which
-/// this concept makes sense. Only available in debug builds.
-#ifndef NDEBUG
-  bool randomizeAllocSpace_{false};
-#else
-  static const bool randomizeAllocSpace_{false};
-#endif
 };
-
-#ifdef HERMESVM_EXCEPTION_ON_OOM
-/// A std::runtime_error class for out-of-memory.
-class JSOutOfMemoryError : public std::runtime_error {
- public:
-  JSOutOfMemoryError(const std::string &what_arg)
-      : std::runtime_error(what_arg) {}
-  JSOutOfMemoryError(const char *what_arg) : std::runtime_error(what_arg) {}
-};
-#endif
 
 // Utilities for formatting time durations and memory sizes.
 
@@ -1605,5 +1596,6 @@ inline SizeFormatObj formatSize(uint64_t size) {
 
 } // namespace vm
 } // namespace hermes
+#pragma GCC diagnostic pop
 
 #endif // HERMES_VM_GCBASE_H

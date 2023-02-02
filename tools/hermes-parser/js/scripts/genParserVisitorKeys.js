@@ -11,16 +11,16 @@
 'use strict';
 
 import {
-  HermesESTreeJSON,
-  formatAndWriteDistArtifact,
+  GetHermesESTreeJSON,
+  formatAndWriteSrcArtifact,
 } from './utils/scriptUtils';
 import tempCustomASTDefs from './utils/tempCustomASTDefs';
 
-const visitorKeys: {[string]: {[string]: 'Node' | 'NodeList'}} =
+const visitorKeys: {[string]: $ReadOnly<{[string]: 'Node' | 'NodeList'}>} =
   // $FlowExpectedError[incompatible-type]
   Object.create(null);
-for (const node of HermesESTreeJSON) {
-  const nodeVisitorKeys = {};
+for (const node of GetHermesESTreeJSON()) {
+  const nodeVisitorKeys: {[string]: 'Node' | 'NodeList'} = {};
   for (const arg of node.arguments) {
     switch (arg.type) {
       case 'NodeList':
@@ -40,8 +40,7 @@ for (const node of HermesESTreeJSON) {
 
 // custom temp defs
 for (let typeName of Object.keys(tempCustomASTDefs)) {
-  const visitors = tempCustomASTDefs[typeName].visitor;
-  visitorKeys[typeName] = {...visitors};
+  visitorKeys[typeName] = tempCustomASTDefs[typeName];
 }
 
 const visitorKeysFileContents = `\
@@ -50,9 +49,10 @@ export const NODE_LIST_CHILD = 'NodeList';
 export const HERMES_AST_VISITOR_KEYS = ${JSON.stringify(visitorKeys, null, 2)};
 `;
 
-formatAndWriteDistArtifact({
+formatAndWriteSrcArtifact({
   code: visitorKeysFileContents,
   package: 'hermes-parser',
-  filename: 'visitor-keys.js',
-  subdirSegments: ['generated'],
+  file: 'generated/visitor-keys.js',
+  // This file is shadowed by a manual `.js.flow` file
+  flow: false,
 });

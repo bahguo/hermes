@@ -95,7 +95,11 @@ class SemanticValidator {
   /// The maximum AST nesting level. Once we reach it, we report an error and
   /// stop.
   static constexpr unsigned MAX_RECURSION_DEPTH =
-#if defined(HERMES_LIMIT_STACK_DEPTH) || defined(_MSC_VER)
+#if defined(HERMES_LIMIT_STACK_DEPTH) && !defined(_MSC_VER)
+      512
+#elif defined(_MSC_VER) && defined(HERMES_SLOW_DEBUG)
+      256
+#elif defined(_MSC_VER)
       512
 #else
       1024
@@ -171,7 +175,6 @@ class SemanticValidator {
 
   void visit(LabeledStatementNode *labelStmt);
 
-  void visit(BigIntLiteralNode *bigint);
   void visit(RegExpLiteralNode *regexp);
 
   void visit(TryStatementNode *tryStatement);

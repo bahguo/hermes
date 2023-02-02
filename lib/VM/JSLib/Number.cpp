@@ -21,7 +21,11 @@
 
 #include "llvh/ADT/SmallString.h"
 #include "llvh/Support/Format.h"
+#pragma GCC diagnostic push
 
+#ifdef HERMES_COMPILER_SUPPORTS_WSHORTEN_64_TO_32
+#pragma GCC diagnostic ignored "-Wshorten-64-to-32"
+#endif
 namespace hermes {
 namespace vm {
 
@@ -169,11 +173,11 @@ numberConstructor(void *, Runtime &runtime, NativeArgs args) {
   double value = +0.0;
 
   if (args.getArgCount() > 0) {
-    auto res = toNumber_RJS(runtime, args.getArgHandle(0));
+    auto res = toNumeric_RJS(runtime, args.getArgHandle(0));
     if (LLVM_UNLIKELY(res == ExecutionStatus::EXCEPTION)) {
       return ExecutionStatus::EXCEPTION;
     }
-    value = res->getNumber();
+    value = res->isBigInt() ? res->getBigInt()->toDouble() : res->getNumber();
   }
 
   if (args.isConstructorCall()) {

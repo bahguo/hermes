@@ -16,6 +16,7 @@
 #include "hermes/VM/JSNativeFunctions.h"
 #include "hermes/VM/JSProxy.h"
 #include "hermes/VM/JSRegExp.h"
+#include "hermes/VM/JSWeakRef.h"
 
 namespace hermes {
 namespace vm {
@@ -242,6 +243,11 @@ void populateCallSitePrototype(Runtime &runtime);
 /// \return the global String constructor.
 Handle<JSObject> createStringConstructor(Runtime &runtime);
 
+/// Create and initialize the global BigInt constructor. Populate the methods
+/// of BigInt and BigInt.prototype.
+/// \return the global BigInt constructor.
+Handle<JSObject> createBigIntConstructor(Runtime &runtime);
+
 /// Create and initialize the global Function constructor. Populate the methods
 /// of Function and Function.prototype.
 /// \return the global Function constructor.
@@ -328,6 +334,7 @@ CallResult<HermesValue> getSubstitution(
     Handle<StringPrimitive> str,
     uint32_t position,
     Handle<ArrayStorageSmall> captures,
+    Handle<JSObject> namedCaptures,
     Handle<StringPrimitive> replacement);
 
 /// Main logic for String.prototype.split and RegExp.prototype[Symbol.split].
@@ -394,6 +401,9 @@ Handle<JSObject> createWeakMapConstructor(Runtime &runtime);
 
 /// Create the WeakSet constructor and populate methods.
 Handle<JSObject> createWeakSetConstructor(Runtime &runtime);
+
+/// Create the WeakRef constructor and populate methods.
+Handle<JSObject> createWeakRefConstructor(Runtime &runtime);
 
 /// Create the Symbol constructor and populate methods.
 Handle<JSObject> createSymbolConstructor(Runtime &runtime);

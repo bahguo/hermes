@@ -35,10 +35,7 @@ class PinnedHermesValue;
   F(constexpr, PinnedHermesValue *, RegisterStack, nullptr)            \
                                                                        \
   /* Register Stack Size */                                            \
-  F(constexpr, unsigned, MaxNumRegisters, 1024 * 1024)                 \
-                                                                       \
-  /* Whether or not the JIT is enabled */                              \
-  F(constexpr, bool, EnableJIT, false)                                 \
+  F(constexpr, unsigned, MaxNumRegisters, 64 * 1024)                   \
                                                                        \
   /* Whether to allow eval and Function ctor */                        \
   F(constexpr, bool, EnableEval, true)                                 \
@@ -60,6 +57,12 @@ class PinnedHermesValue;
                                                                        \
   /* Support for ECMA-402 Intl APIs. */                                \
   F(constexpr, bool, Intl, true)                                       \
+                                                                       \
+  /* Support for ArrayBuffer, DataView and typed arrays. */            \
+  F(constexpr, bool, ArrayBuffer, true)                                \
+                                                                       \
+  /* Support for using microtasks. */                                  \
+  F(constexpr, bool, MicrotaskQueue, false)                            \
                                                                        \
   /* Enable synth trace. */                                            \
   F(constexpr, bool, TraceEnabled, false)                              \
@@ -118,7 +121,7 @@ class PinnedHermesValue;
   F(constexpr, uint32_t, VMExperimentFlags, 0)                         \
   /* RUNTIME_FIELDS END */
 
-_HERMES_CTORCONFIG_STRUCT(RuntimeConfig, RUNTIME_FIELDS, {});
+_HERMES_CTORCONFIG_STRUCT(RuntimeConfig, RUNTIME_FIELDS, {})
 
 #undef RUNTIME_FIELDS
 

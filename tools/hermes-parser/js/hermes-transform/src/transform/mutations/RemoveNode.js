@@ -17,6 +17,8 @@ import type {
   EnumStringMember,
   FunctionParameter,
   FunctionTypeParam,
+  JSXAttribute,
+  ImportDeclaration,
   ObjectTypeCallProperty,
   ObjectTypeIndexer,
   ObjectTypeInternalSlot,
@@ -28,7 +30,7 @@ import type {
 import type {MutationContext} from '../MutationContext';
 import type {DetachedNode} from '../../detachedNode';
 
-import {removeFromArray} from './utils/arrayUtils';
+import {astArrayMutationHelpers} from 'hermes-parser';
 import {InvalidRemovalError} from '../Errors';
 
 export type RemoveNodeMutation = $ReadOnly<{
@@ -41,6 +43,8 @@ export type RemoveNodeMutation = $ReadOnly<{
     | EnumStringMember
     | FunctionParameter
     | FunctionTypeParam
+    | JSXAttribute
+    | ImportDeclaration
     | ObjectTypeCallProperty
     | ObjectTypeIndexer
     | ObjectTypeInternalSlot
@@ -102,8 +106,7 @@ function getRemovalParent(node: RemoveNodeMutation['node']): $ReadOnly<{
 
     switch (node.type) {
       // ClassMember
-      case 'ClassProperty':
-      case 'ClassPrivateProperty':
+      case 'PropertyDefinition':
       case 'MethodDefinition':
         assertParent('ClassBody');
         return 'body';
@@ -125,6 +128,14 @@ function getRemovalParent(node: RemoveNodeMutation['node']): $ReadOnly<{
       case 'FunctionTypeParam':
         assertParent('FunctionTypeAnnotation');
         return 'params';
+
+      case 'JSXAttribute':
+        assertParent('JSXOpeningElement');
+        return 'attributes';
+
+      case 'ImportDeclaration':
+        assertParent('Program');
+        return 'body';
 
       case 'ObjectTypeCallProperty':
         assertParent('ObjectTypeAnnotation');
@@ -244,7 +255,7 @@ function getRemovalParent(node: RemoveNodeMutation['node']): $ReadOnly<{
     const idx = arr.indexOf(node);
     if (idx === -1) {
       throw new InvalidRemovalError(
-        `Could not find target in array of \`${parent.type}.${key}\`.`,
+        `Could not find target in array of \`${node.parent.type}.${key}\`.`,
       );
     }
     return idx;
@@ -270,7 +281,7 @@ export function performRemoveNodeMutation(
   const parent: interface {
     [string]: $ReadOnlyArray<DetachedNode<RemoveNodeMutation['node']>>,
   } = removalParent.parent;
-  parent[removalParent.key] = removeFromArray(
+  parent[removalParent.key] = astArrayMutationHelpers.removeFromArray(
     parent[removalParent.key],
     removalParent.targetIndex,
   );

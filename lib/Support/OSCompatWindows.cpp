@@ -16,9 +16,12 @@
 // Include windows.h first because other includes from windows API need it.
 // The blank line after the include is necessary to avoid lint error.
 #define WIN32_LEAN_AND_MEAN
+#ifndef NOMINMAX
 #define NOMINMAX // do not define min/max macros
+#endif
 #include <windows.h>
 
+#include <intrin.h>
 #include <io.h>
 #include <psapi.h>
 
@@ -85,22 +88,6 @@ vm_allocate_impl(void *addr, size_t sz, DWORD flags) {
   return result;
 }
 
-static llvh::ErrorOr<void *> vm_allocate_impl(size_t sz) {
-  // Default flags are to reserve and commit.
-
-  // TODO(T40416012) introduce explicit "commit" in OSCompat abstraction of
-  // virtual memory
-
-  // In POSIX, a mem page implicitly transitions from "reserved" state to
-  // "committed" state on access. However, on Windows, accessing
-  // "reserved" but not "committed" page results in an access violation.
-  // There is no explicit call to transition to "committed" state
-  // in Hermes' virtual memory abstraction.
-  // As a result, even though Windows allows one to "reserve" a page without
-  // "commit"ting it, we have to do both here.
-  return vm_allocate_impl(nullptr, sz, MEM_RESERVE | MEM_COMMIT);
-}
-
 static std::error_code vm_free_impl(void *p, size_t sz) {
   BOOL ret = VirtualFree(p, 0, MEM_RELEASE);
 
@@ -108,23 +95,13 @@ static std::error_code vm_free_impl(void *p, size_t sz) {
              : std::error_code(GetLastError(), std::system_category());
 }
 
-llvh::ErrorOr<void *> vm_allocate(size_t sz) {
-#ifndef NDEBUG
-  assert(sz % page_size() == 0);
-  if (testPgSz != 0 && testPgSz > static_cast<size_t>(page_size_real())) {
-    return vm_allocate_aligned(sz, testPgSz);
-  }
-  if (LLVM_UNLIKELY(sz > totalVMAllocLimit)) {
-    return make_error_code(OOMError::TestVMLimitReached);
-  } else if (LLVM_UNLIKELY(totalVMAllocLimit != unsetVMAllocLimit)) {
-    totalVMAllocLimit -= sz;
-  }
-#endif // !NDEBUG
-  return vm_allocate_impl(sz);
-}
-
-llvh::ErrorOr<void *> vm_allocate_aligned(size_t sz, size_t alignment) {
-  /// A value of 3 means vm_allocate_aligned will:
+// TODO(T40416012): Use hint on Windows.
+static llvh::ErrorOr<void *> vm_allocate_aligned_impl(
+    size_t sz,
+    size_t alignment,
+    bool commit,
+    void * /* hint */) {
+  /// A value of 3 means vm_allocate_aligned_impl will:
   /// 1. Opportunistic: allocate and see if it happens to be aligned
   /// 2. Regular: Try aligned allocation 3 times (see below for details)
   /// 3. Fallback: Allocate more than needed, and waste the excess
@@ -140,11 +117,14 @@ llvh::ErrorOr<void *> vm_allocate_aligned(size_t sz, size_t alignment) {
   }
 #endif // !NDEBUG
 
+  DWORD commitFlag = commit ? MEM_COMMIT : 0;
+
   // Opportunistically allocate without alignment constraint,
   // and see if the memory happens to be aligned.
   // While this may be unlikely on the first allocation request,
   // subsequent allocation requests have a good chance.
-  llvh::ErrorOr<void *> result = vm_allocate_impl(sz);
+  llvh::ErrorOr<void *> result =
+      vm_allocate_impl(nullptr, sz, MEM_RESERVE | commitFlag);
   if (!result) {
     // Don't attempt to do anything further if the allocation failed.
     return result;
@@ -155,7 +135,8 @@ llvh::ErrorOr<void *> vm_allocate_aligned(size_t sz, size_t alignment) {
   }
   // Free the oppotunistic allocation.
   if (std::error_code err = vm_free_impl(addr, sz)) {
-    hermes_fatal("Failed to free memory region in vm_allocate_aligned", err);
+    hermes_fatal(
+        "Failed to free memory region in vm_allocate_aligned_impl", err);
   }
 
   for (int attempts = 0; attempts < aligned_allocation_attempts; attempts++) {
@@ -172,11 +153,12 @@ llvh::ErrorOr<void *> vm_allocate_aligned(size_t sz, size_t alignment) {
 
     // Free the larger allocation (including the desired subsection)
     if (std::error_code err = vm_free_impl(addr, sz)) {
-      hermes_fatal("Failed to free memory region in vm_allocate_aligned", err);
+      hermes_fatal(
+          "Failed to free memory region in vm_allocate_aligned_impl", err);
     }
 
     // Request allocation at the desired subsection
-    result = vm_allocate_impl(aligned, sz, MEM_RESERVE | MEM_COMMIT);
+    result = vm_allocate_impl(aligned, sz, MEM_RESERVE | commitFlag);
     if (result) {
       assert(result.get() == aligned);
       return result.get();
@@ -195,13 +177,38 @@ llvh::ErrorOr<void *> vm_allocate_aligned(size_t sz, size_t alignment) {
   }
   addr = *result;
   addr = alignAlloc(addr, alignment);
-  result = vm_allocate_impl(addr, alignment, MEM_COMMIT);
-  if (!result) {
-    hermes_fatal(
-        "Failed to commit subsection of reserved memory in vm_allocate_aligned",
-        result.getError());
+  if (commit) {
+    result = vm_allocate_impl(addr, alignment, MEM_COMMIT);
+    if (!result) {
+      hermes_fatal(
+          "Failed to commit subsection of reserved memory in vm_allocate_aligned_impl",
+          result.getError());
+    }
+    return result;
+  } else {
+    return addr;
   }
-  return result;
+}
+
+llvh::ErrorOr<void *> vm_allocate(size_t sz, void * /* hint */) {
+#ifndef NDEBUG
+  assert(sz % page_size() == 0);
+  if (testPgSz != 0 && testPgSz > static_cast<size_t>(page_size_real())) {
+    return vm_allocate_aligned(sz, testPgSz);
+  }
+  if (LLVM_UNLIKELY(sz > totalVMAllocLimit)) {
+    return make_error_code(OOMError::TestVMLimitReached);
+  } else if (LLVM_UNLIKELY(totalVMAllocLimit != unsetVMAllocLimit)) {
+    totalVMAllocLimit -= sz;
+  }
+#endif // !NDEBUG
+  return vm_allocate_impl(nullptr, sz, MEM_RESERVE | MEM_COMMIT);
+}
+
+llvh::ErrorOr<void *>
+vm_allocate_aligned(size_t sz, size_t alignment, void *hint) {
+  constexpr bool commit = true;
+  return vm_allocate_aligned_impl(sz, alignment, commit, hint);
 }
 
 void vm_free(void *p, size_t sz) {
@@ -225,7 +232,7 @@ void vm_free(void *p, size_t sz) {
 
 void vm_free_aligned(void *p, size_t sz) {
   // VirtualQuery is necessary because p may not be the base location
-  // of the allocation (due to possible fallback in vm_allocate_aligned).
+  // of the allocation (due to possible fallback in vm_allocate_aligned_impl).
   MEMORY_BASIC_INFORMATION mbi;
   SIZE_T query_ret = VirtualQuery(p, &mbi, sizeof(MEMORY_BASIC_INFORMATION));
   assert(query_ret != 0 && "Failed to invoke VirtualQuery in vm_free_aligned");
@@ -240,6 +247,40 @@ void vm_free_aligned(void *p, size_t sz) {
   }
 #endif
 }
+
+// TODO(T40416012): Implement these functions for Windows.
+llvh::ErrorOr<void *>
+vm_reserve_aligned(size_t sz, size_t alignment, void *hint) {
+  constexpr bool commit = false;
+  return vm_allocate_aligned_impl(sz, alignment, commit, hint);
+}
+
+void vm_release_aligned(void *p, size_t sz) {
+  vm_free_aligned(p, sz);
+}
+
+llvh::ErrorOr<void *> vm_commit(void *p, size_t sz) {
+  // n.b. the nullptr check here is important; Windows "helpfully" assumes you
+  // forgot to set MEM_RESERVE if you send in a null pointer with only
+  // MEM_COMMIT. If we didn't check p, mistakenly calling vm_commit with a
+  // nullptr p will succeed and *reserve and commit* the memory. see:
+  // https://devblogs.microsoft.com/oldnewthing/20151008-00/?p=91411
+  if (p == nullptr) {
+    // These are a bit "special case semantics" but for all intents and
+    // purposes we can treat this as an invalid operation
+    return std::error_code(ERROR_INVALID_OPERATION, std::system_category());
+  }
+  void *result = VirtualAlloc(p, sz, MEM_COMMIT, PAGE_READWRITE);
+  if (result == nullptr) {
+    // Windows does not have POSIX error codes, but defines its own set.
+    // Use system_category with GetLastError so that the codes are interpreted
+    // correctly.
+    return std::error_code(GetLastError(), std::system_category());
+  }
+  return result;
+}
+
+void vm_uncommit(void *, size_t) {}
 
 void vm_hugepage(void *p, size_t sz) {
   assert(
@@ -346,6 +387,10 @@ bool num_context_switches(long &voluntary, long &involuntary) {
   return false;
 }
 
+uint64_t process_id() {
+  return GetCurrentProcessId();
+}
+
 uint64_t thread_id() {
   return GetCurrentThreadId();
 }
@@ -405,6 +450,18 @@ std::vector<bool> sched_getaffinity() {
 int sched_getcpu() {
   // Not yet supported.
   return -1;
+}
+
+uint64_t cpu_cycle_counter() {
+#if defined(_MSC_VER) && (defined(_M_IX86) || defined(_M_X64))
+  return __rdtsc();
+#elif __has_builtin(__builtin_readcyclecounter)
+  return __builtin_readcyclecounter();
+#else
+  LARGE_INTEGER cnt;
+  QueryPerformanceCounter(&cnt);
+  return static_cast<uint64_t>(cnt.QuadPart);
+#endif
 }
 
 bool set_env(const char *name, const char *value) {

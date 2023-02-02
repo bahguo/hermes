@@ -92,7 +92,7 @@ class JSDataView final : public JSObject {
     assert(
         offset + length <= buffer->size() &&
         "A DataView cannot be looking outside of the storage");
-    buffer_.setNonNull(runtime, buffer, &runtime.getHeap());
+    buffer_.setNonNull(runtime, buffer, runtime.getHeap());
     offset_ = offset;
     length_ = length;
   }
@@ -130,7 +130,7 @@ T JSDataView::get(
   T result;
   ::memcpy(
       &result,
-      buffer_.getNonNull(runtime)->getDataBlock() + offset_ + offset,
+      buffer_.getNonNull(runtime)->getDataBlock(runtime) + offset_ + offset,
       sizeof(T));
   return llvh::support::endian::byte_swap(
       result,
@@ -153,7 +153,7 @@ void JSDataView::set(
       littleEndian ? llvh::support::endianness::little
                    : llvh::support::endianness::big);
   memcpy(
-      buffer_.getNonNull(runtime)->getDataBlock() + offset_ + offset,
+      buffer_.getNonNull(runtime)->getDataBlock(runtime) + offset_ + offset,
       &value,
       sizeof(T));
 }

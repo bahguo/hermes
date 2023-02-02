@@ -8,7 +8,8 @@
 #ifndef HERMES_VM_WEAKROOT_H
 #define HERMES_VM_WEAKROOT_H
 
-#include "hermes/VM/GC.h"
+#include "hermes/VM/CompressedPointer.h"
+#include "hermes/VM/GCDecl.h"
 
 namespace hermes {
 namespace vm {
@@ -24,13 +25,8 @@ class WeakRootBase : protected CompressedPointer {
   explicit WeakRootBase(GCCell *ptr, PointerBase &base)
       : CompressedPointer(CompressedPointer::encode(ptr, base)) {}
 
-  void *get(PointerBase &base, GC *gc) const {
-    if (!*this)
-      return nullptr;
-    GCCell *ptr = CompressedPointer::getNonNull(base);
-    gc->weakRefReadBarrier(ptr);
-    return ptr;
-  }
+  inline GCCell *get(PointerBase &base, GC &gc) const;
+  inline GCCell *getNonNull(PointerBase &base, GC &gc) const;
 
  public:
   using CompressedPointer::StorageType;
@@ -38,10 +34,17 @@ class WeakRootBase : protected CompressedPointer {
   using CompressedPointer::operator!=;
   using CompressedPointer::operator==;
 
-  /// This function should only be used in cases where it is known that no read
-  /// barrier is necessary.
-  GCCell *getNoBarrierUnsafe(PointerBase &base) {
+  /// These functions should only be used in cases where it is known that no
+  /// read barrier is necessary.
+  GCCell *getNoBarrierUnsafe(PointerBase &base) const {
     return CompressedPointer::get(base);
+  }
+  GCCell *getNonNullNoBarrierUnsafe(PointerBase &base) const {
+    return CompressedPointer::getNonNull(base);
+  }
+
+  CompressedPointer getNoBarrierUnsafe() const {
+    return *this;
   }
 
   WeakRootBase &operator=(CompressedPointer ptr) {
@@ -66,8 +69,18 @@ class WeakRoot final : public WeakRootBase {
   explicit WeakRoot(std::nullptr_t) : WeakRootBase(nullptr) {}
   explicit WeakRoot(T *ptr, PointerBase &base) : WeakRootBase(ptr, base) {}
 
-  T *get(PointerBase &base, GC *gc) const {
-    return static_cast<T *>(WeakRootBase::get(base, gc));
+  inline T *get(PointerBase &base, GC &gc) const;
+  inline T *getNonNull(PointerBase &base, GC &gc) const;
+
+  CompressedPointer getNoBarrierUnsafe() const {
+    return WeakRootBase::getNoBarrierUnsafe();
+  }
+
+  T *getNoBarrierUnsafe(PointerBase &base) const {
+    return static_cast<T *>(WeakRootBase::getNoBarrierUnsafe(base));
+  }
+  T *getNonNullNoBarrierUnsafe(PointerBase &base) const {
+    return static_cast<T *>(WeakRootBase::getNonNullNoBarrierUnsafe(base));
   }
 
   void set(PointerBase &base, T *ptr) {

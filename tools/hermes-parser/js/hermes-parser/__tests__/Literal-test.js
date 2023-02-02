@@ -10,117 +10,33 @@
 
 'use strict';
 
+import type {AlignmentCase} from '../__test_utils__/alignment-utils';
+
+import {
+  expectBabelAlignment,
+  expectEspreeAlignment,
+} from '../__test_utils__/alignment-utils';
 import {parse, parseForSnapshot} from '../__test_utils__/parse';
 
 describe('Literal', () => {
-  const source = `
-    null;
-    10;
-    0.56283;
-    "test";
-    true;
-    /foo/g;
-    4321n;
-    12_34n;
-  `;
+  const testCase: AlignmentCase = {
+    code: `
+      null;
+      10;
+      0.56283;
+      "test";
+      true;
+      /foo/g;
+      4321n;
+      12_34n;
+    `,
+    espree: {expectToFail: false},
+    babel: {expectToFail: false},
+  };
 
-  test('ESTree', () => {
-    const ast = parseForSnapshot(source);
-    expect(ast).toMatchInlineSnapshot(`
-      Object {
-        "body": Array [
-          Object {
-            "directive": null,
-            "expression": Object {
-              "literalType": "null",
-              "raw": "null",
-              "type": "Literal",
-              "value": null,
-            },
-            "type": "ExpressionStatement",
-          },
-          Object {
-            "directive": null,
-            "expression": Object {
-              "literalType": "numeric",
-              "raw": "10",
-              "type": "Literal",
-              "value": 10,
-            },
-            "type": "ExpressionStatement",
-          },
-          Object {
-            "directive": null,
-            "expression": Object {
-              "literalType": "numeric",
-              "raw": "0.56283",
-              "type": "Literal",
-              "value": 0.56283,
-            },
-            "type": "ExpressionStatement",
-          },
-          Object {
-            "directive": null,
-            "expression": Object {
-              "literalType": "string",
-              "raw": "\\"test\\"",
-              "type": "Literal",
-              "value": "test",
-            },
-            "type": "ExpressionStatement",
-          },
-          Object {
-            "directive": null,
-            "expression": Object {
-              "literalType": "boolean",
-              "raw": "true",
-              "type": "Literal",
-              "value": true,
-            },
-            "type": "ExpressionStatement",
-          },
-          Object {
-            "directive": null,
-            "expression": Object {
-              "literalType": "regexp",
-              "raw": "/foo/g",
-              "regex": Object {
-                "flags": "g",
-                "pattern": "foo",
-              },
-              "type": "Literal",
-              "value": /foo/g,
-            },
-            "type": "ExpressionStatement",
-          },
-          Object {
-            "directive": null,
-            "expression": Object {
-              "bigint": "4321",
-              "literalType": "bigint",
-              "raw": "4321n",
-              "type": "Literal",
-              "value": 4321n,
-            },
-            "type": "ExpressionStatement",
-          },
-          Object {
-            "directive": null,
-            "expression": Object {
-              "bigint": "1234",
-              "literalType": "bigint",
-              "raw": "12_34n",
-              "type": "Literal",
-              "value": 1234n,
-            },
-            "type": "ExpressionStatement",
-          },
-        ],
-        "type": "Program",
-      }
-    `);
+  test('Emitted `.value` type is correct', () => {
     // Also assert that the literal's `.value` is the correct instance type
-    expect(parse(source)).toMatchObject({
+    expect(parse(testCase.code)).toMatchObject({
       type: 'Program',
       body: [
         {
@@ -176,29 +92,108 @@ describe('Literal', () => {
         },
       ],
     });
+  });
 
-    // ESTree AST with invalid RegExp literal
-    expect(parse('/foo/qq')).toMatchObject({
-      type: 'Program',
-      body: [
-        {
-          type: 'ExpressionStatement',
-          expression: {
-            type: 'Literal',
-            value: null,
-            regex: {
-              pattern: 'foo',
-              flags: 'qq',
+  test('ESTree', () => {
+    expect(parseForSnapshot(testCase.code)).toMatchInlineSnapshot(`
+      {
+        "body": [
+          {
+            "directive": null,
+            "expression": {
+              "literalType": "null",
+              "raw": "null",
+              "type": "Literal",
+              "value": null,
             },
+            "type": "ExpressionStatement",
           },
-        },
-      ],
-    });
+          {
+            "directive": null,
+            "expression": {
+              "literalType": "numeric",
+              "raw": "10",
+              "type": "Literal",
+              "value": 10,
+            },
+            "type": "ExpressionStatement",
+          },
+          {
+            "directive": null,
+            "expression": {
+              "literalType": "numeric",
+              "raw": "0.56283",
+              "type": "Literal",
+              "value": 0.56283,
+            },
+            "type": "ExpressionStatement",
+          },
+          {
+            "directive": null,
+            "expression": {
+              "literalType": "string",
+              "raw": ""test"",
+              "type": "Literal",
+              "value": "test",
+            },
+            "type": "ExpressionStatement",
+          },
+          {
+            "directive": null,
+            "expression": {
+              "literalType": "boolean",
+              "raw": "true",
+              "type": "Literal",
+              "value": true,
+            },
+            "type": "ExpressionStatement",
+          },
+          {
+            "directive": null,
+            "expression": {
+              "literalType": "regexp",
+              "raw": "/foo/g",
+              "regex": {
+                "flags": "g",
+                "pattern": "foo",
+              },
+              "type": "Literal",
+              "value": /foo/g,
+            },
+            "type": "ExpressionStatement",
+          },
+          {
+            "directive": null,
+            "expression": {
+              "bigint": "4321",
+              "literalType": "bigint",
+              "raw": "4321n",
+              "type": "Literal",
+              "value": 4321n,
+            },
+            "type": "ExpressionStatement",
+          },
+          {
+            "directive": null,
+            "expression": {
+              "bigint": "1234",
+              "literalType": "bigint",
+              "raw": "12_34n",
+              "type": "Literal",
+              "value": 1234n,
+            },
+            "type": "ExpressionStatement",
+          },
+        ],
+        "type": "Program",
+      }
+    `);
+    expectEspreeAlignment(testCase);
   });
 
   test('Babel', () => {
     // Babel AST literal nodes
-    expect(parse(source, {babel: true})).toMatchObject({
+    expect(parse(testCase.code, {babel: true})).toMatchObject({
       type: 'File',
       program: {
         type: 'Program',
@@ -262,32 +257,88 @@ describe('Literal', () => {
         ],
       },
     });
+    expectBabelAlignment(testCase);
+  });
+
+  describe('RegExp', () => {
+    const testCase: AlignmentCase = {
+      code: `
+        /foo/qq
+      `,
+      espree: {
+        expectToFail: 'espree-exception',
+        expectedExceptionMessage: 'Invalid regular expression flag',
+      },
+      babel: {
+        expectToFail: 'babel-exception',
+        expectedExceptionMessage: 'Invalid regular expression flag',
+      },
+    };
+
+    test('ESTree', () => {
+      // ESTree AST with invalid RegExp literal
+      expect(parse(testCase.code)).toMatchObject({
+        type: 'Program',
+        body: [
+          {
+            type: 'ExpressionStatement',
+            expression: {
+              type: 'Literal',
+              value: null,
+              regex: {
+                pattern: 'foo',
+                flags: 'qq',
+              },
+            },
+          },
+        ],
+      });
+      expectEspreeAlignment(testCase);
+    });
+
+    test('Babel', () => {
+      expectBabelAlignment(testCase);
+    });
   });
 });
 
-test('Allow JSX String literals', () => {
-  expect(parse(`<foo a="abc &amp; def" />;`)).toMatchObject({
-    type: 'Program',
-    body: [
-      {
-        type: 'ExpressionStatement',
-        expression: {
-          type: 'JSXElement',
-          openingElement: {
-            type: 'JSXOpeningElement',
-            attributes: [
-              {
-                type: 'JSXAttribute',
-                value: {
-                  type: 'Literal',
-                  value: 'abc & def',
-                  raw: '"abc &amp; def"',
+describe('JSX String Literals', () => {
+  const testCase: AlignmentCase = {
+    code: `
+      <foo a="abc &amp; def" />;
+    `,
+    espree: {expectToFail: false},
+    babel: {expectToFail: false},
+  };
+  test('ESTree', () => {
+    expect(parse(testCase.code)).toMatchObject({
+      type: 'Program',
+      body: [
+        {
+          type: 'ExpressionStatement',
+          expression: {
+            type: 'JSXElement',
+            openingElement: {
+              type: 'JSXOpeningElement',
+              attributes: [
+                {
+                  type: 'JSXAttribute',
+                  value: {
+                    type: 'Literal',
+                    value: 'abc & def',
+                    raw: '"abc &amp; def"',
+                  },
                 },
-              },
-            ],
+              ],
+            },
           },
         },
-      },
-    ],
+      ],
+    });
+    expectEspreeAlignment(testCase);
+  });
+
+  test('Babel', () => {
+    expectBabelAlignment(testCase);
   });
 });

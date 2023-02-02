@@ -25,7 +25,6 @@ STATISTIC(NumArgsOpt, "Number of arguments optimized");
 
 using namespace hermes;
 using llvh::dbgs;
-using llvh::isa;
 
 /// \returns True if the function access arguments not through the formal
 /// parameters.
@@ -150,11 +149,11 @@ static bool performFSO(Function *F, std::vector<Function *> &worklist) {
 
   // Replace all unused arguments with undef.
   for (auto &arg : unusedParams) {
-    auto *prevArg = arg.first->getOperand(arg.second + 1);
+    auto *prevArg = arg.first->getArgument(arg.second);
     if (!llvh::isa<Literal>(prevArg))
       toRedo.insert(arg.first->getParent()->getParent());
 
-    arg.first->setOperand(undef, arg.second + 1);
+    arg.first->setArgument(undef, arg.second);
     NumArgsOpt++;
   }
 
@@ -189,8 +188,8 @@ bool FuncSigOpts::runOnModule(Module *M) {
   return changed;
 }
 
-Pass *hermes::createFuncSigOpts() {
-  return new FuncSigOpts();
+std::unique_ptr<Pass> hermes::createFuncSigOpts() {
+  return std::make_unique<FuncSigOpts>();
 }
 
 #undef DEBUG_TYPE

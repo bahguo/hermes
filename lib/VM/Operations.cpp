@@ -9,6 +9,7 @@
 
 #include "hermes/Support/Conversions.h"
 #include "hermes/Support/OSCompat.h"
+#include "hermes/VM/BigIntPrimitive.h"
 #include "hermes/VM/Callable.h"
 #include "hermes/VM/Casting.h"
 #include "hermes/VM/JSArray.h"
@@ -68,6 +69,10 @@ HermesValue typeOf(Runtime &runtime, Handle<> valueHandle) {
     case HermesValue::ETag::Str2:
       return HermesValue::encodeStringValue(
           runtime.getPredefinedString(Predefined::string));
+    case HermesValue::ETag::BigInt1:
+    case HermesValue::ETag::BigInt2:
+      return HermesValue::encodeStringValue(
+          runtime.getPredefinedString(Predefined::bigint));
     case HermesValue::ETag::Bool:
       return HermesValue::encodeStringValue(
           runtime.getPredefinedString(Predefined::boolean));
@@ -114,10 +119,16 @@ bool isSameValue(HermesValue x, HermesValue y) {
       !x.isEmpty() && !x.isNativeValue() &&
       "Empty and Native Value cannot be compared");
 
-  // Strings are the only type that requires deep comparison.
+  // Strings require deep comparison.
   if (x.isString()) {
     // For strings, we compare each character in sequence.
     return x.getString()->equals(y.getString());
+  }
+
+  // Bigints also require deep comparison.
+  if (x.isBigInt()) {
+    // For bigints, perform the numerical comparison.
+    return x.getBigInt()->compare(y.getBigInt()) == 0;
   }
 
   // Otherwise they are identical if the raw bits are the same.
@@ -133,8 +144,8 @@ bool isSameValueZero(HermesValue x, HermesValue y) {
 }
 
 bool isPrimitive(HermesValue val) {
-  assert(val.getTag() != EmptyInvalidTag && "empty value encountered");
-  assert(val.getTag() != NativeValueTag && "native value encountered");
+  assert(!val.isEmpty() && "empty value encountered");
+  assert(!val.isNativeValue() && "native value encountered");
   return !val.isObject();
 }
 
@@ -192,12 +203,10 @@ CallResult<HermesValue> ordinaryToPrimitive(
 /// ES5.1 9.1
 CallResult<HermesValue>
 toPrimitive_RJS(Runtime &runtime, Handle<> valueHandle, PreferredType hint) {
-  assert(
-      valueHandle->getTag() != EmptyInvalidTag && "empty value is not allowed");
-  assert(
-      valueHandle->getTag() != NativeValueTag && "native value is not allowed");
+  assert(!valueHandle->isEmpty() && "empty value is not allowed");
+  assert(!valueHandle->isNativeValue() && "native value is not allowed");
 
-  if (valueHandle->getTag() != ObjectTag)
+  if (!valueHandle->isObject())
     return *valueHandle;
 
   // 4. Let exoticToPrim be GetMethod(input, @@toPrimitive).
@@ -260,6 +269,9 @@ bool toBoolean(HermesValue value) {
     case HermesValue::ETag::Object1:
     case HermesValue::ETag::Object2:
       return true;
+    case HermesValue::ETag::BigInt1:
+    case HermesValue::ETag::BigInt2:
+      return value.getBigInt()->compare(0) != 0;
     case HermesValue::ETag::Str1:
     case HermesValue::ETag::Str2:
       return value.getString()->getStringLength() != 0;
@@ -336,6 +348,17 @@ CallResult<PseudoHandle<StringPrimitive>> toString_RJS(
     case HermesValue::ETag::Native1:
     case HermesValue::ETag::Native2:
       llvm_unreachable("native value");
+    case HermesValue::ETag::BigInt1:
+    case HermesValue::ETag::BigInt2: {
+      const uint8_t kDefaultRadix = 10;
+      auto res =
+          vmcast<BigIntPrimitive>(value)->toString(runtime, kDefaultRadix);
+      if (LLVM_UNLIKELY(res == ExecutionStatus::EXCEPTION)) {
+        return ExecutionStatus::EXCEPTION;
+      }
+      result = res->getString();
+      break;
+    }
     case HermesValue::ETag::Str1:
     case HermesValue::ETag::Str2:
       result = vmcast<StringPrimitive>(value);
@@ -506,6 +529,9 @@ CallResult<HermesValue> toNumber_RJS(Runtime &runtime, Handle<> valueHandle) {
       result =
           stringToNumber(runtime, Handle<StringPrimitive>::vmcast(valueHandle));
       break;
+    case HermesValue::ETag::BigInt1:
+    case HermesValue::ETag::BigInt2:
+      return runtime.raiseTypeError("Cannot convert BigInt to number");
     case HermesValue::ETag::Undefined:
       result = std::numeric_limits<double>::quiet_NaN();
       break;
@@ -522,6 +548,21 @@ CallResult<HermesValue> toNumber_RJS(Runtime &runtime, Handle<> valueHandle) {
       return value;
   }
   return HermesValue::encodeDoubleValue(result);
+}
+
+CallResult<HermesValue> toNumeric_RJS(Runtime &runtime, Handle<> valueHandle) {
+  GCScopeMarkerRAII marker{runtime};
+  auto primValue = toPrimitive_RJS(runtime, valueHandle, PreferredType::NUMBER);
+
+  if (LLVM_UNLIKELY(primValue == ExecutionStatus::EXCEPTION)) {
+    return ExecutionStatus::EXCEPTION;
+  }
+
+  if (primValue->isBigInt()) {
+    return *primValue;
+  }
+
+  return toNumber_RJS(runtime, runtime.makeHandle(*primValue));
 }
 
 CallResult<HermesValue> toLength(Runtime &runtime, Handle<> valueHandle) {
@@ -702,6 +743,9 @@ CallResult<Handle<JSObject>> getPrimitivePrototype(
     case HermesValue::ETag::Str1:
     case HermesValue::ETag::Str2:
       return Handle<JSObject>::vmcast(&runtime.stringPrototype);
+    case HermesValue::ETag::BigInt1:
+    case HermesValue::ETag::BigInt2:
+      return Handle<JSObject>::vmcast(&runtime.bigintPrototype);
     case HermesValue::ETag::Bool:
       return Handle<JSObject>::vmcast(&runtime.booleanPrototype);
     case HermesValue::ETag::Symbol:
@@ -737,11 +781,18 @@ CallResult<HermesValue> toObject(Runtime &runtime, Handle<> valueHandle) {
                  value.getBool(),
                  Handle<JSObject>::vmcast(&runtime.booleanPrototype))
           .getHermesValue();
+    case HermesValue::ETag::BigInt1:
+    case HermesValue::ETag::BigInt2:
+      return JSBigInt::create(
+                 runtime,
+                 Handle<BigIntPrimitive>::vmcast(valueHandle),
+                 Handle<JSObject>::vmcast(&runtime.bigintPrototype))
+          .getHermesValue();
     case HermesValue::ETag::Str1:
     case HermesValue::ETag::Str2: {
       auto res = JSString::create(
           runtime,
-          runtime.makeHandle(value.getString()),
+          Handle<StringPrimitive>::vmcast(valueHandle),
           Handle<JSObject>::vmcast(&runtime.stringPrototype));
       if (LLVM_UNLIKELY(res == ExecutionStatus::EXCEPTION)) {
         return ExecutionStatus::EXCEPTION;
@@ -785,6 +836,83 @@ ExecutionStatus amendPropAccessErrorMsgWithPropName(
       valueStr);
 }
 
+/// Implement a BigInt vs. String comparison operation using a user-provided
+/// \p comparator. Note that \p leftHandle is a Handle<BigIntPrimitive> to
+/// ensure the caller is putting the BigInt in the lhs (and adjusting \p
+/// comparator appropriately).
+/// \return false if StringToBigInt( \p rightHandle ) is undefined, otherwise
+/// returns \p comparator ( \p leftHandle <=> \p righHandle ).
+static CallResult<bool> compareBigIntAndString(
+    Runtime &runtime,
+    Handle<BigIntPrimitive> leftHandle,
+    Handle<> rightHandle,
+    bool (*comparator)(int)) {
+  assert(rightHandle->isString() && "rhs should be string");
+
+  auto bigintRight = stringToBigInt_RJS(runtime, rightHandle);
+  if (LLVM_UNLIKELY(bigintRight == ExecutionStatus::EXCEPTION)) {
+    return ExecutionStatus::EXCEPTION;
+  }
+  if (bigintRight->isUndefined()) { // Non-compliance: should be undefined.
+    return false;
+  }
+  assert(bigintRight->isBigInt() && "stringToBigInt resulted in non-bigint");
+  return comparator(leftHandle->compare(bigintRight->getBigInt()));
+}
+
+/// Implement a BigInt vs. Number comparison operation using a user-provided
+/// \p comparator. Note that \p leftHandle is a Handle<BigIntPrimitive> to
+/// ensure the caller is putting the BigInt in the lhs (and adjusting \p
+/// comparator appropriately).
+/// \return false if \p right is NaN, otherwise returns
+/// \p comparator ( \p leftHandle <=> \p righHandle ).
+static CallResult<bool> compareBigIntAndNumber(
+    Runtime &runtime,
+    Handle<BigIntPrimitive> leftHandle,
+    double right,
+    bool (*comparator)(int)) {
+  switch (std::fpclassify(right)) {
+    case FP_NAN:
+      // BigInt comparison to NaN is always false.
+      return false;
+    case FP_INFINITE:
+      // If rhs is +infinite, it is greater than lhs; otherwise, it is less than
+      // rhs.
+      return comparator(right > 0 ? -1 : 1);
+    default:
+      break;
+  }
+
+  // Split the rhs into integral and fractional parts.
+  double integralPart;
+  const double fractionalPart = std::modf(right, &integralPart);
+
+  // Now use the rhs' integral part to create a new BigInt, which is compared to
+  // lhs.
+  auto rightHandle = BigIntPrimitive::fromDouble(runtime, integralPart);
+  if (LLVM_UNLIKELY(rightHandle == ExecutionStatus::EXCEPTION)) {
+    return ExecutionStatus::EXCEPTION;
+  }
+
+  // If rhs' integral part is different than lhs, then use the integral parts'
+  // comparison to decide the result.
+  if (int comparisonResult = leftHandle->compare(rightHandle->getBigInt())) {
+    return comparator(comparisonResult);
+  }
+
+  // Lhs' and rhs' integral parts are equal, thus resort the rhs' fractional
+  // part.
+  if (fractionalPart != 0) {
+    //  If rhs is negative, then it is smaller than lhs; otherwise, it is
+    //  greater.
+    return comparator(right < 0 ? 1 : -1);
+  }
+
+  // Lhs' and rhs' integral parts are equal, and rhs does not have a fractional
+  // part (it is zero), thus they are equal.
+  return comparator(0);
+}
+
 /// Implement a comparison operator. First both operands a converted to
 /// primitives. If they both end up being strings, a lexicographical comparison
 /// is performed. Otherwise both operands are converted to numbers and the
@@ -810,17 +938,53 @@ ExecutionStatus amendPropAccessErrorMsgWithPropName(
       return left->getString()->compare(right->getString()) oper 0;   \
     }                                                                 \
                                                                       \
+    if (left->isBigInt() && right->isString()) {                      \
+      return compareBigIntAndString(                                  \
+          runtime,                                                    \
+          Handle<BigIntPrimitive>::vmcast(left),                      \
+          right,                                                      \
+          [](int result) { return result oper 0; });                  \
+    }                                                                 \
+                                                                      \
+    if (left->isString() && right->isBigInt()) {                      \
+      return compareBigIntAndString(                                  \
+          runtime,                                                    \
+          Handle<BigIntPrimitive>::vmcast(right),                     \
+          left,                                                       \
+          [](int result) { return -result oper 0; });                 \
+    }                                                                 \
+                                                                      \
     /* Convert both to a number and compare the numbers. */           \
-    resLeft = toNumber_RJS(runtime, left);                            \
+    resLeft = toNumeric_RJS(runtime, left);                           \
     if (resLeft == ExecutionStatus::EXCEPTION)                        \
       return ExecutionStatus::EXCEPTION;                              \
     left = resLeft.getValue();                                        \
-    resRight = toNumber_RJS(runtime, right);                          \
+    resRight = toNumeric_RJS(runtime, right);                         \
     if (resRight == ExecutionStatus::EXCEPTION)                       \
       return ExecutionStatus::EXCEPTION;                              \
     right = resRight.getValue();                                      \
                                                                       \
-    return left->getNumber() oper right->getNumber();                 \
+    if (left->isNumber() && right->isNumber()) {                      \
+      return left->getNumber() oper right->getNumber();               \
+    } else if (left->isBigInt() && right->isBigInt()) {               \
+      return left->getBigInt()->compare(right->getBigInt()) oper 0;   \
+    }                                                                 \
+                                                                      \
+    if (left->isBigInt() && right->isNumber()) {                      \
+      return compareBigIntAndNumber(                                  \
+          runtime,                                                    \
+          Handle<BigIntPrimitive>::vmcast(left),                      \
+          right->getNumber(),                                         \
+          [](int result) { return result oper 0; });                  \
+    }                                                                 \
+    assert(                                                           \
+        left->isNumber() && right->isBigInt() &&                      \
+        "expecting one number and one bigint");                       \
+    return compareBigIntAndNumber(                                    \
+        runtime,                                                      \
+        Handle<BigIntPrimitive>::vmcast(right),                       \
+        left->getNumber(),                                            \
+        [](int result) { return -result oper 0; });                   \
   }
 
 IMPLEMENT_COMPARISON_OP(lessOp_RJS, <);
@@ -887,6 +1051,9 @@ abstractEqualityTest_RJS(Runtime &runtime, Handle<> xHandle, Handle<> yHandle) {
       CASE_M_M(Str, Str) {
         return x->getString()->equals(y->getString());
       }
+      CASE_M_M(BigInt, BigInt) {
+        return x->getBigInt()->compare(y->getBigInt()) == 0;
+      }
       CASE_S_S(Bool, Bool)
       CASE_S_S(Symbol, Symbol)
       CASE_M_M(Object, Object) {
@@ -911,21 +1078,41 @@ abstractEqualityTest_RJS(Runtime &runtime, Handle<> xHandle, Handle<> yHandle) {
             y->getNumber();
       }
       // 6. If Type(x) is BigInt and Type(y) is String, then
-      // a. Let n be ! StringToBigInt(y).
-      // b. If n is NaN, return false.
-      // c. Return the result of the comparison x == n.
+      CASE_M_M(BigInt, Str) {
+        // a. Let n be ! StringToBigInt(y).
+        auto n = stringToBigInt_RJS(runtime, y);
+        if (LLVM_UNLIKELY(n == ExecutionStatus::EXCEPTION)) {
+          return ExecutionStatus::EXCEPTION;
+        }
+        // b. If n is NaN, return false.
+        // N.B.: this has been amended in ES2023 to read
+        //       If n is undefined, return false.
+        if (n->isUndefined()) {
+          return false;
+        }
+        // c. Return the result of the comparison x == n.
+        y = n.getValue();
+        break;
+      }
       // 7. If Type(x) is String and Type(y) is BigInt, return the result of the
       // comparison y == x.
+      CASE_M_M(Str, BigInt) {
+        std::swap(x, y);
+        break;
+      }
       // 8. If Type(x) is Boolean, return the result of the comparison !
       // ToNumber(x) == y.
       CASE_S_S(Bool, NUMBER_TAG) {
         // Do both conversions and check numerical equality.
-        return x->getBool() == y->getNumber();
+        return static_cast<double>(x->getBool()) == y->getNumber();
       }
       CASE_S_M(Bool, Str) {
         // Do string parsing and check double equality.
-        return x->getBool() ==
+        return static_cast<double>(x->getBool()) ==
             stringToNumber(runtime, Handle<StringPrimitive>::vmcast(y));
+      }
+      CASE_S_M(Bool, BigInt) {
+        return y->getBigInt()->compare(static_cast<int32_t>(x->getBool())) == 0;
       }
       CASE_S_M(Bool, Object) {
         x = HermesValue::encodeDoubleValue(x->getBool());
@@ -934,11 +1121,14 @@ abstractEqualityTest_RJS(Runtime &runtime, Handle<> xHandle, Handle<> yHandle) {
       // 9. If Type(y) is Boolean, return the result of the comparison x == !
       // ToNumber(y).
       CASE_S_S(NUMBER_TAG, Bool) {
-        return x->getNumber() == y->getBool();
+        return x->getNumber() == static_cast<double>(y->getBool());
       }
       CASE_M_S(Str, Bool) {
         return stringToNumber(runtime, Handle<StringPrimitive>::vmcast(x)) ==
-            y->getBool();
+            static_cast<double>(y->getBool());
+      }
+      CASE_M_S(BigInt, Bool) {
+        return x->getBigInt()->compare(static_cast<int32_t>(y->getBool())) == 0;
       }
       CASE_M_S(Object, Bool) {
         y = HermesValue::encodeDoubleValue(y->getBool());
@@ -947,6 +1137,7 @@ abstractEqualityTest_RJS(Runtime &runtime, Handle<> xHandle, Handle<> yHandle) {
       // 10. If Type(x) is either String, Number, BigInt, or Symbol and Type(y)
       // is Object, return the result of the comparison x == ToPrimitive(y).
       CASE_M_M(Str, Object)
+      CASE_M_M(BigInt, Object)
       CASE_S_M(Symbol, Object)
       CASE_S_M(NUMBER_TAG, Object) {
         auto status = toPrimitive_RJS(runtime, y, PreferredType::NONE);
@@ -959,6 +1150,7 @@ abstractEqualityTest_RJS(Runtime &runtime, Handle<> xHandle, Handle<> yHandle) {
       // 11. If Type(x) is Object and Type(y) is either String, Number, BigInt,
       // or Symbol, return the result of the comparison ToPrimitive(x) == y.
       CASE_M_M(Object, Str)
+      CASE_M_M(Object, BigInt)
       CASE_M_S(Object, Symbol)
       CASE_M_S(Object, NUMBER_TAG) {
         auto status = toPrimitive_RJS(runtime, x, PreferredType::NONE);
@@ -968,11 +1160,27 @@ abstractEqualityTest_RJS(Runtime &runtime, Handle<> xHandle, Handle<> yHandle) {
         x = status.getValue();
         break;
       }
-        // 12. If Type(x) is BigInt and Type(y) is Number, or if Type(x) is
-        // Number and Type(y) is BigInt, then a. If x or y are any of NaN, +∞,
-        // or -∞, return false. b. If the mathematical value of x is equal to
-        // the mathematical value of y, return true; otherwise return false.
-        // 13. Return false.
+      // 12. If Type(x) is BigInt and Type(y) is Number, or if Type(x) is
+      // Number and Type(y) is BigInt, then a. If x or y are any of NaN, +∞,
+      // or -∞, return false. b. If the mathematical value of x is equal to
+      // the mathematical value of y, return true; otherwise return false.
+      CASE_M_S(BigInt, NUMBER_TAG) {
+        std::swap(x, y);
+        LLVM_FALLTHROUGH;
+      }
+      CASE_S_M(NUMBER_TAG, BigInt) {
+        if (!isIntegralNumber(x->getNumber())) {
+          return false;
+        }
+
+        auto xAsBigInt = BigIntPrimitive::fromDouble(runtime, x->getNumber());
+        if (LLVM_UNLIKELY(xAsBigInt == ExecutionStatus::EXCEPTION)) {
+          return ExecutionStatus::EXCEPTION;
+        }
+        return xAsBigInt->getBigInt()->compare(y->getBigInt()) == 0;
+      }
+
+      // 13. Return false.
       default:
         return false;
     }
@@ -996,8 +1204,12 @@ bool strictEqualityTest(HermesValue x, HermesValue y) {
   // All the rest of the cases need to have the same tags.
   if (x.getTag() != y.getTag())
     return false;
-  // The only remaining case is string, which needs a deep comparison.
-  return x.isString() && x.getString()->equals(y.getString());
+  // Strings need deep comparison.
+  if (x.isString())
+    return x.getString()->equals(y.getString());
+
+  // The only remaining case is bigint, which also needs a deep comparison.
+  return x.isBigInt() && x.getBigInt()->compare(y.getBigInt()) == 0;
 }
 
 CallResult<HermesValue>
@@ -1006,23 +1218,23 @@ addOp_RJS(Runtime &runtime, Handle<> xHandle, Handle<> yHandle) {
   if (resX == ExecutionStatus::EXCEPTION) {
     return ExecutionStatus::EXCEPTION;
   }
-  auto x = runtime.makeHandle(resX.getValue());
+  auto xPrim = runtime.makeHandle(resX.getValue());
 
   auto resY = toPrimitive_RJS(runtime, yHandle, PreferredType::NONE);
   if (resY == ExecutionStatus::EXCEPTION) {
     return ExecutionStatus::EXCEPTION;
   }
-  auto y = runtime.makeHandle(resY.getValue());
+  auto yPrim = runtime.makeHandle(resY.getValue());
 
   // If one of the values is a string, concatenate as strings.
-  if (x->isString() || y->isString()) {
-    auto resX = toString_RJS(runtime, x);
+  if (xPrim->isString() || yPrim->isString()) {
+    auto resX = toString_RJS(runtime, xPrim);
     if (resX == ExecutionStatus::EXCEPTION) {
       return ExecutionStatus::EXCEPTION;
     }
     auto xStr = runtime.makeHandle(std::move(*resX));
 
-    auto resY = toString_RJS(runtime, y);
+    auto resY = toString_RJS(runtime, yPrim);
     if (resY == ExecutionStatus::EXCEPTION) {
       return ExecutionStatus::EXCEPTION;
     }
@@ -1031,20 +1243,37 @@ addOp_RJS(Runtime &runtime, Handle<> xHandle, Handle<> yHandle) {
     return StringPrimitive::concat(runtime, xStr, yStr);
   }
 
-  // Add the numbers since neither are strings.
-  resX = toNumber_RJS(runtime, x);
-  if (LLVM_UNLIKELY(resX == ExecutionStatus::EXCEPTION)) {
-    return ExecutionStatus::EXCEPTION;
+  // xPrim and yPrim are primitives; hence, they are already bigints, or they
+  // will never be bigints.
+  if (LLVM_LIKELY(!xPrim->isBigInt())) {
+    // xPrim is not a bigint; thus this is Number + Number.
+    auto res = toNumber_RJS(runtime, xPrim);
+    if (LLVM_UNLIKELY(res == ExecutionStatus::EXCEPTION)) {
+      return ExecutionStatus::EXCEPTION;
+    }
+    const double xNum = res->getNumber();
+    // N.B.: toNumber(yPrim) will raise an TypeError if yPrim is bigint, which
+    // is the correct exception to be raised when trying to perform
+    // Number + BigInt. This avoids the need to check if yPrim is a bigint.
+    res = toNumber_RJS(runtime, yPrim);
+    if (LLVM_UNLIKELY(res == ExecutionStatus::EXCEPTION)) {
+      return ExecutionStatus::EXCEPTION;
+    }
+    const double yNum = res->getNumber();
+    return HermesValue::encodeDoubleValue(xNum + yNum);
   }
-  auto xNum = resX.getValue().getNumber();
 
-  resY = toNumber_RJS(runtime, y);
-  if (LLVM_UNLIKELY(resY == ExecutionStatus::EXCEPTION)) {
-    return ExecutionStatus::EXCEPTION;
+  // yPrim is a primitive; therefore it is already a BigInt, or it will never be
+  // one.
+  if (!yPrim->isBigInt()) {
+    return runtime.raiseTypeErrorForValue(
+        "Cannot convert ", yHandle, " to BigInt");
   }
-  auto yNum = resY.getValue().getNumber();
 
-  return HermesValue::encodeDoubleValue(xNum + yNum);
+  return BigIntPrimitive::add(
+      runtime,
+      runtime.makeHandle(resX->getBigInt()),
+      runtime.makeHandle(resY->getBigInt()));
 }
 
 static const size_t MIN_RADIX = 2;
@@ -1447,11 +1676,14 @@ CallResult<bool> isConstructor(Runtime &runtime, Callable *callable) {
 
   // If it is a bytecode function, check the flags.
   if (auto *func = dyn_vmcast<JSFunction>(callable)) {
-    auto *cb = func->getCodeBlock();
+    auto *cb = func->getCodeBlock(runtime);
     // Even though it doesn't make sense logically, we need to compile the
     // function in order to access it flags.
-    cb->lazyCompile(runtime);
-    return !func->getCodeBlock()->getHeaderFlags().isCallProhibited(true);
+    if (LLVM_UNLIKELY(cb->lazyCompile(runtime) == ExecutionStatus::EXCEPTION)) {
+      return ExecutionStatus::EXCEPTION;
+    }
+    return !func->getCodeBlock(runtime)->getHeaderFlags().isCallProhibited(
+        true);
   }
 
   // We check for NativeFunction since those are defined to not be
@@ -1946,6 +2178,98 @@ CallResult<HermesValue> objectFromPropertyDescriptor(
   }
 
   return obj.getHermesValue();
+}
+
+CallResult<HermesValue> numberToBigInt(Runtime &runtime, double number) {
+  if (!isIntegralNumber(number)) {
+    return runtime.raiseRangeError("number is not integral");
+  }
+
+  return BigIntPrimitive::fromDouble(runtime, number);
+}
+
+bool isIntegralNumber(double number) {
+  // 1. if Type(argument) is not Number, return false
+  // it is a number
+
+  // 2. if argument is NaN, +inf, -inf, return false
+  if (std::isnan(number) || number == std::numeric_limits<double>::infinity() ||
+      number == -std::numeric_limits<double>::infinity()) {
+    return false;
+  }
+
+  // 3. if floor(abs(R(argument))) != abs(R(argument)) return false
+  if (std::floor(std::abs(number)) != std::abs(number)) {
+    return false;
+  }
+
+  // 4. return true
+  return true;
+}
+
+CallResult<HermesValue> toBigInt_RJS(Runtime &runtime, Handle<> value) {
+  auto prim = toPrimitive_RJS(runtime, value, PreferredType::NUMBER);
+  if (LLVM_UNLIKELY(prim == ExecutionStatus::EXCEPTION)) {
+    return ExecutionStatus::EXCEPTION;
+  }
+
+  switch (prim->getETag()) {
+    default:
+      break;
+    case HermesValue::ETag::Undefined:
+      return runtime.raiseTypeError("invalid argument to BigInt()");
+    case HermesValue::ETag::Null:
+      return runtime.raiseTypeError("invalid argument to BigInt()");
+    case HermesValue::ETag::Bool:
+      return BigIntPrimitive::fromSigned(runtime, prim->getBool() ? 1 : 0);
+    case HermesValue::ETag::BigInt1:
+    case HermesValue::ETag::BigInt2:
+      return *prim;
+    case HermesValue::ETag::Str1:
+    case HermesValue::ETag::Str2: {
+      auto n = stringToBigInt_RJS(runtime, runtime.makeHandle(*prim));
+      if (LLVM_UNLIKELY(n == ExecutionStatus::EXCEPTION)) {
+        return ExecutionStatus::EXCEPTION;
+      }
+      if (n->isUndefined()) {
+        return runtime.raiseSyntaxError("can't convert string to bigint");
+      }
+      return *n;
+    }
+    case HermesValue::ETag::Symbol:
+      return runtime.raiseTypeError("invalid argument to BigInt()");
+  }
+
+  return runtime.raiseTypeError("invalid argument to BigInt()");
+}
+
+CallResult<HermesValue> stringToBigInt_RJS(Runtime &runtime, Handle<> value) {
+  if (value->isString()) {
+    auto str = value->getString();
+
+    std::string outError;
+    auto parsedBigInt = str->isASCII()
+        ? bigint::ParsedBigInt::parsedBigIntFromStringIntegerLiteral(
+              str->getStringRef<char>(), &outError)
+        : bigint::ParsedBigInt::parsedBigIntFromStringIntegerLiteral(
+              str->getStringRef<char16_t>(), &outError);
+    if (!parsedBigInt) {
+      return HermesValue::encodeUndefinedValue();
+    }
+
+    return BigIntPrimitive::fromBytes(runtime, parsedBigInt->getBytes());
+  }
+
+  return runtime.raiseTypeError("Invalid argument to stringToBigInt");
+}
+
+CallResult<HermesValue> thisBigIntValue(Runtime &runtime, Handle<> value) {
+  if (value->isBigInt())
+    return *value;
+  if (auto *jsBigInt = dyn_vmcast<JSBigInt>(*value))
+    return HermesValue::encodeBigIntValue(
+        JSBigInt::getPrimitiveBigInt(jsBigInt, runtime));
+  return runtime.raiseTypeError("value is not a bigint");
 }
 
 } // namespace vm

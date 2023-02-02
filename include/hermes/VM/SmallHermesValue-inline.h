@@ -11,21 +11,30 @@
 #include "hermes/VM/SmallHermesValue.h"
 
 #include "hermes/Support/SlowAssert.h"
+#include "hermes/VM/BigIntPrimitive.h"
 #include "hermes/VM/BoxedDouble.h"
 #include "hermes/VM/HermesValue-inline.h"
 #include "hermes/VM/PointerBase.h"
 #include "hermes/VM/StringPrimitive.h"
+#pragma GCC diagnostic push
 
+#ifdef HERMES_COMPILER_SUPPORTS_WSHORTEN_64_TO_32
+#pragma GCC diagnostic ignored "-Wshorten-64-to-32"
+#endif
 namespace hermes {
 namespace vm {
 
-void SmallHermesValueAdaptor::setInGC(SmallHermesValueAdaptor hv, GC *gc) {
+#ifndef HERMESVM_ALLOW_COMPRESSED_POINTERS
+
+void SmallHermesValueAdaptor::setInGC(SmallHermesValueAdaptor hv, GC &gc) {
   HermesValue::setInGC(hv, gc);
 }
 
-void HermesValue32::setInGC(HermesValue32 hv, GC *gc) {
+#else // #ifndef HERMESVM_ALLOW_COMPRESSED_POINTERS
+
+void HermesValue32::setInGC(HermesValue32 hv, GC &gc) {
   setNoBarrier(hv);
-  assert(gc->calledByGC());
+  assert(gc.calledByGC());
 }
 
 HermesValue HermesValue32::unboxToHV(PointerBase &pb) const {
@@ -33,6 +42,9 @@ HermesValue HermesValue32::unboxToHV(PointerBase &pb) const {
     case ETag::Object1:
     case ETag::Object2:
       return HermesValue::encodeObjectValue(getObject(pb));
+    case ETag::BigInt1:
+    case ETag::BigInt2:
+      return HermesValue::encodeBigIntValue(getBigInt(pb));
     case ETag::String1:
     case ETag::String2:
       return HermesValue::encodeStringValue(getString(pb));
@@ -63,6 +75,11 @@ HermesValue HermesValue32::toHV(PointerBase &pb) const {
   if (getTag() == Tag::BoxedDouble)
     return HermesValue::encodeObjectValue(getPointer(pb));
   return unboxToHV(pb);
+}
+
+BigIntPrimitive *HermesValue32::getBigInt(PointerBase &pb) const {
+  assert(isBigInt());
+  return vmcast<BigIntPrimitive>(getPointer(pb));
 }
 
 StringPrimitive *HermesValue32::getString(PointerBase &pb) const {
@@ -101,6 +118,9 @@ double HermesValue32::getNumber(PointerBase &pb) const {
     case HermesValue::ETag::Str1:
     case HermesValue::ETag::Str2:
       return encodeStringValue(hv.getString(), runtime);
+    case HermesValue::ETag::BigInt1:
+    case HermesValue::ETag::BigInt2:
+      return encodeBigIntValue(hv.getBigInt(), runtime);
     case HermesValue::ETag::Object1:
     case HermesValue::ETag::Object2:
       return encodeObjectValue(static_cast<GCCell *>(hv.getObject()), runtime);
@@ -117,9 +137,7 @@ double HermesValue32::getNumber(PointerBase &pb) const {
   // Always box values when Handle-SAN is on so we can catch any mistakes.
 #ifndef HERMESVM_SANITIZE_HANDLES
   const SmiType i = doubleToSmi(d);
-  if (LLVM_LIKELY(
-          llvh::DoubleToBits(d) == llvh::DoubleToBits(i) &&
-          llvh::isInt<kNumSmiBits>(i)))
+  if (LLVM_LIKELY(llvh::DoubleToBits(d) == llvh::DoubleToBits(i)))
     return fromTagAndValue(Tag::SmallInt, i);
 #endif
   return encodePointerImpl(
@@ -130,11 +148,15 @@ double HermesValue32::getNumber(PointerBase &pb) const {
     GCCell *ptr,
     PointerBase &pb) {
   assert(
-      (!ptr || !vmisa<StringPrimitive>(ptr)) &&
-      "Strings must use encodeStringValue");
+      (!ptr || !vmisa<StringPrimitive>(ptr) || !vmisa<BigIntPrimitive>(ptr)) &&
+      "Strings must use encodeStringValue; BigInts, encodeBigIntValue");
   return encodePointerImpl(ptr, Tag::Object, pb);
 }
+
+#endif // #ifndef HERMESVM_ALLOW_COMPRESSED_POINTERS
+
 } // namespace vm
 } // namespace hermes
+#pragma GCC diagnostic pop
 
 #endif // HERMES_VM_SMALLHERMESVALUE_INLINE_H

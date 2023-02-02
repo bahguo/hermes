@@ -10,23 +10,38 @@
 
 'use strict';
 
+import type {AlignmentCase} from '../__test_utils__/alignment-utils';
+
+import {
+  expectBabelAlignment,
+  expectEspreeAlignment,
+} from '../__test_utils__/alignment-utils';
 import {parse, parseForSnapshot} from '../__test_utils__/parse';
 
 describe('Symbol type annotation', () => {
-  const source = `type T = symbol`;
+  const testCase: AlignmentCase = {
+    code: `
+      type T = symbol
+    `,
+    espree: {
+      expectToFail: 'espree-exception',
+      expectedExceptionMessage: 'Unexpected token T',
+    },
+    babel: {expectToFail: false},
+  };
 
   test('ESTree', () => {
-    expect(parseForSnapshot(source)).toMatchInlineSnapshot(`
-      Object {
-        "body": Array [
-          Object {
-            "id": Object {
+    expect(parseForSnapshot(testCase.code)).toMatchInlineSnapshot(`
+      {
+        "body": [
+          {
+            "id": {
               "name": "T",
               "optional": false,
               "type": "Identifier",
               "typeAnnotation": null,
             },
-            "right": Object {
+            "right": {
               "type": "SymbolTypeAnnotation",
             },
             "type": "TypeAlias",
@@ -36,10 +51,11 @@ describe('Symbol type annotation', () => {
         "type": "Program",
       }
     `);
+    expectEspreeAlignment(testCase);
   });
 
   test('Babel', () => {
-    expect(parse(source, {babel: true})).toMatchObject({
+    expect(parse(testCase.code, {babel: true})).toMatchObject({
       type: 'File',
       program: {
         type: 'Program',
@@ -58,5 +74,6 @@ describe('Symbol type annotation', () => {
         ],
       },
     });
+    expectBabelAlignment(testCase);
   });
 });

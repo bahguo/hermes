@@ -35,7 +35,7 @@ struct WeakRefKey {
   /// Returns the object reference of ref; returns null if ref is not valid.
   /// Should only be called during GC; the \param gc argument is used only to
   /// verify this.
-  JSObject *getObjectInGC(GC *gc) const;
+  JSObject *getObjectInGC(GC &gc) const;
 };
 
 /// Enable using WeakRef<JSObject> in DenseMap.
@@ -78,10 +78,10 @@ struct WeakRefInfo {
     // The underlying object may have been collected already,
     // but markWeakRefs may not have run at this point.
     // The value will be cleared on the next GC cycle, but for now,
-    // isValid needs to be checked to avoid an invalid vmcast.
+    // isSlotValid needs to be checked to avoid an error on access.
     return WeakRef<JSObject>::isSlotValid(aSlot) &&
         WeakRef<JSObject>::isSlotValid(bSlot) &&
-        vmcast<JSObject>(aSlot->value()) == vmcast<JSObject>(bSlot->value());
+        aSlot->getNoBarrierUnsafe() == bSlot->getNoBarrierUnsafe();
   }
 
  private:
@@ -112,7 +112,7 @@ class JSWeakMapImplBase : public JSObject {
       Handle<HiddenClass> clazz,
       Handle<BigStorage> valueStorage)
       : JSObject(runtime, *parent, *clazz),
-        valueStorage_(runtime, *valueStorage, &runtime.getHeap()) {}
+        valueStorage_(runtime, *valueStorage, runtime.getHeap()) {}
 
  public:
   static const ObjectVTable vt;
@@ -157,8 +157,9 @@ class JSWeakMapImplBase : public JSObject {
 
   /// \return the size of the internal map, after freeing any freeable slots.
   /// Used for testing purposes.
-  static uint32_t
-  debugFreeSlotsAndGetSize(PointerBase &base, GC *gc, JSWeakMapImplBase *self);
+  static uint32_t debugFreeSlotsAndGetSize(
+      Runtime &runtime,
+      JSWeakMapImplBase *self);
 
   /// An iterator over the keys of the map.
   struct KeyIterator {
@@ -192,14 +193,14 @@ class JSWeakMapImplBase : public JSObject {
   /// of an object; must not be used in contexts where the object might move.
   /// \param gc Used to verify that the call is during GC, and provides
   /// a PointerBase.
-  GCHermesValue *getValueDirect(GC *gc, const WeakRefKey &key);
+  GCHermesValue *getValueDirect(GC &gc, const WeakRefKey &key);
 
   /// Return a reference to the slot that contains the pointer to the storage
   /// for the values of the weak map.  Note that this returns a pointer into the
   /// interior of an object; must not be used in contexts where the object might
   /// move.
   /// \param GC Used to verify that the call is during GC.
-  GCPointerBase &getValueStorageRef(GC *GC);
+  GCPointerBase &getValueStorageRef(GC &gc);
 
   /// If the given \p key is in the map, clears the entry
   /// corresponding to \p key -- clears the slot of the WeakRef in
@@ -208,10 +209,10 @@ class JSWeakMapImplBase : public JSObject {
   /// \param gc Used to verify that the call is during GC, and provides
   /// a PointerBase.
   /// \return whether the key was in the map.
-  bool clearEntryDirect(GC *gc, const WeakRefKey &key);
+  bool clearEntryDirect(GC &gc, const WeakRefKey &key);
 
  protected:
-  static void _finalizeImpl(GCCell *cell, GC *gc) {
+  static void _finalizeImpl(GCCell *cell, GC &gc) {
     auto *self = vmcast<JSWeakMapImplBase>(cell);
     self->~JSWeakMapImplBase();
   }
@@ -226,17 +227,19 @@ class JSWeakMapImplBase : public JSObject {
     return self->getMallocSize();
   }
 
-  static void _snapshotAddEdgesImpl(GCCell *cell, GC *gc, HeapSnapshot &snap);
-  static void _snapshotAddNodesImpl(GCCell *cell, GC *gc, HeapSnapshot &snap);
+#ifdef HERMES_MEMORY_INSTRUMENTATION
+  static void _snapshotAddEdgesImpl(GCCell *cell, GC &gc, HeapSnapshot &snap);
+  static void _snapshotAddNodesImpl(GCCell *cell, GC &gc, HeapSnapshot &snap);
+#endif
 
   /// Iterate the slots in map_ and call deleteInternal on any invalid
   /// references, adding all available slots to the free list.
-  void findAndDeleteFreeSlots(PointerBase &base, GC *gc);
+  void findAndDeleteFreeSlots(Runtime &runtime);
 
   /// Erase the map entry and corresponding valueStorage entry
   /// pointed to by the iterator \p it.
   /// Add the newly opened valueStorage slot to the free list.
-  void deleteInternal(PointerBase &base, GC *gc, DenseMapT::iterator it);
+  void deleteInternal(Runtime &runtime, DenseMapT::iterator it);
 
  private:
   /// Get the index to insert a new value into valueStorage_.
@@ -251,7 +254,7 @@ class JSWeakMapImplBase : public JSObject {
 
   /// Lazily fetches the ID for the DenseMap used in this class. After it has
   /// been assigned once it'll stay constant.
-  HeapSnapshot::NodeID getMapID(GC *gc);
+  HeapSnapshot::NodeID getMapID(GC &gc);
 
   /// \return the number of bytes allocated by this object on the heap.
   size_t getMallocSize() const {

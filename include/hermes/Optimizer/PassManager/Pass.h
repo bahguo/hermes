@@ -10,9 +10,9 @@
 
 #include "llvh/ADT/StringRef.h"
 
-namespace hermes {
+#include <memory>
 
-using llvh::StringRef;
+namespace hermes {
 
 class Function;
 class Module;
@@ -35,11 +35,11 @@ class Pass {
   /// Stores the kind of derived class.
   const PassKind kind;
   /// The textual name of the pass.
-  StringRef name;
+  llvh::StringRef name;
 
  public:
   /// Constructor. \p K indicates the kind of pass this is.
-  explicit Pass(Pass::PassKind K, StringRef name) : kind(K), name(name) {}
+  explicit Pass(Pass::PassKind K, llvh::StringRef name) : kind(K), name(name) {}
 
   virtual ~Pass() = default;
 
@@ -49,14 +49,14 @@ class Pass {
   }
 
   /// Returns the textual name of the pass.
-  StringRef getName() const {
+  llvh::StringRef getName() const {
     return name;
   }
 };
 
 class FunctionPass : public Pass {
  public:
-  explicit FunctionPass(StringRef name)
+  explicit FunctionPass(llvh::StringRef name)
       : Pass(Pass::PassKind::Function, name) {}
   ~FunctionPass() override = default;
 
@@ -71,7 +71,8 @@ class FunctionPass : public Pass {
 
 class ModulePass : public Pass {
  public:
-  explicit ModulePass(StringRef name) : Pass(Pass::PassKind::Module, name) {}
+  explicit ModulePass(llvh::StringRef name)
+      : Pass(Pass::PassKind::Module, name) {}
   ~ModulePass() override = default;
 
   /// Runs the current pass on the module \p M.
@@ -84,7 +85,7 @@ class ModulePass : public Pass {
 };
 
 /// Pass header declaration.
-#define PASS(ID, NAME, DESCRIPTION) Pass *create##ID();
+#define PASS(ID, NAME, DESCRIPTION) std::unique_ptr<Pass> create##ID();
 #include "Passes.def"
 
 } // namespace hermes

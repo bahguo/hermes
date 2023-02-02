@@ -16,6 +16,11 @@
 
 #include "llvh/ADT/SmallSet.h"
 
+#pragma GCC diagnostic push
+
+#ifdef HERMES_COMPILER_SUPPORTS_WSHORTEN_64_TO_32
+#pragma GCC diagnostic ignored "-Wshorten-64-to-32"
+#endif
 namespace hermes {
 namespace vm {
 
@@ -108,8 +113,8 @@ void JSProxy::setTargetAndHandler(
     Handle<JSObject> target,
     Handle<JSObject> handler) {
   auto &slots = detail::slots(*selfHandle);
-  slots.target.set(runtime, target.get(), &runtime.getHeap());
-  slots.handler.set(runtime, handler.get(), &runtime.getHeap());
+  slots.target.set(runtime, target.get(), runtime.getHeap());
+  slots.handler.set(runtime, handler.get(), runtime.getHeap());
 }
 
 namespace {
@@ -1302,12 +1307,12 @@ CallResult<PseudoHandle<JSArray>> filterKeys(
   GCScopeMarkerRAII marker{runtime};
   for (uint32_t i = 0; i < len; ++i) {
     marker.flush();
-    HermesValue elem = keys->at(runtime, i);
+    SmallHermesValue elem = keys->at(runtime, i);
     if (elem.isSymbol() ? !okFlags.getIncludeSymbols()
                         : !okFlags.getIncludeNonSymbols()) {
       continue;
     }
-    elemHandle = elem;
+    elemHandle = elem.unboxToHV(runtime);
     if (!okFlags.getIncludeNonEnumerable()) {
       ComputedPropertyDescriptor desc;
       CallResult<bool> propRes = JSProxy::getOwnProperty(
@@ -1469,7 +1474,7 @@ CallResult<PseudoHandle<JSArray>> JSProxy::ownPropertyKeys(
     CallResult<bool> descRes = JSObject::getOwnComputedDescriptor(
         target,
         runtime,
-        runtime.makeHandle(targetKeys->at(runtime, i)),
+        runtime.makeHandle(targetKeys->at(runtime, i).unboxToHV(runtime)),
         tmpPropNameStorage,
         desc);
     if (descRes == ExecutionStatus::EXCEPTION) {
@@ -1497,14 +1502,14 @@ CallResult<PseudoHandle<JSArray>> JSProxy::ownPropertyKeys(
     for (uint32_t j = 0, len = JSArray::getLength(*trapResult, runtime);
          j < len;
          ++j) {
-      if (isSameValue(value, trapResult->at(runtime, j))) {
+      if (isSameValue(value, trapResult->at(runtime, j).unboxToHV(runtime))) {
         return true;
       }
     }
     return false;
   };
   for (auto i : nonConfigurable) {
-    if (!inTrapResult(targetKeys->at(runtime, i))) {
+    if (!inTrapResult(targetKeys->at(runtime, i).unboxToHV(runtime))) {
       return runtime.raiseTypeError(
           "ownKeys target key is non-configurable but not present in trap result");
     }
@@ -1521,7 +1526,7 @@ CallResult<PseudoHandle<JSArray>> JSProxy::ownPropertyKeys(
     if (nonConfigurable.count(i) > 0) {
       continue;
     }
-    if (!inTrapResult(targetKeys->at(runtime, i))) {
+    if (!inTrapResult(targetKeys->at(runtime, i).unboxToHV(runtime))) {
       return runtime.raiseTypeError(
           "ownKeys target is non-extensible but key is missing from trap result");
     }

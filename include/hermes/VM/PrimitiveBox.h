@@ -8,6 +8,7 @@
 #ifndef HERMES_VM_PRIMITIVEBOX_H
 #define HERMES_VM_PRIMITIVEBOX_H
 
+#include "hermes/VM/BigIntPrimitive.h"
 #include "hermes/VM/JSObject.h"
 
 namespace hermes {
@@ -65,7 +66,7 @@ class JSString final : public JSObject {
       Handle<JSObject> parent,
       Handle<HiddenClass> clazz)
       : JSObject(runtime, *parent, *clazz),
-        primitiveValue_(runtime, *value, &runtime.getHeap()) {
+        primitiveValue_(runtime, *value, runtime.getHeap()) {
     flags_.indexedStorage = true;
     flags_.fastIndexProperties = true;
   }
@@ -93,8 +94,10 @@ class JSString final : public JSObject {
   /// Obtain an element from the "indexed storage" of this object. The storage
   /// itself is implementation dependent.
   /// \return the value of the element or "empty" if there is no such element.
-  static HermesValue
-  _getOwnIndexedImpl(JSObject *self, Runtime &runtime, uint32_t index);
+  static HermesValue _getOwnIndexedImpl(
+      PseudoHandle<JSObject> self,
+      Runtime &runtime,
+      uint32_t index);
 
   /// Set an element in the "indexed storage" of this object. Depending on the
   /// semantics of the "indexed storage" the storage capacity may need to be
@@ -154,7 +157,7 @@ class JSStringIterator : public JSObject {
       Handle<HiddenClass> clazz,
       Handle<StringPrimitive> iteratedString)
       : JSObject(runtime, *parent, *clazz),
-        iteratedString_(runtime, *iteratedString, &runtime.getHeap()) {}
+        iteratedString_(runtime, *iteratedString, runtime.getHeap()) {}
 
  private:
   /// [[IteratedString]]
@@ -163,6 +166,65 @@ class JSStringIterator : public JSObject {
 
   /// [[StringIteratorNextIndex]]
   uint32_t nextIndex_{0};
+};
+
+/// BigInt object.
+/// N.B.: users can create boxed bigints with
+///   let o = new Object(1n),
+/// but not with the BigInt constructor, i.e.,
+///   let o = new BigInt(1)
+/// as BigInt() is not a constructor.
+class JSBigInt final : public JSObject {
+ public:
+  using Super = JSObject;
+
+  friend void JSBigIntBuildMeta(const GCCell *, Metadata::Builder &);
+
+  static const PropStorage::size_type NAMED_PROPERTY_SLOTS =
+      Super::NAMED_PROPERTY_SLOTS;
+  static const ObjectVTable vt;
+
+  static constexpr CellKind getCellKind() {
+    return CellKind::JSBigIntKind;
+  }
+  static bool classof(const GCCell *cell) {
+    return cell->getKind() == CellKind::JSBigIntKind;
+  }
+
+  static Handle<JSBigInt> create(
+      Runtime &runtime,
+      Handle<BigIntPrimitive> value,
+      Handle<JSObject> prototype);
+
+  static CallResult<Handle<JSBigInt>> create(
+      Runtime &runtime,
+      Handle<JSObject> prototype) {
+    auto bigIntRes = BigIntPrimitive::fromSigned(runtime, 0);
+    if (LLVM_UNLIKELY(bigIntRes == ExecutionStatus::EXCEPTION)) {
+      return ExecutionStatus::EXCEPTION;
+    }
+
+    return create(
+        runtime, runtime.makeHandle(bigIntRes->getBigInt()), prototype);
+  }
+
+  /// Return the [[PrimitiveValue]] internal property as a bigint.
+  static BigIntPrimitive *getPrimitiveBigInt(
+      const JSBigInt *self,
+      Runtime &runtime) {
+    return self->primitiveValue_.get(runtime);
+  }
+
+  JSBigInt(
+      Runtime &runtime,
+      Handle<BigIntPrimitive> value,
+      Handle<JSObject> parent,
+      Handle<HiddenClass> clazz)
+      : JSObject(runtime, *parent, *clazz),
+        primitiveValue_(runtime, *value, runtime.getHeap()) {}
+
+ private:
+  GCPointer<BigIntPrimitive> primitiveValue_;
 };
 
 /// Number object.

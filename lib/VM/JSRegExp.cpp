@@ -17,6 +17,11 @@
 #include "hermes/VM/Runtime-inline.h"
 #include "hermes/VM/StringView.h"
 
+#pragma GCC diagnostic push
+
+#ifdef HERMES_COMPILER_SUPPORTS_WSHORTEN_64_TO_32
+#pragma GCC diagnostic ignored "-Wshorten-64-to-32"
+#endif
 namespace hermes {
 namespace vm {
 
@@ -30,13 +35,17 @@ const ObjectVTable JSRegExp::vt{
         JSRegExp::_finalizeImpl,
         nullptr,
         JSRegExp::_mallocSizeImpl,
-        nullptr,
-        VTable::HeapSnapshotMetadata{
-            HeapSnapshot::NodeType::Regexp,
-            JSRegExp::_snapshotNameImpl,
-            JSRegExp::_snapshotAddEdgesImpl,
-            JSRegExp::_snapshotAddNodesImpl,
-            nullptr}),
+        nullptr
+#ifdef HERMES_MEMORY_INSTRUMENTATION
+        ,
+        VTable::HeapSnapshotMetadata {
+          HeapSnapshot::NodeType::Regexp, JSRegExp::_snapshotNameImpl,
+              JSRegExp::_snapshotAddEdgesImpl, JSRegExp::_snapshotAddNodesImpl,
+              nullptr
+        }
+#endif
+
+        ),
     JSRegExp::_getOwnIndexedRangeImpl,
     JSRegExp::_haveOwnIndexedImpl,
     JSRegExp::_getOwnIndexedPropertyFlagsImpl,
@@ -52,6 +61,7 @@ void JSRegExpBuildMeta(const GCCell *cell, Metadata::Builder &mb) {
   const auto *self = static_cast<const JSRegExp *>(cell);
   mb.setVTable(&JSRegExp::vt);
   mb.addField(&self->pattern_);
+  mb.addField(&self->groupNameMappings_);
 }
 
 PseudoHandle<JSRegExp> JSRegExp::create(
@@ -65,6 +75,28 @@ PseudoHandle<JSRegExp> JSRegExp::create(
   return JSObjectInit::initToPseudoHandle(runtime, cell);
 }
 
+Handle<HiddenClass> JSRegExp::createMatchClass(
+    Runtime &runtime,
+    Handle<HiddenClass> arrayClass) {
+  // Adds the property \p name to matchClass which, upon return, will point to
+  // the newly created hidden class.
+  auto addProperty = [&](Handle<HiddenClass> clazz, Predefined::Str name) {
+    auto added = HiddenClass::addProperty(
+        clazz,
+        runtime,
+        Predefined::getSymbolID(name),
+        PropertyFlags::defaultNewNamedPropertyFlags());
+    assert(
+        added != ExecutionStatus::EXCEPTION &&
+        "Adding the first properties shouldn't cause overflow");
+    return added->first;
+  };
+
+  Handle<HiddenClass> addIndex = addProperty(arrayClass, Predefined::index);
+  Handle<HiddenClass> addInput = addProperty(addIndex, Predefined::input);
+  return addProperty(addInput, Predefined::groups);
+}
+
 void JSRegExp::initialize(
     Handle<JSRegExp> selfHandle,
     Runtime &runtime,
@@ -74,7 +106,7 @@ void JSRegExp::initialize(
   assert(
       pattern && flags &&
       "Null pattern and/or flags passed to JSRegExp::initialize");
-  selfHandle->pattern_.set(runtime, *pattern, &runtime.getHeap());
+  selfHandle->pattern_.set(runtime, *pattern, runtime.getHeap());
 
   DefinePropertyFlags dpf = DefinePropertyFlags::getDefaultNewPropertyFlags();
   dpf.enumerable = 0;
@@ -148,8 +180,63 @@ ExecutionStatus JSRegExp::initialize(
   }
   // The regex is valid. Compile and store its bytecode.
   auto bytecode = regex.compile();
+  // Also store the name mappings.
+  if (LLVM_UNLIKELY(
+          initializeGroupNameMappingObj(
+              runtime,
+              selfHandle,
+              regex.getOrderedNamedGroups(),
+              regex.getGroupNamesMapping()) == ExecutionStatus::EXCEPTION)) {
+    return ExecutionStatus::EXCEPTION;
+  }
   initialize(selfHandle, runtime, pattern, flags, bytecode);
   return ExecutionStatus::RETURNED;
+}
+
+ExecutionStatus JSRegExp::initializeGroupNameMappingObj(
+    Runtime &runtime,
+    Handle<JSRegExp> selfHandle,
+    std::deque<llvh::SmallVector<char16_t, 5>> &orderedNamedGroups,
+    regex::ParsedGroupNamesMapping &parsedMappings) {
+  GCScope gcScope(runtime);
+  if (parsedMappings.size() == 0)
+    return ExecutionStatus::RETURNED;
+
+  auto objRes = JSObject::create(runtime, parsedMappings.size());
+  auto obj = runtime.makeHandle(objRes.get());
+
+  MutableHandle<HermesValue> numberHandle{runtime};
+  for (const auto &identifier : orderedNamedGroups) {
+    GCScopeMarkerRAII marker{gcScope};
+    auto symbolRes =
+        runtime.getIdentifierTable().getSymbolHandle(runtime, identifier);
+    if (LLVM_UNLIKELY(symbolRes == ExecutionStatus::EXCEPTION)) {
+      return ExecutionStatus::EXCEPTION;
+    }
+    auto idx = parsedMappings[identifier];
+    numberHandle.set(HermesValue::encodeNumberValue(idx));
+    auto res = JSObject::defineNewOwnProperty(
+        obj,
+        runtime,
+        symbolRes->get(),
+        PropertyFlags::defaultNewNamedPropertyFlags(),
+        numberHandle);
+    if (LLVM_UNLIKELY(res == ExecutionStatus::EXCEPTION))
+      return ExecutionStatus::EXCEPTION;
+  }
+
+  selfHandle->groupNameMappings_.set(runtime, *obj, runtime.getHeap());
+  return ExecutionStatus::RETURNED;
+}
+
+Handle<JSObject> JSRegExp::getGroupNameMappings(Runtime &runtime) {
+  if (auto *ptr = vmcast_or_null<JSObject>(groupNameMappings_.get(runtime)))
+    return runtime.makeHandle(ptr);
+  return Runtime::makeNullHandle<JSObject>();
+}
+
+void JSRegExp::setGroupNameMappings(Runtime &runtime, JSObject *groupObj) {
+  groupNameMappings_.set(runtime, groupObj, runtime.getHeap());
 }
 
 void JSRegExp::initializeBytecode(llvh::ArrayRef<uint8_t> bytecode) {
@@ -268,10 +355,10 @@ JSRegExp::~JSRegExp() {
   free(bytecode_);
 }
 
-void JSRegExp::_finalizeImpl(GCCell *cell, GC *gc) {
+void JSRegExp::_finalizeImpl(GCCell *cell, GC &gc) {
   JSRegExp *self = vmcast<JSRegExp>(cell);
   if (self->bytecode_) {
-    gc->getIDTracker().untrackNative(self->bytecode_);
+    gc.getIDTracker().untrackNative(self->bytecode_);
   }
   self->~JSRegExp();
 }
@@ -281,12 +368,13 @@ size_t JSRegExp::_mallocSizeImpl(GCCell *cell) {
   return self->bytecodeSize_;
 }
 
-std::string JSRegExp::_snapshotNameImpl(GCCell *cell, GC *gc) {
+#ifdef HERMES_MEMORY_INSTRUMENTATION
+std::string JSRegExp::_snapshotNameImpl(GCCell *cell, GC &gc) {
   auto *const self = vmcast<JSRegExp>(cell);
-  return converter(getPattern(self, gc->getPointerBase()).get());
+  return converter(getPattern(self, gc.getPointerBase()).get());
 }
 
-void JSRegExp::_snapshotAddEdgesImpl(GCCell *cell, GC *gc, HeapSnapshot &snap) {
+void JSRegExp::_snapshotAddEdgesImpl(GCCell *cell, GC &gc, HeapSnapshot &snap) {
   auto *const self = vmcast<JSRegExp>(cell);
   // Call the super type to add any other custom edges.
   JSObject::_snapshotAddEdgesImpl(self, gc, snap);
@@ -294,11 +382,11 @@ void JSRegExp::_snapshotAddEdgesImpl(GCCell *cell, GC *gc, HeapSnapshot &snap) {
     snap.addNamedEdge(
         HeapSnapshot::EdgeType::Internal,
         "bytecode",
-        gc->getNativeID(self->bytecode_));
+        gc.getNativeID(self->bytecode_));
   }
 }
 
-void JSRegExp::_snapshotAddNodesImpl(GCCell *cell, GC *gc, HeapSnapshot &snap) {
+void JSRegExp::_snapshotAddNodesImpl(GCCell *cell, GC &gc, HeapSnapshot &snap) {
   auto *const self = vmcast<JSRegExp>(cell);
   if (self->bytecode_) {
     // Add a native node for regex bytecode, to account for native size
@@ -307,11 +395,12 @@ void JSRegExp::_snapshotAddNodesImpl(GCCell *cell, GC *gc, HeapSnapshot &snap) {
     snap.endNode(
         HeapSnapshot::NodeType::Native,
         "RegExpBytecode",
-        gc->getNativeID(self->bytecode_),
+        gc.getNativeID(self->bytecode_),
         self->bytecodeSize_,
         0);
   }
 }
+#endif
 
 /// \return an escaped string equivalent to \p pattern.
 /// This is used to construct the 'source' property of RegExp. This requires

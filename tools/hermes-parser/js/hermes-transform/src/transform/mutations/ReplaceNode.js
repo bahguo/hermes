@@ -12,10 +12,10 @@ import type {ESNode} from 'hermes-estree';
 import type {MutationContext} from '../MutationContext';
 import type {DetachedNode} from '../../detachedNode';
 
-import {replaceInArray} from './utils/arrayUtils';
+import {getVisitorKeys, isNode, astArrayMutationHelpers} from 'hermes-parser';
 import {moveCommentsToNewNode} from '../comments/comments';
 import {InvalidReplacementError} from '../Errors';
-import {getVisitorKeys, isNode} from '../../getVisitorKeys';
+import {getOriginalNode} from '../../detachedNode';
 
 export type ReplaceNodeMutation = $ReadOnly<{
   type: 'replaceNode',
@@ -55,7 +55,7 @@ export function performReplaceNodeMutation(
     const parent: interface {
       [string]: $ReadOnlyArray<DetachedNode<ESNode>>,
     } = replacementParent.parent;
-    parent[replacementParent.key] = replaceInArray(
+    parent[replacementParent.key] = astArrayMutationHelpers.replaceInArray(
       parent[replacementParent.key],
       replacementParent.targetIndex,
       [mutation.nodeToReplaceWith],
@@ -99,7 +99,9 @@ function getParentKey(target: ESNode): $ReadOnly<
       }
     } else if (Array.isArray(parent[key])) {
       for (let i = 0; i < parent[key].length; i += 1) {
-        if (parent[key][i] === target) {
+        const current = parent[key][i];
+        const originalNode = getOriginalNode(current);
+        if (current === target || originalNode === target) {
           return {type: 'array', parent, key, targetIndex: i};
         }
       }
@@ -108,6 +110,6 @@ function getParentKey(target: ESNode): $ReadOnly<
 
   // this shouldn't happen ever
   throw new InvalidReplacementError(
-    `Expected to find the ${target.type} as a direct child of the ${target.type}.`,
+    `Expected to find the ${target.type} as a direct child of the ${parent.type}.`,
   );
 }

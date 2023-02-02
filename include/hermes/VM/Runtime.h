@@ -29,14 +29,15 @@
 #include "hermes/VM/PointerBase.h"
 #include "hermes/VM/Predefined.h"
 #include "hermes/VM/Profiler.h"
+#include "hermes/VM/Profiler/SamplingProfilerDefs.h"
 #include "hermes/VM/PropertyCache.h"
 #include "hermes/VM/PropertyDescriptor.h"
 #include "hermes/VM/RegExpMatch.h"
 #include "hermes/VM/RuntimeModule.h"
-#include "hermes/VM/RuntimeStats.h"
 #include "hermes/VM/StackFrame.h"
 #include "hermes/VM/StackTracesTree-NoRuntime.h"
 #include "hermes/VM/SymbolRegistry.h"
+#include "hermes/VM/TimeLimitMonitor.h"
 #include "hermes/VM/TwineChar16.h"
 #include "hermes/VM/VMExperiments.h"
 
@@ -81,10 +82,13 @@ struct RuntimeOffsets;
 class ScopedNativeDepthReducer;
 class ScopedNativeDepthTracker;
 class ScopedNativeCallFrame;
-class SamplingProfiler;
 class CodeCoverageProfiler;
 struct MockedEnvironment;
 struct StackTracesTree;
+
+#if HERMESVM_SAMPLING_PROFILER_AVAILABLE
+class SamplingProfiler;
+#endif // HERMESVM_SAMPLING_PROFILER_AVAILABLE
 
 #ifdef HERMESVM_PROFILER_BB
 class JSArray;
@@ -97,8 +101,6 @@ static const unsigned STACK_RESERVE = 32;
 
 /// Type used to assign object unique integer identifiers.
 using ObjectID = uint32_t;
-
-using DestructionCallback = std::function<void(Runtime &)>;
 
 #define PROP_CACHE_IDS(V) V(RegExpLastIndex, Predefined::lastIndex)
 
@@ -194,13 +196,13 @@ using CrashTrace = CrashTraceNoop;
 
 /// The Runtime encapsulates the entire context of a VM. Multiple instances can
 /// exist and are completely independent from each other.
-class Runtime : public HandleRootOwner,
-                public PointerBase,
-                private GCBase::GCCallbacks {
+class HERMES_EMPTY_BASES Runtime : public PointerBase,
+                                   public HandleRootOwner,
+                                   private GCBase::GCCallbacks {
  public:
   static std::shared_ptr<Runtime> create(const RuntimeConfig &runtimeConfig);
 
-  ~Runtime();
+  ~Runtime() override;
 
   /// Add a custom function that will be executed at the start of every garbage
   /// collection to mark additional GC roots that may not be known to the
@@ -409,6 +411,17 @@ class Runtime : public HandleRootOwner,
   /// exception" (https://html.spec.whatwg.org/C#microtask-queuing).
   ExecutionStatus drainJobs();
 
+  // ES2021 9.12 "When the abstract operation AddToKeptObjects is called with a
+  // target object reference, it adds the target to a list that will point
+  // strongly at the target until ClearKeptObjects is called."
+  ExecutionStatus addToKeptObjects(Handle<JSObject> obj);
+
+  // ES2021 9.11 "ECMAScript implementations are
+  // expected to call ClearKeptObjects when a synchronous sequence of ECMAScript
+  // executions completes." This method clears all kept WeakRefs and allows
+  // their targets to be eligible for garbage collection again.
+  void clearKeptObjects();
+
   IdentifierTable &getIdentifierTable() {
     return identifierTable_;
   }
@@ -549,25 +562,12 @@ class Runtime : public HandleRootOwner,
       JSObject *proto,
       unsigned reservedSlots);
 
-  /// Same as above but returns a raw pointer: standard warnings apply!
-  /// TODO: Delete this function once all callers are replaced with
-  /// getHiddenClassForPrototype.
-  inline HiddenClass *getHiddenClassForPrototypeRaw(
-      JSObject *proto,
-      unsigned reservedSlots);
-
   /// Return the global object.
   Handle<JSObject> getGlobal();
 
   /// Returns trailing data for all runtime modules.
   std::vector<llvh::ArrayRef<uint8_t>> getEpilogues();
 
-  /// \return the set of runtime stats.
-  instrumentation::RuntimeStats &getRuntimeStats() {
-    return runtimeStats_;
-  }
-
-  /// Print the heap and other misc. stats to the given stream.
   void printHeapStats(llvh::raw_ostream &os);
 
   /// Write IO tracking (aka HBC page access) info to the supplied
@@ -611,12 +611,6 @@ class Runtime : public HandleRootOwner,
     triggerAsyncBreak(AsyncBreakReasonBits::Timeout);
   }
 
-  /// Register \p callback which will be called
-  /// during runtime destruction.
-  void registerDestructionCallback(DestructionCallback callback) {
-    destructionCallbacks_.emplace_back(callback);
-  }
-
 #ifdef HERMES_ENABLE_DEBUGGER
   /// Encapsulates useful information about a stack frame, needed by the
   /// debugger. It requres extra context and cannot be extracted from a
@@ -641,6 +635,11 @@ class Runtime : public HandleRootOwner,
   uint32_t getCurrentFrameOffset() const;
 #endif
 
+  /// Flag the interpreter that an error with the specified \p msg must be
+  /// thrown when execution resumes.
+  /// \return ExecutionResult::EXCEPTION
+  LLVM_NODISCARD ExecutionStatus raiseError(const TwineChar16 &msg);
+
   /// Flag the interpreter that a type error with the specified message must be
   /// thrown when execution resumes.
   /// If the message is not a string, it is converted using toString().
@@ -664,9 +663,16 @@ class Runtime : public HandleRootOwner,
   /// resumes. The string thrown concatenates \p msg1, a description of \p
   /// value, and \p msg2. \return ExecutionResult::EXCEPTION
   LLVM_NODISCARD ExecutionStatus raiseTypeErrorForValue(
-      llvh::StringRef msg1,
+      const TwineChar16 &msg1,
       Handle<> value,
-      llvh::StringRef msg2);
+      const TwineChar16 &msg2);
+
+  /// Flag the interpreter that a type error must be thrown when execution
+  /// resumes. The string thrown concatenates either the textified callable for
+  /// \p callable (if it is available) with " is not a function"; or a
+  /// description of \p callable with " is not a function". \return
+  /// ExecutionResult::EXCEPTION
+  LLVM_NODISCARD ExecutionStatus raiseTypeErrorForCallable(Handle<> callable);
 
   /// Flag the interpreter that a syntax error must be thrown.
   /// \return ExecutionStatus::EXCEPTION
@@ -783,7 +789,7 @@ class Runtime : public HandleRootOwner,
   void dumpOpcodeStats(llvh::raw_ostream &os) const;
 #endif
 
-#if defined(HERMESVM_PROFILER_JSFUNCTION) || defined(HERMESVM_PROFILER_EXTERN)
+#if defined(HERMESVM_PROFILER_JSFUNCTION)
   static std::atomic<ProfilerID> nextProfilerId;
 
   std::vector<ProfilerFunctionInfo> functionInfo{};
@@ -821,9 +827,14 @@ class Runtime : public HandleRootOwner,
     return *codeCoverageProfiler_;
   }
 
+#if HERMESVM_SAMPLING_PROFILER_AVAILABLE
   /// Sampling profiler data for this runtime. The ctor/dtor of SamplingProfiler
   /// will automatically register/unregister this runtime from profiling.
   std::unique_ptr<SamplingProfiler> samplingProfiler;
+#endif // HERMESVM_SAMPLING_PROFILER_AVAILABLE
+
+  /// Time limit monitor data for this runtime.
+  std::shared_ptr<TimeLimitMonitor> timeLimitMonitor;
 
 #ifdef HERMESVM_PROFILER_NATIVECALL
   /// Dump statistics about native calls.
@@ -852,8 +863,12 @@ class Runtime : public HandleRootOwner,
     return hasIntl_;
   }
 
-  bool useJobQueue() const {
-    return getVMExperimentFlags() & experiments::JobQueue;
+  bool hasArrayBuffer() const {
+    return hasArrayBuffer_;
+  }
+
+  bool hasMicrotaskQueue() const {
+    return hasMicrotaskQueue_;
   }
 
   bool builtinsAreFrozen() const {
@@ -951,11 +966,7 @@ class Runtime : public HandleRootOwner,
   void getInlineCacheProfilerInfo(llvh::raw_ostream &ostream);
 #endif
 
-#if defined(HERMESVM_PROFILER_EXTERN)
- public:
-#else
  private:
-#endif
   /// Only called internally or by the wrappers used for profiling.
   CallResult<HermesValue> interpretFunctionImpl(CodeBlock *newCodeBlock);
 
@@ -1117,6 +1128,12 @@ class Runtime : public HandleRootOwner,
   /// Set to true if we should enable ECMA-402 Intl APIs.
   const bool hasIntl_;
 
+  /// Set to true if we should enable ArrayBuffer, DataView and typed arrays.
+  const bool hasArrayBuffer_;
+
+  /// Set to true if we are using microtasks.
+  const bool hasMicrotaskQueue_;
+
   /// Set to true if we should randomize stack placement etc.
   const bool shouldRandomizeMemoryLayout_;
 
@@ -1168,9 +1185,6 @@ class Runtime : public HandleRootOwner,
 
   /// The global symbol registry.
   SymbolRegistry symbolRegistry_{};
-
-  /// Set of runtime statistics.
-  instrumentation::RuntimeStats runtimeStats_;
 
   /// Shared location to place native objects required by JSLib
   std::shared_ptr<RuntimeCommonStorage> commonStorage_;
@@ -1278,9 +1292,6 @@ class Runtime : public HandleRootOwner,
 
   /// Pointer to the code coverage profiler.
   const std::unique_ptr<CodeCoverageProfiler> codeCoverageProfiler_;
-
-  /// A list of callbacks to call before runtime destruction.
-  std::vector<DestructionCallback> destructionCallbacks_;
 
   /// Bit flags for async break request reasons.
   enum class AsyncBreakReasonBits : uint8_t {
@@ -1422,12 +1433,13 @@ class Runtime : public HandleRootOwner,
   }
 
  private:
+#ifdef HERMES_MEMORY_INSTRUMENTATION
   /// Given the current last known IP used in the interpreter loop, returns the
   /// last known CodeBlock and IP combination. IP must not be null as this
   /// suggests we're not in the interpter loop, and there will be no CodeBlock
   /// to find.
   std::pair<const CodeBlock *, const inst::Inst *>
-  getCurrentInterpreterLocation(const inst::Inst *initialSearchIP) const;
+  getCurrentInterpreterLocation(const inst::Inst *initialSearchIP);
 
  public:
   /// Return a StackTraceTreeNode for the last known interpreter bytecode
@@ -1464,8 +1476,6 @@ class Runtime : public HandleRootOwner,
     }
   }
 
-  /// Enable allocation location tracking. Only works with
-  /// HERMES_ENABLE_ALLOCATION_LOCATION_TRACES.
   void enableAllocationLocationTracker() {
     enableAllocationLocationTracker(nullptr);
   }
@@ -1497,7 +1507,36 @@ class Runtime : public HandleRootOwner,
   void popCallStackImpl();
   void pushCallStackImpl(const CodeBlock *codeBlock, const inst::Inst *ip);
   std::unique_ptr<StackTracesTree> stackTracesTree_;
+#endif
 };
+
+/// An encrypted/obfuscated native pointer. The key is held by GCBase.
+template <typename T, XorPtrKeyID K>
+class XorPtr {
+  uintptr_t bits_;
+
+ public:
+  XorPtr() = default;
+  XorPtr(Runtime &runtime, T *ptr) {
+    set(runtime, ptr);
+  }
+  void set(Runtime &runtime, T *ptr) {
+    set(runtime.getHeap(), ptr);
+  }
+  void set(GC &gc, T *ptr) {
+    bits_ = reinterpret_cast<uintptr_t>(ptr) ^ gc.pointerEncryptionKey_[K];
+  }
+  T *get(Runtime &runtime) const {
+    return get(runtime.getHeap());
+  }
+  T *get(GC &gc) const {
+    return reinterpret_cast<T *>(bits_ ^ gc.pointerEncryptionKey_[K]);
+  }
+};
+
+static_assert(
+    std::is_trivial<XorPtr<void, XorPtrKeyID::_NumKeys>>::value,
+    "XorPtr must be trivial");
 
 /// An RAII class for automatically tracking the native call frame depth.
 class ScopedNativeDepthTracker {
@@ -1681,37 +1720,96 @@ class ScopedNativeCallFrame {
   }
 };
 
-/// RAII class to temporarily disallow allocation.
-/// Enforced by the GC in slow debug mode only.
+#ifdef NDEBUG
+
+/// NoAllocScope and NoHandleScope have no impact in release mode (except that
+/// if they are embedded into another struct/class, they will still use space!)
 class NoAllocScope {
  public:
-#ifdef NDEBUG
   explicit NoAllocScope(Runtime &runtime) {}
-  explicit NoAllocScope(GC *gc) {}
+  explicit NoAllocScope(GC &gc) {}
+  NoAllocScope(const NoAllocScope &) = default;
+  NoAllocScope(NoAllocScope &&) = default;
+  NoAllocScope &operator=(const NoAllocScope &) = default;
+  NoAllocScope &operator=(NoAllocScope &&rhs) = default;
   void release() {}
+
+ private:
+  NoAllocScope() = delete;
+};
+using NoHandleScope = NoAllocScope;
+
 #else
-  explicit NoAllocScope(Runtime &runtime) : NoAllocScope(&runtime.getHeap()) {}
-  explicit NoAllocScope(GC *gc) : noAllocLevel_(&gc->noAllocLevel_) {
-    ++*noAllocLevel_;
+
+/// RAII class to temporarily disallow allocation of something.
+class BaseNoScope {
+ public:
+  explicit BaseNoScope(uint32_t *level) : level_(level) {
+    assert(level_ && "constructing BaseNoScope with moved/release object");
+    ++*level_;
   }
 
-  ~NoAllocScope() {
-    if (noAllocLevel_)
+  BaseNoScope(const BaseNoScope &other) : BaseNoScope(other.level_) {}
+  BaseNoScope(BaseNoScope &&other) : level_(other.level_) {
+    // not a release operation as this inherits the counter from other.
+    other.level_ = nullptr;
+  }
+
+  ~BaseNoScope() {
+    if (level_)
       release();
+  }
+
+  BaseNoScope &operator=(BaseNoScope &&rhs) {
+    if (level_) {
+      release();
+    }
+
+    // N.B.: to account for cases when this == &rhs, first copy rhs.level_
+    // to a temporary, then null it out.
+    auto ptr = rhs.level_;
+    rhs.level_ = nullptr;
+    level_ = ptr;
+    return *this;
+  }
+
+  BaseNoScope &operator=(const BaseNoScope &other) {
+    return *this = BaseNoScope(other.level_);
   }
 
   /// End this scope early. May only be called once.
   void release() {
-    assert(noAllocLevel_ && "already released");
-    assert(*noAllocLevel_ > 0 && "unbalanced no alloc");
-    --*noAllocLevel_;
-    noAllocLevel_ = nullptr;
+    assert(level_ && "already released");
+    assert(*level_ > 0 && "unbalanced no alloc");
+    --*level_;
+    level_ = nullptr;
   }
 
+ protected:
+  uint32_t *level_;
+
  private:
-  uint32_t *noAllocLevel_;
-#endif
+  BaseNoScope() = delete;
 };
+
+/// RAII class to temporarily disallow handle creation.
+class NoHandleScope : public BaseNoScope {
+ public:
+  explicit NoHandleScope(Runtime &runtime)
+      : BaseNoScope(&runtime.noHandleLevel_) {}
+  using BaseNoScope::BaseNoScope;
+  using BaseNoScope::operator=;
+};
+
+/// RAII class to temporarily disallow allocating cells in the JS heap.
+class NoAllocScope : public BaseNoScope {
+ public:
+  explicit NoAllocScope(Runtime &runtime) : NoAllocScope(runtime.getHeap()) {}
+  explicit NoAllocScope(GC &gc) : BaseNoScope(&gc.noAllocLevel_) {}
+  using BaseNoScope::BaseNoScope;
+  using BaseNoScope::operator=;
+};
+#endif
 
 //===----------------------------------------------------------------------===//
 // Runtime inline methods.

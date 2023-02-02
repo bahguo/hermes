@@ -9,7 +9,7 @@
  */
 
 import type {Comment, ESNode, Program} from 'hermes-estree';
-import type {DetachedNode} from '../../detachedNode';
+import type {DetachedNode, MaybeDetachedNode} from '../../detachedNode';
 
 // $FlowExpectedError[untyped-import]
 import {attach as untypedAttach} from './prettier/main/comments';
@@ -23,6 +23,7 @@ import {
   // $FlowExpectedError[untyped-import]
   addTrailingComment as untypedAddTrailingComment,
 } from './prettier/common/util';
+import {isBlockComment} from 'hermes-estree';
 import {EOL} from 'os';
 
 export type Options = $ReadOnly<{}>;
@@ -54,6 +55,20 @@ export function moveCommentsToNewNode(
   setCommentsOnNode(oldNode, []);
 }
 
+export function cloneJSDocCommentsToNewNode(
+  oldNode: ESNode,
+  newNode: MaybeDetachedNode<ESNode>,
+): void {
+  const comments = getCommentsForNode(oldNode).filter(comment => {
+    return (
+      isBlockComment(comment) &&
+      // JSDoc comments always start with an extra asterisk
+      comment.value.startsWith('*')
+    );
+  });
+  setCommentsOnNode(newNode, comments.map(cloneCommentWithMarkers));
+}
+
 export function setCommentsOnNode(
   node: ESNode | DetachedNode<ESNode>,
   comments: $ReadOnlyArray<Comment>,
@@ -65,11 +80,19 @@ export function setCommentsOnNode(
 export function addCommentsToNode(
   node: ESNode | DetachedNode<ESNode>,
   comments: $ReadOnlyArray<Comment>,
+  side?: 'leading' | 'trailing' = 'trailing',
 ): void {
-  // $FlowExpectedError - this property is secretly added by prettier.
+  // $FlowExpectedError[prop-missing] - this property is secretly added by prettier.
+  // $FlowExpectedError[cannot-write]
+  // $FlowExpectedError[incompatible-use]
   node.comments = node.comments ?? [];
-  // $FlowExpectedError
-  (node.comments: Array<Comment>).push(...comments);
+  if (side === 'leading') {
+    // $FlowExpectedError[incompatible-cast]
+    (node.comments: Array<Comment>).unshift(...comments);
+  } else {
+    // $FlowExpectedError[incompatible-cast]
+    (node.comments: Array<Comment>).push(...comments);
+  }
 }
 
 export function getCommentsForNode(
@@ -86,6 +109,18 @@ export function isLeadingComment(comment: Comment): boolean {
 export function isTrailingComment(comment: Comment): boolean {
   // $FlowExpectedError - this property is secretly added by prettier.
   return comment.trailing === true;
+}
+
+export function getLeadingCommentsForNode(
+  node: ESNode | DetachedNode<ESNode>,
+): $ReadOnlyArray<Comment> {
+  return getCommentsForNode(node).filter(isLeadingComment);
+}
+
+export function getTrailingCommentsForNode(
+  node: ESNode | DetachedNode<ESNode>,
+): $ReadOnlyArray<Comment> {
+  return getCommentsForNode(node).filter(isTrailingComment);
 }
 
 export function addComment(

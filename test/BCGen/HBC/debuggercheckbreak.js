@@ -8,10 +8,10 @@
 // RUN: %hermes -dump-bytecode -target=HBC %s -O -g | %FileCheck %s --match-full-lines
 
 //CHECK-LABEL:Function<global>{{.*}}:
-//CHECK-NEXT:Offset in debug table: source 0x0000, lexical 0x0000
+//CHECK-NEXT:Offset in debug table: source 0x0000, lexical 0x0000, textified callees 0x0000
 //CHECK-NEXT:    DeclareGlobalVar  "test1"
 //CHECK-NEXT:    CreateEnvironment r0
-//CHECK-NEXT:    CreateClosure     r1, r0, 1
+//CHECK-NEXT:    CreateClosure     r1, r0, Function<test1>
 //CHECK-NEXT:    GetGlobalObject   r0
 //CHECK-NEXT:    PutById           r0, r1, 1, "test1"
 //CHECK-NEXT:    LoadConstUndefined r0
@@ -45,12 +45,12 @@
 //CHECK-NEXT:L1:
 //CHECK-NEXT:    Mov               r1, r2
 //CHECK-NEXT:    Mov               r2, r1
-//CHECK-NEXT:    JNotGreaterN      L4, r2, r3
+//CHECK-NEXT:    JNotGreater       L4, r2, r3
 //CHECK-NEXT:L5:
-//CHECK-NEXT:    Dec              r1, r1
+//CHECK-NEXT:    Dec               r1, r1
 //CHECK-NEXT:    Mov               r2, r1
 //CHECK-NEXT:    AsyncBreakCheck
-//CHECK-NEXT:    JGreaterN         L5, r2, r3
+//CHECK-NEXT:    JGreater          L5, r2, r3
 //CHECK-NEXT:L4:
 //CHECK-NEXT:    TryGetById        r1, r0, 3, "print"
 //CHECK-NEXT:    LoadConstUndefined r0

@@ -50,6 +50,7 @@ static void printStats(vm::Runtime &runtime, llvh::raw_ostream &os) {
 
 static vm::CallResult<vm::HermesValue>
 createHeapSnapshot(void *, vm::Runtime &runtime, vm::NativeArgs args) {
+#ifdef HERMES_MEMORY_INSTRUMENTATION
   using namespace vm;
   std::string fileName;
   if (args.getArgCount() >= 1 && !args.getArg(0).isUndefined()) {
@@ -80,6 +81,10 @@ createHeapSnapshot(void *, vm::Runtime &runtime, vm::NativeArgs args) {
         "\". System error: " + llvh::StringRef(err.message()));
   }
   return HermesValue::encodeUndefinedValue();
+#else // !defined(HERMES_MEMORY_INSTRUMENTATION)
+  return runtime.raiseTypeError(
+      "Heap snapshotting requires a build with memory instrumentation");
+#endif // !defined(HERMES_MEMORY_INSTRUMENTATION)
 }
 
 static vm::CallResult<vm::HermesValue>
@@ -265,14 +270,14 @@ bool executeHBCBytecodeImpl(
     // Try to limit features that can introduce unpredictable CPU instruction
     // behavior. Date is a potential cause, but is not handled currently.
     vm::MockedEnvironment env;
-    env.mathRandomSeed = 0;
     env.stabilizeInstructionCount = true;
     runtime->setMockedEnvironment(env);
   }
 
   if (options.timeLimit > 0) {
-    vm::TimeLimitMonitor::getInstance().watchRuntime(
-        *runtime, options.timeLimit);
+    runtime->timeLimitMonitor = vm::TimeLimitMonitor::getOrCreate();
+    runtime->timeLimitMonitor->watchRuntime(
+        *runtime, std::chrono::milliseconds(options.timeLimit));
   }
 
   if (shouldRecordGCStats) {
@@ -281,7 +286,12 @@ bool executeHBCBytecodeImpl(
   }
 
   if (options.heapTimeline) {
+#ifdef HERMES_MEMORY_INSTRUMENTATION
     runtime->enableAllocationLocationTracker();
+#else
+    llvh::errs() << "Failed to track allocation locations; build does not"
+                    "include memory instrumentation\n";
+#endif
   }
 
   vm::GCScope scope(*runtime);
@@ -309,9 +319,11 @@ bool executeHBCBytecodeImpl(
     return true;
   }
 
+#if HERMESVM_SAMPLING_PROFILER_AVAILABLE
   if (options.sampleProfiling) {
     vm::SamplingProfiler::enable();
   }
+#endif // HERMESVM_SAMPLING_PROFILER_AVAILABLE
 
   llvh::StringRef sourceURL{};
   if (filename)
@@ -322,10 +334,12 @@ bool executeHBCBytecodeImpl(
       sourceURL,
       vm::Runtime::makeNullHandle<vm::Environment>());
 
+#if HERMESVM_SAMPLING_PROFILER_AVAILABLE
   if (options.sampleProfiling) {
     vm::SamplingProfiler::disable();
     vm::SamplingProfiler::dumpChromeTraceGlobal(llvh::errs());
   }
+#endif // HERMESVM_SAMPLING_PROFILER_AVAILABLE
 
   bool threwException = status == vm::ExecutionStatus::EXCEPTION;
 
@@ -360,24 +374,12 @@ bool executeHBCBytecodeImpl(
     }
   }
 
-  if (options.timeLimit > 0) {
-    vm::TimeLimitMonitor::getInstance().unwatchRuntime(*runtime);
-  }
-
 #ifdef HERMESVM_PROFILER_OPCODE
   runtime->dumpOpcodeStats(llvh::outs());
 #endif
 
 #ifdef HERMESVM_PROFILER_JSFUNCTION
   runtime->dumpJSFunctionStats();
-#endif
-
-#ifdef HERMESVM_PROFILER_EXTERN
-  if (options.patchProfilerSymbols) {
-    patchProfilerSymbols(runtime.get());
-  } else {
-    dumpProfilerSymbolMap(runtime.get(), options.profilerSymbolsFile);
-  }
 #endif
 
 #ifdef HERMESVM_PROFILER_NATIVECALL

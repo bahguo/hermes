@@ -89,11 +89,11 @@ function codemod(code: string, useCodeFrame: boolean = true) {
         node,
         t.ArrowFunctionExpression({
           async: func.async,
-          body: context.shallowCloneNode(func.body),
-          params: context.shallowCloneArray(func.params),
-          predicate: context.shallowCloneNode(func.predicate),
-          typeParameters: context.shallowCloneNode(func.typeParameters),
-          returnType: context.shallowCloneNode(func.returnType),
+          body: func.body,
+          params: func.params,
+          predicate: func.predicate,
+          typeParameters: func.typeParameters,
+          returnType: func.returnType,
         }),
       );
     },
@@ -231,20 +231,20 @@ f = function y() {}.bind(foo);
 
     expect(logSpy).toHaveBeenCalledTimes(5);
     expect(logSpy.mock.calls).toMatchInlineSnapshot(`
-      Array [
-        Array [
+      [
+        [
           "[FunctionExpression:1:4] Self-referencing.",
         ],
-        Array [
+        [
           "[FunctionExpression:5:4] Is a generator.",
         ],
-        Array [
+        [
           "[Identifier:9:15] Manually typed \`this\` param.",
         ],
-        Array [
+        [
           "[FunctionExpression:15:4] Uses \`arguments\`.",
         ],
-        Array [
+        [
           "[Identifier:19:25] Not bound to \`this\`.",
         ],
       ]

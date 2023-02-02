@@ -19,6 +19,11 @@
 #include "hermes/VM/TypesafeFlags.h"
 #include "hermes/VM/VTable.h"
 
+#pragma GCC diagnostic push
+
+#ifdef HERMES_COMPILER_SUPPORTS_WSHORTEN_64_TO_32
+#pragma GCC diagnostic ignored "-Wshorten-64-to-32"
+#endif
 namespace hermes {
 namespace vm {
 
@@ -222,8 +227,10 @@ struct ObjectVTable : public VTable {
   /// Obtain an element from the "indexed storage" of this object. The storage
   /// itself is implementation dependent.
   /// \return the value of the element or "empty" if there is no such element.
-  HermesValue (
-      *getOwnIndexed)(JSObject *self, Runtime &runtime, uint32_t index);
+  HermesValue (*getOwnIndexed)(
+      PseudoHandle<JSObject> self,
+      Runtime &runtime,
+      uint32_t index);
 
   /// Set an element in the "indexed storage" of this object. Depending on the
   /// semantics of the "indexed storage" the storage capacity may need to be
@@ -322,9 +329,9 @@ class JSObject : public GCCell {
       JSObject *parent,
       HiddenClass *clazz,
       NeedsBarriers needsBarriers)
-      : parent_(runtime, parent, &runtime.getHeap(), needsBarriers),
-        clazz_(runtime, clazz, &runtime.getHeap(), needsBarriers),
-        propStorage_(runtime, nullptr, &runtime.getHeap(), needsBarriers) {
+      : parent_(runtime, parent, runtime.getHeap(), needsBarriers),
+        clazz_(runtime, clazz, runtime.getHeap(), needsBarriers),
+        propStorage_(nullptr) {
     // Direct property slots are initialized by initDirectPropStorage.
   }
 
@@ -334,9 +341,9 @@ class JSObject : public GCCell {
       Handle<JSObject> parent,
       Handle<HiddenClass> clazz,
       NeedsBarriers needsBarriers)
-      : parent_(runtime, *parent, &runtime.getHeap(), needsBarriers),
-        clazz_(runtime, *clazz, &runtime.getHeap(), needsBarriers),
-        propStorage_(runtime, nullptr, &runtime.getHeap(), needsBarriers) {
+      : parent_(runtime, *parent, runtime.getHeap(), needsBarriers),
+        clazz_(runtime, *clazz, runtime.getHeap(), needsBarriers),
+        propStorage_(nullptr) {
     // Direct property slots are initialized by initDirectPropStorage.
   }
 
@@ -401,6 +408,13 @@ class JSObject : public GCCell {
   /// \param clazz the hidden class for the new object.
   static PseudoHandle<JSObject> create(
       Runtime &runtime,
+      Handle<HiddenClass> clazz);
+
+  /// Allocates a JSObject with the given hidden class and prototype.
+  /// If allocation fails, the GC declares an OOM.
+  static PseudoHandle<JSObject> create(
+      Runtime &runtime,
+      Handle<JSObject> parentHandle,
       Handle<HiddenClass> clazz);
 
   ~JSObject() = default;
@@ -581,7 +595,7 @@ class JSObject : public GCCell {
   /// \pre index < DIRECT_PROPERTY_SLOTS.
   template <SlotIndex index>
   inline static void
-  setDirectSlotValue(JSObject *self, SmallHermesValue value, GC *gc);
+  setDirectSlotValue(JSObject *self, SmallHermesValue value, GC &gc);
 
   /// Load a value from the "named value" storage space by \p index.
   /// \pre inl == PropStorage::Inline::Yes -> index <
@@ -1035,8 +1049,8 @@ class JSObject : public GCCell {
 
   /// Calls ObjectVTable::getOwnIndexed.
   static HermesValue
-  getOwnIndexed(JSObject *self, Runtime &runtime, uint32_t index) {
-    return self->getVT()->getOwnIndexed(self, runtime, index);
+  getOwnIndexed(PseudoHandle<JSObject> self, Runtime &runtime, uint32_t index) {
+    return self->getVT()->getOwnIndexed(std::move(self), runtime, index);
   }
 
   /// Calls ObjectVTable::setOwnIndexed.
@@ -1232,10 +1246,12 @@ class JSObject : public GCCell {
       const IndexedCB &indexedCB,
       const NamedCB &namedCB);
 
+#ifdef HERMES_MEMORY_INSTRUMENTATION
   /// Return the type name of this object, if it can be found heuristically.
   /// There is no one definitive type name for an object. If no heuristic is
   /// able to produce a name, the empty string is returned.
-  std::string getHeuristicTypeName(GC *gc);
+  std::string getHeuristicTypeName(GC &gc);
+#endif
 
   /// Accesses the name property on an object, returns the empty string if it
   /// doesn't exist or isn't a string.
@@ -1245,16 +1261,18 @@ class JSObject : public GCCell {
   /// @name Virtual function implementations
   /// @{
 
+#ifdef HERMES_MEMORY_INSTRUMENTATION
   /// Add an estimate of the type name for this object as the name in heap
   /// snapshots.
-  static std::string _snapshotNameImpl(GCCell *cell, GC *gc);
+  static std::string _snapshotNameImpl(GCCell *cell, GC &gc);
 
   /// Add user-visible property names to a snapshot.
-  static void _snapshotAddEdgesImpl(GCCell *cell, GC *gc, HeapSnapshot &snap);
+  static void _snapshotAddEdgesImpl(GCCell *cell, GC &gc, HeapSnapshot &snap);
 
   /// Add the location of the constructor for this object to the heap snapshot.
   static void
-  _snapshotAddLocationsImpl(GCCell *cell, GC *gc, HeapSnapshot &snap);
+  _snapshotAddLocationsImpl(GCCell *cell, GC &gc, HeapSnapshot &snap);
+#endif
 
   /// \return the range of indexes (end-exclusive) stored in indexed storage.
   static std::pair<uint32_t, uint32_t> _getOwnIndexedRangeImpl(
@@ -1278,8 +1296,10 @@ class JSObject : public GCCell {
   /// Obtain an element from the "indexed storage" of this object. The storage
   /// itself is implementation dependent.
   /// \return the value of the element or "empty" if there is no such element.
-  static HermesValue
-  _getOwnIndexedImpl(JSObject *self, Runtime &runtime, uint32_t index);
+  static HermesValue _getOwnIndexedImpl(
+      PseudoHandle<JSObject> self,
+      Runtime &runtime,
+      uint32_t index);
 
   /// Set an element in the "indexed storage" of this object. Depending on the
   /// semantics of the "indexed storage" the storage capacity may need to be
@@ -1617,7 +1637,7 @@ inline ExecutionStatus JSObject::allocatePropStorage(
     return ExecutionStatus::EXCEPTION;
 
   selfHandle->propStorage_.setNonNull(
-      runtime, vmcast<PropStorage>(*res), &runtime.getHeap());
+      runtime, vmcast<PropStorage>(*res), runtime.getHeap());
   return ExecutionStatus::RETURNED;
 }
 
@@ -1648,7 +1668,7 @@ inline T *JSObject::initDirectPropStorage(Runtime &runtime, T *self) {
       self->directProps() + numOverlapSlots<T>(),
       self->directProps() + DIRECT_PROPERTY_SLOTS,
       SmallHermesValue::encodeUndefinedValue(),
-      &runtime.getHeap());
+      runtime.getHeap());
   return self;
 }
 
@@ -1660,7 +1680,7 @@ inline SmallHermesValue JSObject::getDirectSlotValue(const JSObject *self) {
 
 template <SlotIndex index>
 inline void
-JSObject::setDirectSlotValue(JSObject *self, SmallHermesValue value, GC *gc) {
+JSObject::setDirectSlotValue(JSObject *self, SmallHermesValue value, GC &gc) {
   static_assert(index < DIRECT_PROPERTY_SLOTS, "Must be a direct property");
   self->directProps()[index].set(value, gc);
 }
@@ -1737,10 +1757,10 @@ inline void JSObject::setNamedSlotValueUnsafe(
   // to namedSlotRef(), it is a slight performance regression, which is not
   // entirely unexpected.
   if (LLVM_LIKELY(index < DIRECT_PROPERTY_SLOTS))
-    return self->directProps()[index].set(value, &runtime.getHeap());
+    return self->directProps()[index].set(value, runtime.getHeap());
 
   self->propStorage_.getNonNull(runtime)->set<inl>(
-      index - DIRECT_PROPERTY_SLOTS, value, &runtime.getHeap());
+      index - DIRECT_PROPERTY_SLOTS, value, runtime.getHeap());
 }
 
 inline CallResult<PseudoHandle<>> JSObject::getComputedSlotValue(
@@ -1752,7 +1772,8 @@ inline CallResult<PseudoHandle<>> JSObject::getComputedSlotValue(
     assert(
         self->flags_.indexedStorage &&
         "indexed flag set but no indexed storage");
-    return createPseudoHandle(getOwnIndexed(self.get(), runtime, desc.slot));
+    return createPseudoHandle(
+        getOwnIndexed(std::move(self), runtime, desc.slot));
   }
   if (LLVM_UNLIKELY(desc.flags.proxyObject) ||
       LLVM_UNLIKELY(desc.flags.hostObject)) {
@@ -1777,7 +1798,7 @@ inline HermesValue JSObject::getComputedSlotValueUnsafe(
     assert(
         self->flags_.indexedStorage &&
         "indexed flag set but no indexed storage");
-    return getOwnIndexed(self.get(), runtime, desc.slot);
+    return getOwnIndexed(std::move(self), runtime, desc.slot);
   }
   // Call is valid because this function cannot be called with a Proxy.
   return getNamedSlotValueUnsafe(
@@ -1992,5 +2013,6 @@ inline bool JSObject::shouldCacheForIn(Runtime &runtime) const {
 
 } // namespace vm
 } // namespace hermes
+#pragma GCC diagnostic pop
 
 #endif // HERMES_VM_JSOBJECT_H

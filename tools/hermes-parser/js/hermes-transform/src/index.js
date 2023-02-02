@@ -13,9 +13,13 @@
 export type {TraversalContextBase, Visitor} from './traverse/traverse';
 export type {TransformVisitor} from './transform/transform';
 export type {TransformContext} from './transform/TransformContext';
-export type {DetachedNode} from './detachedNode';
+export type {DetachedNode, MaybeDetachedNode} from './detachedNode';
 
-export {SimpleTraverser} from './traverse/SimpleTraverser';
+export {SimpleTraverser} from 'hermes-parser';
 export {traverse, traverseWithContext} from './traverse/traverse';
 export {transform} from './transform/transform';
+export {parse} from './transform/parse';
+export {print} from './transform/print';
 export * as t from './generated/node-types';
+export {asDetachedNode} from './detachedNode';
+export {cloneJSDocCommentsToNewNode} from './transform/comments/comments';

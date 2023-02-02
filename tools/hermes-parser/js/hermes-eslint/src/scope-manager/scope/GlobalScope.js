@@ -56,9 +56,9 @@ class GlobalScope extends ScopeBase<
     }
 
     for (const ref of this.__referencesLeftToResolve) {
-      if (ref.maybeImplicitGlobal && !this.set.has(ref.identifier.name)) {
+      const info = ref.maybeImplicitGlobal;
+      if (info && !this.set.has(ref.identifier.name)) {
         // create an implicit global variable from assignment expression
-        const info = ref.maybeImplicitGlobal;
         const node = info.pattern;
         if (node && node.type === 'Identifier') {
           this.__defineVariable(
@@ -72,6 +72,7 @@ class GlobalScope extends ScopeBase<
       }
     }
 
+    // $FlowFixMe[incompatible-type] We know this value is an array at this point.
     this.__implicit.referencesLeftToResolve = this.__referencesLeftToResolve;
     return super.close(scopeManager);
   }

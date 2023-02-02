@@ -13,6 +13,7 @@
 #include "hermes/Support/Conversions.h"
 #include "hermes/Support/SlowAssert.h"
 #include "hermes/Support/Statistic.h"
+#include "hermes/VM/BigIntPrimitive.h"
 #include "hermes/VM/Callable.h"
 #include "hermes/VM/CodeBlock.h"
 #include "hermes/VM/HandleRootOwner-inline.h"
@@ -30,6 +31,7 @@
 #include "hermes/VM/StackFrame-inline.h"
 #include "hermes/VM/StringPrimitive.h"
 #include "hermes/VM/StringView.h"
+#include "hermes/VM/WeakRoot-inline.h"
 
 #include "llvh/Support/Debug.h"
 #include "llvh/Support/Format.h"
@@ -37,6 +39,11 @@
 
 #include "Interpreter-internal.h"
 
+#pragma GCC diagnostic push
+
+#ifdef HERMES_COMPILER_SUPPORTS_WSHORTEN_64_TO_32
+#pragma GCC diagnostic ignored "-Wshorten-64-to-32"
+#endif
 using llvh::dbgs;
 using namespace hermes::inst;
 
@@ -100,26 +107,8 @@ HERMES_SLOW_STATISTIC(
 // Ensure that instructions declared as having matching layouts actually do.
 #include "InstLayout.inc"
 
-#if defined(HERMESVM_PROFILER_EXTERN)
-// External profiler mode wraps calls to each JS function with a unique native
-// function that recursively calls the interpreter. See Profiler.{h,cpp} for how
-// these symbols are subsequently patched with JS function names.
-#define INTERP_WRAPPER(name)                                                \
-  __attribute__((__noinline__)) static llvh::CallResult<llvh::HermesValue>  \
-  name(hermes::vm::Runtime &runtime, hermes::vm::CodeBlock *newCodeBlock) { \
-    return runtime.interpretFunctionImpl(newCodeBlock);                     \
-  }
-PROFILER_SYMBOLS(INTERP_WRAPPER)
-#endif
-
 namespace hermes {
 namespace vm {
-
-#if defined(HERMESVM_PROFILER_EXTERN)
-typedef CallResult<HermesValue> (*WrapperFunc)(Runtime &, CodeBlock *);
-#define LIST_ITEM(name) name,
-static const WrapperFunc interpWrappers[] = {PROFILER_SYMBOLS(LIST_ITEM)};
-#endif
 
 /// Initialize the state of some internal variables based on the current
 /// code block.
@@ -186,8 +175,9 @@ CallResult<Handle<Arguments>> Interpreter::reifyArgumentsSlowPath(
   Handle<Arguments> args = *argRes;
 
   for (uint32_t argIndex = 0; argIndex < argCount; ++argIndex) {
-    Arguments::unsafeSetExistingElementAt(
-        *args, runtime, argIndex, frame.getArgRef(argIndex));
+    SmallHermesValue shv =
+        SmallHermesValue::encodeHermesValue(frame.getArgRef(argIndex), runtime);
+    Arguments::unsafeSetExistingElementAt(*args, runtime, argIndex, shv);
   }
 
   // The returned value should already be set from the create call.
@@ -287,8 +277,7 @@ CallResult<PseudoHandle<>> Interpreter::handleCallSlowPath(
     // Call the bound function.
     return BoundFunction::_boundCall(bound, runtime.getCurrentIP(), runtime);
   } else {
-    return runtime.raiseTypeErrorForValue(
-        Handle<>(callTarget), " is not a function");
+    return runtime.raiseTypeErrorForCallable(Handle<>(callTarget));
   }
 }
 
@@ -521,7 +510,7 @@ static Handle<HiddenClass> getHiddenClassForBuffer(
 
   MutableHandle<> tmpHandleKey{runtime};
   MutableHandle<HiddenClass> clazz =
-      runtime.makeMutableHandle(runtime.getHiddenClassForPrototypeRaw(
+      runtime.makeMutableHandle(*runtime.getHiddenClassForPrototype(
           vmcast<JSObject>(runtime.objectPrototype),
           JSObject::numOverlapSlots<JSObject>()));
 
@@ -652,7 +641,8 @@ CallResult<PseudoHandle<>> Interpreter::createArrayFromBuffer(
   JSArray::size_type i = 0;
   while (iter.hasNext()) {
     // NOTE: we must get the value in a separate step to guarantee ordering.
-    auto value = iter.get(runtime);
+    const auto value =
+        SmallHermesValue::encodeHermesValue(iter.get(runtime), runtime);
     JSArray::unsafeSetExistingElementAt(*arr, runtime, i++, value);
   }
 
@@ -794,9 +784,12 @@ static inline const Inst *nextInstCall(const Inst *ip) {
 
 CallResult<HermesValue> Runtime::interpretFunctionImpl(
     CodeBlock *newCodeBlock) {
-  newCodeBlock->lazyCompile(*this);
+  if (LLVM_UNLIKELY(
+          newCodeBlock->lazyCompile(*this) == ExecutionStatus::EXCEPTION)) {
+    return ExecutionStatus::EXCEPTION;
+  }
 
-#if defined(HERMES_ENABLE_ALLOCATION_LOCATION_TRACES) || !defined(NDEBUG)
+#if defined(HERMES_MEMORY_INSTRUMENTATION) || !defined(NDEBUG)
   // We always call getCurrentIP() in a debug build as this has the effect
   // of asserting the IP is correctly set (not invalidated) at this point.
   // This allows us to leverage our whole test-suite to find missing cases
@@ -804,7 +797,7 @@ CallResult<HermesValue> Runtime::interpretFunctionImpl(
   const inst::Inst *ip = getCurrentIP();
   (void)ip;
 #endif
-#ifdef HERMES_ENABLE_ALLOCATION_LOCATION_TRACES
+#ifdef HERMES_MEMORY_INSTRUMENTATION
   if (ip) {
     const CodeBlock *codeBlock;
     std::tie(codeBlock, ip) = getCurrentInterpreterLocation(ip);
@@ -834,15 +827,7 @@ CallResult<HermesValue> Runtime::interpretFunctionImpl(
 }
 
 CallResult<HermesValue> Runtime::interpretFunction(CodeBlock *newCodeBlock) {
-#ifdef HERMESVM_PROFILER_EXTERN
-  auto id = getProfilerID(newCodeBlock);
-  if (id >= NUM_PROFILER_SYMBOLS) {
-    id = NUM_PROFILER_SYMBOLS - 1; // Overflow entry.
-  }
-  return interpWrappers[id](this, newCodeBlock);
-#else
   return interpretFunctionImpl(newCodeBlock);
-#endif
 }
 
 #ifdef HERMES_ENABLE_DEBUGGER
@@ -855,29 +840,6 @@ ExecutionStatus Runtime::stepFunction(InterpreterState &state) {
         .getStatus();
 }
 #endif
-
-/// \return the quotient of x divided by y.
-static double doDiv(double x, double y)
-    LLVM_NO_SANITIZE("float-divide-by-zero");
-static inline double doDiv(double x, double y) {
-  // UBSan will complain about float divide by zero as our implementation
-  // of OpCode::Div depends on IEEE 754 float divide by zero. All modern
-  // compilers implement this and there is no trivial work-around without
-  // sacrificing performance and readability.
-  // NOTE: This was pulled out of the interpreter to avoid putting the sanitize
-  // silencer on the entire interpreter function.
-  return x / y;
-}
-
-/// \return the product of x multiplied by y.
-static inline double doMult(double x, double y) {
-  return x * y;
-}
-
-/// \return the difference of y subtracted from x.
-static inline double doSub(double x, double y) {
-  return x - y;
-}
 
 template <bool SingleStep, bool EnableCrashTrace>
 CallResult<HermesValue> Interpreter::interpretFunction(
@@ -1011,9 +973,7 @@ CallResult<HermesValue> Interpreter::interpretFunction(
 
   INIT_OPCODE_PROFILER;
 
-#if !defined(HERMESVM_PROFILER_EXTERN)
 tailCall:
-#endif
   PROFILER_ENTER_FUNCTION(curCodeBlock);
 
 #ifdef HERMES_ENABLE_DEBUGGER
@@ -1194,110 +1154,97 @@ tailCall:
 /// operands are numbers.
 /// \param name the name of the instruction. The fast path case will have a
 ///     "n" appended to the name.
-/// \param oper the C++ operator to use to actually perform the arithmetic
-///     operation.
-#define BINOP(name, oper)                                                \
+#define BINOP(name)                                                      \
   CASE(name) {                                                           \
     if (LLVM_LIKELY(O2REG(name).isNumber() && O3REG(name).isNumber())) { \
       /* Fast-path. */                                                   \
       CASE(name##N) {                                                    \
         O1REG(name) = HermesValue::encodeDoubleValue(                    \
-            oper(O2REG(name).getNumber(), O3REG(name).getNumber()));     \
+            do##name(O2REG(name).getNumber(), O3REG(name).getNumber())); \
         ip = NEXTINST(name);                                             \
         DISPATCH;                                                        \
       }                                                                  \
     }                                                                    \
-    CAPTURE_IP(res = toNumber_RJS(runtime, Handle<>(&O2REG(name))));     \
+    CAPTURE_IP(                                                          \
+        res = doOperSlowPath<do##name>(                                  \
+            runtime, Handle<>(&O2REG(name)), Handle<>(&O3REG(name))));   \
     if (res == ExecutionStatus::EXCEPTION)                               \
       goto exception;                                                    \
-    double left = res->getDouble();                                      \
-    CAPTURE_IP(res = toNumber_RJS(runtime, Handle<>(&O3REG(name))));     \
-    if (res == ExecutionStatus::EXCEPTION)                               \
-      goto exception;                                                    \
-    O1REG(name) =                                                        \
-        HermesValue::encodeDoubleValue(oper(left, res->getDouble()));    \
+    O1REG(name) = *res;                                                  \
     gcScope.flushToSmallCount(KEEP_HANDLES);                             \
     ip = NEXTINST(name);                                                 \
     DISPATCH;                                                            \
   }
 
-#define INCDECOP(name, oper)                                            \
-  CASE(name) {                                                          \
-    O1REG(name) =                                                       \
-        HermesValue::encodeDoubleValue(O2REG(name).getNumber() oper 1); \
-    ip = NEXTINST(name);                                                \
-    DISPATCH;                                                           \
+#define INCDECOP(name)                                                        \
+  CASE(name) {                                                                \
+    if (LLVM_LIKELY(O2REG(name).isNumber())) {                                \
+      O1REG(name) =                                                           \
+          HermesValue::encodeDoubleValue(do##name(O2REG(name).getNumber()));  \
+      ip = NEXTINST(name);                                                    \
+      DISPATCH;                                                               \
+    }                                                                         \
+    CAPTURE_IP(                                                               \
+        res =                                                                 \
+            doIncDecOperSlowPath<do##name>(runtime, Handle<>(&O2REG(name)))); \
+    if (LLVM_UNLIKELY(res == ExecutionStatus::EXCEPTION)) {                   \
+      goto exception;                                                         \
+    }                                                                         \
+    O1REG(name) = *res;                                                       \
+    gcScope.flushToSmallCount(KEEP_HANDLES);                                  \
+    ip = NEXTINST(name);                                                      \
+    DISPATCH;                                                                 \
   }
 
 /// Implement a shift instruction with a fast path where both
 /// operands are numbers.
 /// \param name the name of the instruction.
-/// \param oper the C++ operator to use to actually perform the shift
-///     operation.
-/// \param lConv the conversion function for the LHS of the expression.
-/// \param lType the type of the LHS operand.
-/// \param returnType the type of the return value.
-#define SHIFTOP(name, oper, lConv, lType, returnType)                     \
-  CASE(name) {                                                            \
-    if (LLVM_LIKELY(                                                      \
-            O2REG(name).isNumber() &&                                     \
-            O3REG(name).isNumber())) { /* Fast-path. */                   \
-      auto lnum = static_cast<lType>(                                     \
-          hermes::truncateToInt32(O2REG(name).getNumber()));              \
-      auto rnum = static_cast<uint32_t>(                                  \
-                      hermes::truncateToInt32(O3REG(name).getNumber())) & \
-          0x1f;                                                           \
-      O1REG(name) = HermesValue::encodeDoubleValue(                       \
-          static_cast<returnType>(lnum oper rnum));                       \
-      ip = NEXTINST(name);                                                \
-      DISPATCH;                                                           \
-    }                                                                     \
-    CAPTURE_IP(res = lConv(runtime, Handle<>(&O2REG(name))));             \
-    if (res == ExecutionStatus::EXCEPTION) {                              \
-      goto exception;                                                     \
-    }                                                                     \
-    auto lnum = static_cast<lType>(res->getNumber());                     \
-    CAPTURE_IP(res = toUInt32_RJS(runtime, Handle<>(&O3REG(name))));      \
-    if (res == ExecutionStatus::EXCEPTION) {                              \
-      goto exception;                                                     \
-    }                                                                     \
-    auto rnum = static_cast<uint32_t>(res->getNumber()) & 0x1f;           \
-    gcScope.flushToSmallCount(KEEP_HANDLES);                              \
-    O1REG(name) = HermesValue::encodeDoubleValue(                         \
-        static_cast<returnType>(lnum oper rnum));                         \
-    ip = NEXTINST(name);                                                  \
-    DISPATCH;                                                             \
+#define SHIFTOP(name)                                                          \
+  CASE(name) {                                                                 \
+    if (LLVM_LIKELY(                                                           \
+            O2REG(name).isNumber() &&                                          \
+            O3REG(name).isNumber())) { /* Fast-path. */                        \
+      auto lnum = hermes::truncateToInt32(O2REG(name).getNumber());            \
+      uint32_t rnum = hermes::truncateToInt32(O3REG(name).getNumber()) & 0x1f; \
+      O1REG(name) = HermesValue::encodeDoubleValue(do##name(lnum, rnum));      \
+      ip = NEXTINST(name);                                                     \
+      DISPATCH;                                                                \
+    }                                                                          \
+    CAPTURE_IP(                                                                \
+        res = doShiftOperSlowPath<do##name>(                                   \
+            runtime, Handle<>(&O2REG(name)), Handle<>(&O3REG(name))));         \
+    if (LLVM_UNLIKELY(res == ExecutionStatus::EXCEPTION)) {                    \
+      goto exception;                                                          \
+    }                                                                          \
+    O1REG(name) = *res;                                                        \
+    gcScope.flushToSmallCount(KEEP_HANDLES);                                   \
+    ip = NEXTINST(name);                                                       \
+    DISPATCH;                                                                  \
   }
 
 /// Implement a binary bitwise instruction with a fast path where both
 /// operands are numbers.
 /// \param name the name of the instruction.
-/// \param oper the C++ operator to use to actually perform the bitwise
-///     operation.
-#define BITWISEBINOP(name, oper)                                               \
-  CASE(name) {                                                                 \
-    if (LLVM_LIKELY(O2REG(name).isNumber() && O3REG(name).isNumber())) {       \
-      /* Fast-path. */                                                         \
-      O1REG(name) = HermesValue::encodeDoubleValue(                            \
-          hermes::truncateToInt32(O2REG(name).getNumber())                     \
-              oper hermes::truncateToInt32(O3REG(name).getNumber()));          \
-      ip = NEXTINST(name);                                                     \
-      DISPATCH;                                                                \
-    }                                                                          \
-    CAPTURE_IP(res = toInt32_RJS(runtime, Handle<>(&O2REG(name))));            \
-    if (res == ExecutionStatus::EXCEPTION) {                                   \
-      goto exception;                                                          \
-    }                                                                          \
-    int32_t left = res->getNumberAs<int32_t>();                                \
-    CAPTURE_IP(res = toInt32_RJS(runtime, Handle<>(&O3REG(name))));            \
-    if (res == ExecutionStatus::EXCEPTION) {                                   \
-      goto exception;                                                          \
-    }                                                                          \
-    O1REG(name) =                                                              \
-        HermesValue::encodeNumberValue(left oper res->getNumberAs<int32_t>()); \
-    gcScope.flushToSmallCount(KEEP_HANDLES);                                   \
-    ip = NEXTINST(name);                                                       \
-    DISPATCH;                                                                  \
+#define BITWISEBINOP(name)                                               \
+  CASE(name) {                                                           \
+    if (LLVM_LIKELY(O2REG(name).isNumber() && O3REG(name).isNumber())) { \
+      /* Fast-path. */                                                   \
+      O1REG(name) = HermesValue::encodeDoubleValue(do##name(             \
+          hermes::truncateToInt32(O2REG(name).getNumber()),              \
+          hermes::truncateToInt32(O3REG(name).getNumber())));            \
+      ip = NEXTINST(name);                                               \
+      DISPATCH;                                                          \
+    }                                                                    \
+    CAPTURE_IP(                                                          \
+        res = doBitOperSlowPath<do##name>(                               \
+            runtime, Handle<>(&O2REG(name)), Handle<>(&O3REG(name))));   \
+    if (LLVM_UNLIKELY(res == ExecutionStatus::EXCEPTION)) {              \
+      goto exception;                                                    \
+    }                                                                    \
+    O1REG(name) = *res;                                                  \
+    gcScope.flushToSmallCount(KEEP_HANDLES);                             \
+    ip = NEXTINST(name);                                                 \
+    DISPATCH;                                                            \
   }
 
 /// Implement a comparison instruction.
@@ -1633,26 +1580,18 @@ tailCall:
       if (auto *func = dyn_vmcast<JSFunction>(O2REG(Call))) {
         assert(!SingleStep && "can't single-step a call");
 
-#ifdef HERMES_ENABLE_ALLOCATION_LOCATION_TRACES
+#ifdef HERMES_MEMORY_INSTRUMENTATION
         runtime.pushCallStack(curCodeBlock, ip);
 #endif
 
-        CodeBlock *calleeBlock = func->getCodeBlock();
-        CAPTURE_IP(calleeBlock->lazyCompile(runtime));
-#if defined(HERMESVM_PROFILER_EXTERN)
-        CAPTURE_IP(res = runtime.interpretFunction(calleeBlock));
+        CodeBlock *calleeBlock = func->getCodeBlock(runtime);
+        CAPTURE_IP_ASSIGN(auto res, calleeBlock->lazyCompile(runtime));
         if (LLVM_UNLIKELY(res == ExecutionStatus::EXCEPTION)) {
           goto exception;
         }
-        O1REG(Call) = *res;
-        gcScope.flushToSmallCount(KEEP_HANDLES);
-        ip = nextIP;
-        DISPATCH;
-#else
         curCodeBlock = calleeBlock;
         CAPTURE_IP_SET();
         goto tailCall;
-#endif
       }
       CAPTURE_IP(
           resPH = Interpreter::handleCallSlowPath(runtime, &O2REG(Call)));
@@ -1702,22 +1641,13 @@ tailCall:
 
         assert(!SingleStep && "can't single-step a call");
 
-        CAPTURE_IP(calleeBlock->lazyCompile(runtime));
-#if defined(HERMESVM_PROFILER_EXTERN)
-        CAPTURE_IP(res = runtime.interpretFunction(calleeBlock));
+        CAPTURE_IP_ASSIGN(auto res, calleeBlock->lazyCompile(runtime));
         if (LLVM_UNLIKELY(res == ExecutionStatus::EXCEPTION)) {
           goto exception;
         }
-        O1REG(CallDirect) = *res;
-        gcScope.flushToSmallCount(KEEP_HANDLES);
-        ip = ip->opCode == OpCode::CallDirect ? NEXTINST(CallDirect)
-                                              : NEXTINST(CallDirectLongIndex);
-        DISPATCH;
-#else
         curCodeBlock = calleeBlock;
         CAPTURE_IP_SET();
         goto tailCall;
-#endif
       }
 
       CASE(GetBuiltinClosure) {
@@ -1779,7 +1709,7 @@ tailCall:
             GeneratorInnerFunction::State::SuspendedStart) {
           nextIP = NEXTINST(StartGenerator);
         } else {
-          nextIP = innerFn->getNextIP();
+          nextIP = innerFn->getNextIP(runtime);
           innerFn->restoreStack(runtime);
         }
         innerFn->setState(GeneratorInnerFunction::State::Executing);
@@ -1815,7 +1745,7 @@ tailCall:
 
         PROFILER_EXIT_FUNCTION(curCodeBlock);
 
-#ifdef HERMES_ENABLE_ALLOCATION_LOCATION_TRACES
+#ifdef HERMES_MEMORY_INSTRUMENTATION
         runtime.popCallStack();
 #endif
 
@@ -1837,11 +1767,6 @@ tailCall:
           SLOW_DEBUG(dbgs() << "function exit: returning to native code\n");
           return res;
         }
-
-// Return because of recursive calling structure
-#if defined(HERMESVM_PROFILER_EXTERN)
-        return res;
-#endif
 
         INIT_STATE_FOR_CODEBLOCK(curCodeBlock);
         O1REG(Call) = res.getValue();
@@ -2122,20 +2047,18 @@ tailCall:
         tmpHandle = HermesValue::encodeObjectValueUnsafe(
             FRAME.getCalleeClosureUnsafe()->getEnvironment(runtime));
 
-        CAPTURE_IP(
-            res = Environment::create(
+        CAPTURE_IP_ASSIGN(
+            HermesValue envHV,
+            Environment::create(
                 runtime,
                 Handle<Environment>::vmcast_or_null(tmpHandle),
                 curCodeBlock->getEnvironmentSize()));
-        if (res == ExecutionStatus::EXCEPTION) {
-          goto exception;
-        }
-        O1REG(CreateEnvironment) = *res;
+
+        O1REG(CreateEnvironment) = envHV;
 #ifdef HERMES_ENABLE_DEBUGGER
-        FRAME.getDebugEnvironmentRef() = *res;
+        FRAME.getDebugEnvironmentRef() = envHV;
 #endif
         tmpHandle = HermesValue::encodeUndefinedValue();
-        gcScope.flushToSmallCount(KEEP_HANDLES);
         ip = NEXTINST(CreateEnvironment);
         DISPATCH;
       }
@@ -2143,14 +2066,14 @@ tailCall:
       CASE(StoreToEnvironment) {
         vmcast<Environment>(O1REG(StoreToEnvironment))
             ->slot(ip->iStoreToEnvironment.op2)
-            .set(O3REG(StoreToEnvironment), &runtime.getHeap());
+            .set(O3REG(StoreToEnvironment), runtime.getHeap());
         ip = NEXTINST(StoreToEnvironment);
         DISPATCH;
       }
       CASE(StoreToEnvironmentL) {
         vmcast<Environment>(O1REG(StoreToEnvironmentL))
             ->slot(ip->iStoreToEnvironmentL.op2)
-            .set(O3REG(StoreToEnvironmentL), &runtime.getHeap());
+            .set(O3REG(StoreToEnvironmentL), runtime.getHeap());
         ip = NEXTINST(StoreToEnvironmentL);
         DISPATCH;
       }
@@ -2158,14 +2081,14 @@ tailCall:
       CASE(StoreNPToEnvironment) {
         vmcast<Environment>(O1REG(StoreNPToEnvironment))
             ->slot(ip->iStoreNPToEnvironment.op2)
-            .setNonPtr(O3REG(StoreNPToEnvironment), &runtime.getHeap());
+            .setNonPtr(O3REG(StoreNPToEnvironment), runtime.getHeap());
         ip = NEXTINST(StoreNPToEnvironment);
         DISPATCH;
       }
       CASE(StoreNPToEnvironmentL) {
         vmcast<Environment>(O1REG(StoreNPToEnvironmentL))
             ->slot(ip->iStoreNPToEnvironmentL.op2)
-            .setNonPtr(O3REG(StoreNPToEnvironmentL), &runtime.getHeap());
+            .setNonPtr(O3REG(StoreNPToEnvironmentL), runtime.getHeap());
         ip = NEXTINST(StoreNPToEnvironmentL);
         DISPATCH;
       }
@@ -2278,7 +2201,6 @@ tailCall:
       // NOTE: it is safe to use OnREG(GetById) here because all instructions
       // have the same layout: opcode, registers, non-register operands, i.e.
       // they only differ in the width of the last "identifier" field.
-      CallResult<HermesValue> propRes{ExecutionStatus::EXCEPTION};
       if (LLVM_LIKELY(O2REG(GetById).isObject())) {
         auto *obj = vmcast<JSObject>(O2REG(GetById));
         auto cacheIdx = ip->iGetById.op3;
@@ -2291,7 +2213,7 @@ tailCall:
               "unaccounted handles were created");
           auto objHandle = runtime.makeHandle(obj);
           auto cacheHCPtr = vmcast_or_null<HiddenClass>(static_cast<GCCell *>(
-              cacheEntry->clazz.get(runtime, &runtime.getHeap())));
+              cacheEntry->clazz.get(runtime, runtime.getHeap())));
           CAPTURE_IP(runtime.recordHiddenClass(
               curCodeBlock, ip, ID(idVal), obj->getClass(runtime), cacheHCPtr));
           // obj may be moved by GC due to recordHiddenClass
@@ -2402,7 +2324,7 @@ tailCall:
 #endif
 #ifdef HERMES_SLOW_DEBUG
         auto *savedClass = cacheIdx != hbc::PROPERTY_CACHING_DISABLED
-            ? cacheEntry->clazz.get(runtime, &runtime.getHeap())
+            ? cacheEntry->clazz.get(runtime, runtime.getHeap())
             : nullptr;
 #endif
         ++NumGetByIdSlow;
@@ -2420,7 +2342,7 @@ tailCall:
         }
 #ifdef HERMES_SLOW_DEBUG
         if (cacheIdx != hbc::PROPERTY_CACHING_DISABLED && savedClass &&
-            cacheEntry->clazz.get(runtime, &runtime.getHeap()) != savedClass) {
+            cacheEntry->clazz.get(runtime, runtime.getHeap()) != savedClass) {
           ++NumGetByIdCacheEvicts;
         }
 #endif
@@ -2482,7 +2404,7 @@ tailCall:
           auto shvHandle = runtime.makeHandle(shv.toHV(runtime));
           auto objHandle = runtime.makeHandle(obj);
           auto cacheHCPtr = vmcast_or_null<HiddenClass>(static_cast<GCCell *>(
-              cacheEntry->clazz.get(runtime, &runtime.getHeap())));
+              cacheEntry->clazz.get(runtime, runtime.getHeap())));
           CAPTURE_IP(runtime.recordHiddenClass(
               curCodeBlock, ip, ID(idVal), obj->getClass(runtime), cacheHCPtr));
           // shv/obj may be invalidated by recordHiddenClass
@@ -2571,7 +2493,6 @@ tailCall:
     }
 
       CASE(GetByVal) {
-        CallResult<HermesValue> propRes{ExecutionStatus::EXCEPTION};
         if (LLVM_LIKELY(O2REG(GetByVal).isObject())) {
           CAPTURE_IP(
               resPH = JSObject::getComputed_RJS(
@@ -2668,7 +2589,7 @@ tailCall:
           MutableHandle<SymbolID> tmpPropNameStorage{runtime};
           // Loop until we find a property which is present.
           while (idx < size) {
-            tmpHandle = arr->at(idx);
+            tmpHandle = arr->at(runtime, idx);
             ComputedPropertyDescriptor desc;
             CAPTURE_IP_ASSIGN(
                 ExecutionStatus status,
@@ -2718,6 +2639,21 @@ tailCall:
           gcScope.flushToSmallCount(KEEP_HANDLES);
           O1REG(ToNumber) = res.getValue();
           ip = NEXTINST(ToNumber);
+        }
+        DISPATCH;
+      }
+
+      CASE(ToNumeric) {
+        if (LLVM_LIKELY(O2REG(ToNumeric).isNumber())) {
+          O1REG(ToNumeric) = O2REG(ToNumeric);
+          ip = NEXTINST(ToNumeric);
+        } else {
+          CAPTURE_IP(res = toNumeric_RJS(runtime, Handle<>(&O2REG(ToNumeric))));
+          if (res == ExecutionStatus::EXCEPTION)
+            goto exception;
+          gcScope.flushToSmallCount(KEEP_HANDLES);
+          O1REG(ToNumeric) = res.getValue();
+          ip = NEXTINST(ToNumeric);
         }
         DISPATCH;
       }
@@ -2806,8 +2742,8 @@ tailCall:
           ip = NEXTINST(JmpUndefinedLong);
         DISPATCH;
       }
-      INCDECOP(Inc, +)
-      INCDECOP(Dec, -)
+      INCDECOP(Inc)
+      INCDECOP(Dec)
       CASE(Add) {
         if (LLVM_LIKELY(
                 O2REG(Add).isNumber() &&
@@ -2838,13 +2774,12 @@ tailCall:
           ip = NEXTINST(BitNot);
           DISPATCH;
         }
-        CAPTURE_IP(res = toInt32_RJS(runtime, Handle<>(&O2REG(BitNot))));
+        CAPTURE_IP(res = doBitNotSlowPath(runtime, Handle<>(&O2REG(BitNot))));
         if (res == ExecutionStatus::EXCEPTION) {
           goto exception;
         }
+        O1REG(BitNot) = *res;
         gcScope.flushToSmallCount(KEEP_HANDLES);
-        O1REG(BitNot) = HermesValue::encodeDoubleValue(
-            ~static_cast<int32_t>(res->getNumber()));
         ip = NEXTINST(BitNot);
         DISPATCH;
       }
@@ -3115,13 +3050,14 @@ tailCall:
         if (LLVM_LIKELY(O2REG(Negate).isNumber())) {
           O1REG(Negate) =
               HermesValue::encodeDoubleValue(-O2REG(Negate).getNumber());
-        } else {
-          CAPTURE_IP(res = toNumber_RJS(runtime, Handle<>(&O2REG(Negate))));
-          if (res == ExecutionStatus::EXCEPTION)
-            goto exception;
-          gcScope.flushToSmallCount(KEEP_HANDLES);
-          O1REG(Negate) = HermesValue::encodeDoubleValue(-res->getNumber());
+          ip = NEXTINST(Negate);
+          DISPATCH;
         }
+        CAPTURE_IP(res = doNegateSlowPath(runtime, Handle<>(&O2REG(Negate))));
+        if (res == ExecutionStatus::EXCEPTION)
+          goto exception;
+        O1REG(Negate) = *res;
+        gcScope.flushToSmallCount(KEEP_HANDLES);
         ip = NEXTINST(Negate);
         DISPATCH;
       }
@@ -3131,30 +3067,20 @@ tailCall:
         DISPATCH;
       }
       CASE(Mod) {
-        // We use fmod here for simplicity. Theoretically fmod behaves slightly
-        // differently than the ECMAScript Spec. fmod applies round-towards-zero
-        // for the remainder when it's not representable by a double; while the
-        // spec requires round-to-nearest. As an example, 5 % 0.7 will give
-        // 0.10000000000000031 using fmod, but using the rounding style
-        // described
-        // by the spec, the output should really be 0.10000000000000053.
-        // Such difference can be ignored in practice.
         if (LLVM_LIKELY(O2REG(Mod).isNumber() && O3REG(Mod).isNumber())) {
           /* Fast-path. */
           O1REG(Mod) = HermesValue::encodeDoubleValue(
-              std::fmod(O2REG(Mod).getNumber(), O3REG(Mod).getNumber()));
+              doMod(O2REG(Mod).getNumber(), O3REG(Mod).getNumber()));
           ip = NEXTINST(Mod);
           DISPATCH;
         }
-        CAPTURE_IP(res = toNumber_RJS(runtime, Handle<>(&O2REG(Mod))));
-        if (res == ExecutionStatus::EXCEPTION)
+        CAPTURE_IP(
+            res = doOperSlowPath<doMod>(
+                runtime, Handle<>(&O2REG(Mod)), Handle<>(&O3REG(Mod))));
+        if (LLVM_UNLIKELY(res == ExecutionStatus::EXCEPTION)) {
           goto exception;
-        double left = res->getDouble();
-        CAPTURE_IP(res = toNumber_RJS(runtime, Handle<>(&O3REG(Mod))));
-        if (res == ExecutionStatus::EXCEPTION)
-          goto exception;
-        O1REG(Mod) =
-            HermesValue::encodeDoubleValue(std::fmod(left, res->getDouble()));
+        }
+        O1REG(Mod) = *res;
         gcScope.flushToSmallCount(KEEP_HANDLES);
         ip = NEXTINST(Mod);
         DISPATCH;
@@ -3406,17 +3332,44 @@ tailCall:
       LOAD_CONST(LoadConstTrue, HermesValue::encodeBoolValue(true));
       LOAD_CONST(LoadConstFalse, HermesValue::encodeBoolValue(false));
       LOAD_CONST(LoadConstZero, HermesValue::encodeDoubleValue(0));
-      BINOP(Sub, doSub);
-      BINOP(Mul, doMult);
-      BINOP(Div, doDiv);
-      BITWISEBINOP(BitAnd, &);
-      BITWISEBINOP(BitOr, |);
-      BITWISEBINOP(BitXor, ^);
-      // For LShift, we need to use toUInt32 first because lshift on negative
-      // numbers is undefined behavior in theory.
-      SHIFTOP(LShift, <<, toUInt32_RJS, uint32_t, int32_t);
-      SHIFTOP(RShift, >>, toInt32_RJS, int32_t, int32_t);
-      SHIFTOP(URshift, >>, toUInt32_RJS, uint32_t, uint32_t);
+      CASE(LoadConstBigInt) {
+        idVal = ip->iLoadConstBigInt.op2;
+        nextIP = NEXTINST(LoadConstBigInt);
+        goto doLoadConstBigInt;
+      }
+      CASE(LoadConstBigIntLongIndex) {
+        idVal = ip->iLoadConstBigIntLongIndex.op2;
+        nextIP = NEXTINST(LoadConstBigIntLongIndex);
+        goto doLoadConstBigInt;
+      }
+    doLoadConstBigInt : {
+      CAPTURE_IP_ASSIGN(
+          auto res,
+          BigIntPrimitive::fromBytes(
+              runtime,
+              curCodeBlock->getRuntimeModule()->getBigIntBytesFromBigIntId(
+                  idVal)));
+      if (LLVM_UNLIKELY(res == ExecutionStatus::EXCEPTION)) {
+        goto exception;
+      }
+      // It is safe to access O1REG(LoadConstBigInt) or
+      // O1REG(LoadConstBigIntLongIndex) here as both instructions' O1 operands
+      // are the same size and live in the same offset w.r.t. the start of the
+      // instruction.
+      O1REG(LoadConstBigInt) = std::move(*res);
+      ip = nextIP;
+      DISPATCH;
+    }
+      BINOP(Sub);
+      BINOP(Mul);
+      BINOP(Div);
+      // Can't do BINOP(Mod) as there's no ModN opcode.
+      BITWISEBINOP(BitAnd);
+      BITWISEBINOP(BitOr);
+      BITWISEBINOP(BitXor);
+      SHIFTOP(LShift);
+      SHIFTOP(RShift);
+      SHIFTOP(URshift);
       CONDOP(Less, <, lessOp_RJS);
       CONDOP(LessEq, <=, lessEqualOp_RJS);
       CONDOP(Greater, >, greaterOp_RJS);
@@ -3630,10 +3583,6 @@ tailCall:
     if (!curCodeBlock)
       return ExecutionStatus::EXCEPTION;
 
-// Return because of recursive calling structure
-#ifdef HERMESVM_PROFILER_EXTERN
-    return ExecutionStatus::EXCEPTION;
-#endif
   // Handle the exception.
   exception:
     UPDATE_OPCODE_TIME_SPENT;
@@ -3713,7 +3662,7 @@ tailCall:
            !catchable) {
       PROFILER_EXIT_FUNCTION(curCodeBlock);
 
-#ifdef HERMES_ENABLE_ALLOCATION_LOCATION_TRACES
+#ifdef HERMES_MEMORY_INSTRUMENTATION
       runtime.popCallStack();
 #endif
 
@@ -3740,11 +3689,6 @@ tailCall:
       assert(
           isCallType(ip->opCode) &&
           "return address is not Call-type instruction");
-
-// Return because of recursive calling structure
-#ifdef HERMESVM_PROFILER_EXTERN
-      return ExecutionStatus::EXCEPTION;
-#endif
     }
 
     INIT_STATE_FOR_CODEBLOCK(curCodeBlock);

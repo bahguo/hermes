@@ -23,15 +23,16 @@
 
 #include <memory>
 #include <vector>
+#pragma GCC diagnostic push
 
+#ifdef HERMES_COMPILER_SUPPORTS_WSHORTEN_64_TO_32
+#pragma GCC diagnostic ignored "-Wshorten-64-to-32"
+#endif
 namespace hermes {
 namespace vm {
 
 class RuntimeModule;
 class CodeBlock;
-
-/// A pointer to JIT-compiled function.
-typedef CallResult<HermesValue> (*JITCompiledFunctionPtr)(Runtime &runtime);
 
 /// A sequence of instructions representing the body of a function.
 class CodeBlock final
@@ -59,7 +60,7 @@ class CodeBlock final
 
 #ifndef HERMESVM_LEAN
   /// Compiles a lazy CodeBlock. Intended to be called from lazyCompile.
-  void lazyCompileImpl(Runtime &runtime);
+  ExecutionStatus lazyCompileImpl(Runtime &runtime);
 #endif
 
   /// Helper function for getting start and end locations.
@@ -93,7 +94,7 @@ class CodeBlock final
   }
 
  public:
-#if defined(HERMESVM_PROFILER_JSFUNCTION) || defined(HERMESVM_PROFILER_EXTERN)
+#if defined(HERMESVM_PROFILER_JSFUNCTION)
   /// ID written/read by JS function profiler on first/later function events.
   ProfilerID profilerID{NO_PROFILER_ID};
 #endif
@@ -211,6 +212,8 @@ class CodeBlock final
 
   OptValue<uint32_t> getDebugLexicalDataOffset() const;
 
+  OptValue<uint32_t> getTextifiedCalleeOffset() const;
+
   const inst::Inst *getOffsetPtr(uint32_t offset) const {
     assert(begin() + offset < end() && "offset out of bounds");
     return reinterpret_cast<const inst::Inst *>(begin() + offset);
@@ -233,17 +236,20 @@ class CodeBlock final
   }
 
   /// Compiles this CodeBlock, if it's lazy and not already compiled.
-  void lazyCompile(Runtime &runtime) {
+  ExecutionStatus lazyCompile(Runtime &runtime) {
     if (LLVM_UNLIKELY(isLazy())) {
-      lazyCompileImpl(runtime);
+      return lazyCompileImpl(runtime);
     }
+    return ExecutionStatus::RETURNED;
   }
 #else
   /// Checks whether this function is lazily compiled.
   bool isLazy() const {
     return false;
   }
-  void lazyCompile(Runtime &) {}
+  ExecutionStatus lazyCompile(Runtime &) {
+    return ExecutionStatus::RETURNED;
+  }
 #endif
 
   /// Get the start location of this function, if it's lazy.
@@ -311,5 +317,6 @@ class CodeBlock final
 
 } // namespace vm
 } // namespace hermes
+#pragma GCC diagnostic pop
 
 #endif // HERMES_VM_CODEBLOCK_H

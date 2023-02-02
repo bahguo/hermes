@@ -15,7 +15,11 @@
 #include "hermes/VM/StringBuilder.h"
 #include "hermes/VM/StringPrimitive.h"
 #include "hermes/VM/StringView.h"
+#pragma GCC diagnostic push
 
+#ifdef HERMES_COMPILER_SUPPORTS_WSHORTEN_64_TO_32
+#pragma GCC diagnostic ignored "-Wshorten-64-to-32"
+#endif
 namespace hermes {
 namespace vm {
 
@@ -428,7 +432,7 @@ CallResult<HermesValue> createDynamicFunction(
   MutableHandle<StringPrimitive> element{runtime};
   for (uint32_t i = 0; i < paramCount; ++i) {
     // Copy params into str.
-    element = params->at(runtime, i).getString();
+    element = params->at(runtime, i).getString(runtime);
     builder->appendStringPrim(element);
     if (i < paramCount - 1) {
       // If there's more params left to put, need to add a comma.

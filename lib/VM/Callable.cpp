@@ -18,6 +18,7 @@
 #include "hermes/VM/JSRegExp.h"
 #include "hermes/VM/JSTypedArray.h"
 #include "hermes/VM/JSWeakMapImpl.h"
+#include "hermes/VM/JSWeakRef.h"
 #include "hermes/VM/PrimitiveBox.h"
 #include "hermes/VM/PropertyAccessor.h"
 #include "hermes/VM/SmallXString.h"
@@ -25,7 +26,11 @@
 #include "hermes/VM/StringPrimitive.h"
 
 #include "llvh/ADT/ArrayRef.h"
+#pragma GCC diagnostic push
 
+#ifdef HERMES_COMPILER_SUPPORTS_WSHORTEN_64_TO_32
+#pragma GCC diagnostic ignored "-Wshorten-64-to-32"
+#endif
 namespace hermes {
 namespace vm {
 
@@ -52,10 +57,12 @@ void CallableBuildMeta(const GCCell *cell, Metadata::Builder &mb) {
   mb.addField("environment", &self->environment_);
 }
 
-std::string Callable::_snapshotNameImpl(GCCell *cell, GC *gc) {
+#ifdef HERMES_MEMORY_INSTRUMENTATION
+std::string Callable::_snapshotNameImpl(GCCell *cell, GC &gc) {
   auto *const self = reinterpret_cast<Callable *>(cell);
-  return self->getNameIfExists(gc->getPointerBase());
+  return self->getNameIfExists(gc.getPointerBase());
 }
+#endif
 
 CallResult<PseudoHandle<JSObject>> Callable::_newObjectImpl(
     Handle<Callable> /*selfHandle*/,
@@ -67,7 +74,7 @@ CallResult<PseudoHandle<JSObject>> Callable::_newObjectImpl(
 void Callable::defineLazyProperties(Handle<Callable> fn, Runtime &runtime) {
   // lazy functions can be Bound or JS Functions.
   if (auto jsFun = Handle<JSFunction>::dyn_vmcast(fn)) {
-    const CodeBlock *codeBlock = jsFun->getCodeBlock();
+    const CodeBlock *codeBlock = jsFun->getCodeBlock(runtime);
     // Create empty object for prototype.
     auto prototypeParent = vmisa<JSGeneratorFunction>(*jsFun)
         ? Handle<JSObject>::vmcast(&runtime.generatorPrototype)
@@ -460,13 +467,15 @@ const CallableVTable BoundFunction::vt{
             nullptr,
             nullptr,
             nullptr,
-            nullptr,
-            VTable::HeapSnapshotMetadata{
-                HeapSnapshot::NodeType::Closure,
-                BoundFunction::_snapshotNameImpl,
-                BoundFunction::_snapshotAddEdgesImpl,
-                nullptr,
-                nullptr}),
+            nullptr
+#ifdef HERMES_MEMORY_INSTRUMENTATION
+            ,
+            VTable::HeapSnapshotMetadata {
+              HeapSnapshot::NodeType::Closure, BoundFunction::_snapshotNameImpl,
+                  BoundFunction::_snapshotAddEdgesImpl, nullptr, nullptr
+            }
+#endif
+            ),
         BoundFunction::_getOwnIndexedRangeImpl,
         BoundFunction::_haveOwnIndexedImpl,
         BoundFunction::_getOwnIndexedPropertyFlagsImpl,
@@ -494,11 +503,23 @@ CallResult<HermesValue> BoundFunction::create(
     ConstArgIterator argsWithThis) {
   unsigned argCount = argCountWithThis > 0 ? argCountWithThis - 1 : 0;
 
+  // Copy the arguments. If we don't have any, we must at least initialize
+  // 'this' to 'undefined'.
   auto arrRes = ArrayStorage::create(runtime, argCount + 1);
   if (LLVM_UNLIKELY(arrRes == ExecutionStatus::EXCEPTION)) {
     return ExecutionStatus::EXCEPTION;
   }
-  auto argStorageHandle = runtime.makeHandle<ArrayStorage>(*arrRes);
+  auto arrHandle = runtime.makeMutableHandle(vmcast<ArrayStorage>(*arrRes));
+
+  if (argCountWithThis) {
+    for (unsigned i = 0; i != argCountWithThis; ++i) {
+      ArrayStorage::push_back(arrHandle, runtime, Handle<>(&argsWithThis[i]));
+    }
+  } else {
+    // Don't need to worry about resizing since it was created with a capacity
+    // of at least 1.
+    ArrayStorage::push_back(arrHandle, runtime, Runtime::getUndefinedValue());
+  }
 
   auto *cell = runtime.makeAFixed<BoundFunction>(
       runtime,
@@ -506,28 +527,8 @@ CallResult<HermesValue> BoundFunction::create(
       runtime.getHiddenClassForPrototype(
           runtime.functionPrototypeRawPtr, numOverlapSlots<BoundFunction>()),
       target,
-      argStorageHandle);
+      arrHandle);
   auto selfHandle = JSObjectInit::initToHandle(runtime, cell);
-
-  // Copy the arguments. If we don't have any, we must at least initialize
-  // 'this' to 'undefined'.
-  MutableHandle<ArrayStorage> handle(
-      runtime, selfHandle->argStorage_.get(runtime));
-
-  // In case the storage was trimmed, make sure it has enough capacity.
-  ArrayStorage::ensureCapacity(handle, runtime, argCount + 1);
-
-  if (argCountWithThis) {
-    for (unsigned i = 0; i != argCountWithThis; ++i) {
-      ArrayStorage::push_back(handle, runtime, Handle<>(&argsWithThis[i]));
-    }
-  } else {
-    // Don't need to worry about resizing since it was created with a capacity
-    // of at least 1.
-    ArrayStorage::push_back(handle, runtime, Runtime::getUndefinedValue());
-  }
-  // Update the storage pointer in case push_back() needed to reallocate.
-  selfHandle->argStorage_.set(runtime, *handle, &runtime.getHeap());
 
   if (target->isLazy()) {
     // If the target is lazy we can make the bound function lazy.
@@ -820,13 +821,16 @@ const CallableVTable NativeFunction::vt{
             nullptr,
             nullptr,
             nullptr,
-            nullptr,
-            VTable::HeapSnapshotMetadata{
-                HeapSnapshot::NodeType::Closure,
-                NativeFunction::_snapshotNameImpl,
-                NativeFunction::_snapshotAddEdgesImpl,
-                nullptr,
-                nullptr}),
+            nullptr
+#ifdef HERMES_MEMORY_INSTRUMENTATION
+            ,
+            VTable::HeapSnapshotMetadata {
+              HeapSnapshot::NodeType::Closure,
+                  NativeFunction::_snapshotNameImpl,
+                  NativeFunction::_snapshotAddEdgesImpl, nullptr, nullptr
+            }
+#endif
+            ),
         NativeFunction::_getOwnIndexedRangeImpl,
         NativeFunction::_haveOwnIndexedImpl,
         NativeFunction::_getOwnIndexedPropertyFlagsImpl,
@@ -844,10 +848,12 @@ void NativeFunctionBuildMeta(const GCCell *cell, Metadata::Builder &mb) {
   mb.setVTable(&NativeFunction::vt);
 }
 
-std::string NativeFunction::_snapshotNameImpl(GCCell *cell, GC *gc) {
+#ifdef HERMES_MEMORY_INSTRUMENTATION
+std::string NativeFunction::_snapshotNameImpl(GCCell *cell, GC &gc) {
   auto *const self = reinterpret_cast<NativeFunction *>(cell);
   return getFunctionName(self->functionPtr_);
 }
+#endif
 
 Handle<NativeFunction> NativeFunction::create(
     Runtime &runtime,
@@ -990,13 +996,16 @@ const CallableVTable NativeConstructor::vt{
             nullptr,
             nullptr,
             nullptr,
-            nullptr,
-            VTable::HeapSnapshotMetadata{
-                HeapSnapshot::NodeType::Closure,
-                NativeConstructor::_snapshotNameImpl,
-                NativeConstructor::_snapshotAddEdgesImpl,
-                nullptr,
-                nullptr}),
+            nullptr
+#ifdef HERMES_MEMORY_INSTRUMENTATION
+            ,
+            VTable::HeapSnapshotMetadata {
+              HeapSnapshot::NodeType::Closure,
+                  NativeConstructor::_snapshotNameImpl,
+                  NativeConstructor::_snapshotAddEdgesImpl, nullptr, nullptr
+            }
+#endif
+            ),
         NativeConstructor::_getOwnIndexedRangeImpl,
         NativeConstructor::_haveOwnIndexedImpl,
         NativeConstructor::_getOwnIndexedPropertyFlagsImpl,
@@ -1042,13 +1051,16 @@ const CallableVTable JSFunction::vt{
             nullptr,
             nullptr,
             nullptr,
-            nullptr,
-            VTable::HeapSnapshotMetadata{
-                HeapSnapshot::NodeType::Closure,
-                JSFunction::_snapshotNameImpl,
-                JSFunction::_snapshotAddEdgesImpl,
-                nullptr,
-                JSFunction::_snapshotAddLocationsImpl}),
+            nullptr
+#ifdef HERMES_MEMORY_INSTRUMENTATION
+            ,
+            VTable::HeapSnapshotMetadata {
+              HeapSnapshot::NodeType::Closure, JSFunction::_snapshotNameImpl,
+                  JSFunction::_snapshotAddEdgesImpl, nullptr,
+                  JSFunction::_snapshotAddLocationsImpl
+            }
+#endif
+            ),
         JSFunction::_getOwnIndexedRangeImpl,
         JSFunction::_haveOwnIndexedImpl,
         JSFunction::_getOwnIndexedPropertyFlagsImpl,
@@ -1087,42 +1099,46 @@ PseudoHandle<JSFunction> JSFunction::create(
   return self;
 }
 
+#ifdef HERMES_MEMORY_INSTRUMENTATION
 void JSFunction::addLocationToSnapshot(
     HeapSnapshot &snap,
-    HeapSnapshot::NodeID id) const {
-  if (auto location = codeBlock_->getSourceLocation()) {
+    HeapSnapshot::NodeID id,
+    GC &gc) const {
+  if (auto location = codeBlock_.get(gc)->getSourceLocation()) {
     snap.addLocation(
         id,
-        codeBlock_->getRuntimeModule()->getScriptID(),
+        codeBlock_.get(gc)->getRuntimeModule()->getScriptID(),
         location->line,
         location->column);
   }
 }
+#endif
 
 CallResult<PseudoHandle<>> JSFunction::_callImpl(
     Handle<Callable> selfHandle,
     Runtime &runtime) {
   auto *self = vmcast<JSFunction>(selfHandle.get());
   CallResult<HermesValue> result{ExecutionStatus::EXCEPTION};
-  result = runtime.interpretFunction(self->getCodeBlock());
+  result = runtime.interpretFunction(self->getCodeBlock(runtime));
   if (LLVM_UNLIKELY(result == ExecutionStatus::EXCEPTION)) {
     return ExecutionStatus::EXCEPTION;
   }
   return createPseudoHandle(*result);
 }
 
-std::string JSFunction::_snapshotNameImpl(GCCell *cell, GC *gc) {
+#ifdef HERMES_MEMORY_INSTRUMENTATION
+std::string JSFunction::_snapshotNameImpl(GCCell *cell, GC &gc) {
   auto *const self = vmcast<JSFunction>(cell);
   std::string funcName = Callable::_snapshotNameImpl(self, gc);
   if (!funcName.empty()) {
     return funcName;
   }
-  return self->codeBlock_->getNameString(gc->getCallbacks());
+  return self->codeBlock_.get(gc)->getNameString(gc.getCallbacks());
 }
 
 void JSFunction::_snapshotAddEdgesImpl(
     GCCell *cell,
-    GC *gc,
+    GC &gc,
     HeapSnapshot &snap) {
   auto *const self = vmcast<JSFunction>(cell);
   // Add the super type's edges too.
@@ -1132,16 +1148,17 @@ void JSFunction::_snapshotAddEdgesImpl(
   snap.addNamedEdge(
       HeapSnapshot::EdgeType::Shortcut,
       "codeBlock",
-      gc->getIDTracker().getNativeID(self->codeBlock_));
+      gc.getIDTracker().getNativeID(self->codeBlock_.get(gc)));
 }
 
 void JSFunction::_snapshotAddLocationsImpl(
     GCCell *cell,
-    GC *gc,
+    GC &gc,
     HeapSnapshot &snap) {
   auto *const self = vmcast<JSFunction>(cell);
-  self->addLocationToSnapshot(snap, gc->getObjectID(self));
+  self->addLocationToSnapshot(snap, gc.getObjectID(self), gc);
 }
+#endif
 
 //===----------------------------------------------------------------------===//
 // class JSAsyncFunction
@@ -1154,13 +1171,16 @@ const CallableVTable JSAsyncFunction::vt{
             nullptr,
             nullptr,
             nullptr,
-            nullptr,
-            VTable::HeapSnapshotMetadata{
-                HeapSnapshot::NodeType::Closure,
-                JSAsyncFunction::_snapshotNameImpl,
-                JSAsyncFunction::_snapshotAddEdgesImpl,
-                nullptr,
-                nullptr}),
+            nullptr
+#ifdef HERMES_MEMORY_INSTRUMENTATION
+            ,
+            VTable::HeapSnapshotMetadata {
+              HeapSnapshot::NodeType::Closure,
+                  JSAsyncFunction::_snapshotNameImpl,
+                  JSAsyncFunction::_snapshotAddEdgesImpl, nullptr, nullptr
+            }
+#endif
+            ),
         JSAsyncFunction::_getOwnIndexedRangeImpl,
         JSAsyncFunction::_haveOwnIndexedImpl,
         JSAsyncFunction::_getOwnIndexedPropertyFlagsImpl,
@@ -1208,13 +1228,16 @@ const CallableVTable JSGeneratorFunction::vt{
             nullptr,
             nullptr,
             nullptr,
-            nullptr,
-            VTable::HeapSnapshotMetadata{
-                HeapSnapshot::NodeType::Closure,
-                JSGeneratorFunction::_snapshotNameImpl,
-                JSGeneratorFunction::_snapshotAddEdgesImpl,
-                nullptr,
-                nullptr}),
+            nullptr
+#ifdef HERMES_MEMORY_INSTRUMENTATION
+            ,
+            VTable::HeapSnapshotMetadata {
+              HeapSnapshot::NodeType::Closure,
+                  JSGeneratorFunction::_snapshotNameImpl,
+                  JSGeneratorFunction::_snapshotAddEdgesImpl, nullptr, nullptr
+            }
+#endif
+            ),
         JSGeneratorFunction::_getOwnIndexedRangeImpl,
         JSGeneratorFunction::_haveOwnIndexedImpl,
         JSGeneratorFunction::_getOwnIndexedPropertyFlagsImpl,
@@ -1262,13 +1285,17 @@ const CallableVTable GeneratorInnerFunction::vt{
             nullptr,
             nullptr,
             nullptr,
-            nullptr,
-            VTable::HeapSnapshotMetadata{
-                HeapSnapshot::NodeType::Closure,
-                GeneratorInnerFunction::_snapshotNameImpl,
-                GeneratorInnerFunction::_snapshotAddEdgesImpl,
-                nullptr,
-                nullptr}),
+            nullptr
+#ifdef HERMES_MEMORY_INSTRUMENTATION
+            ,
+            VTable::HeapSnapshotMetadata {
+              HeapSnapshot::NodeType::Closure,
+                  GeneratorInnerFunction::_snapshotNameImpl,
+                  GeneratorInnerFunction::_snapshotAddEdgesImpl, nullptr,
+                  nullptr
+            }
+#endif
+            ),
         GeneratorInnerFunction::_getOwnIndexedRangeImpl,
         GeneratorInnerFunction::_haveOwnIndexedImpl,
         GeneratorInnerFunction::_getOwnIndexedPropertyFlagsImpl,
@@ -1319,15 +1346,15 @@ CallResult<Handle<GeneratorInnerFunction>> GeneratorInnerFunction::create(
   auto ctx = runtime.makeHandle<ArrayStorage>(*ctxRes);
 
   // Set "this" as the first element.
-  ctx->set(0, args.getThisArg(), &runtime.getHeap());
+  ctx->set(0, args.getThisArg(), runtime.getHeap());
 
   // Set the rest of the arguments.
   // Argument i goes in slot i+1 to account for the "this".
   for (uint32_t i = 0, e = args.getArgCount(); i < e; ++i) {
-    ctx->set(i + 1, args.getArg(i), &runtime.getHeap());
+    ctx->set(i + 1, args.getArg(i), runtime.getHeap());
   }
 
-  self->savedContext_.set(runtime, ctx.get(), &runtime.getHeap());
+  self->savedContext_.set(runtime, ctx.get(), runtime.getHeap());
 
   return self;
 }
@@ -1342,7 +1369,7 @@ CallResult<PseudoHandle<>> GeneratorInnerFunction::callInnerFunction(
 
   SmallHermesValue shv =
       SmallHermesValue::encodeHermesValue(arg.getHermesValue(), runtime);
-  self->result_.set(shv, &runtime.getHeap());
+  self->result_.set(shv, runtime.getHeap());
   self->action_ = action;
 
   auto ctx = runtime.makeMutableHandle(selfHandle->savedContext_);
@@ -1367,18 +1394,22 @@ CallResult<PseudoHandle<>> GeneratorInnerFunction::callInnerFunction(
   // We're about to call the function anyway, so this doesn't reduce laziness.
   // Note that this will do nothing after the very first time a lazy function
   // is called, so we only resize before we save any registers at all.
-  if (LLVM_UNLIKELY(selfHandle->getCodeBlock()->isLazy())) {
-    selfHandle->getCodeBlock()->lazyCompile(runtime);
+  if (LLVM_UNLIKELY(selfHandle->getCodeBlock(runtime)->isLazy())) {
+    if (LLVM_UNLIKELY(
+            selfHandle->getCodeBlock(runtime)->lazyCompile(runtime) ==
+            ExecutionStatus::EXCEPTION)) {
+      return ExecutionStatus::EXCEPTION;
+    }
     if (LLVM_UNLIKELY(
             ArrayStorage::resize(
                 ctx,
                 runtime,
                 getContextSize(
-                    selfHandle->getCodeBlock(), selfHandle->argCount_)) ==
-            ExecutionStatus::EXCEPTION)) {
+                    selfHandle->getCodeBlock(runtime),
+                    selfHandle->argCount_)) == ExecutionStatus::EXCEPTION)) {
       return ExecutionStatus::EXCEPTION;
     }
-    selfHandle->savedContext_.set(runtime, ctx.get(), &runtime.getHeap());
+    selfHandle->savedContext_.set(runtime, ctx.get(), runtime.getHeap());
   }
 
   return JSFunction::_callImpl(selfHandle, runtime);
@@ -1410,7 +1441,7 @@ void GeneratorInnerFunction::saveStack(Runtime &runtime) {
       first,
       first + frameSize,
       savedContext_.getNonNull(runtime)->data() + frameOffset,
-      &runtime.getHeap());
+      runtime.getHeap());
 }
 
 } // namespace vm

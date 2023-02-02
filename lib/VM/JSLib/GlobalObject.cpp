@@ -260,7 +260,7 @@ throwTypeError(void *ctx, Runtime &runtime, NativeArgs) {
 // NOTE: when declaring more global symbols, don't forget to update
 // "Libhermes.h".
 void initGlobalObject(Runtime &runtime, const JSLibFlags &jsLibFlags) {
-  GCScope gcScope{runtime, "initGlobalObject", 310};
+  GCScope gcScope{runtime, "initGlobalObject", 330};
 
   // Not enumerable, not writable, not configurable.
   DefinePropertyFlags constantDPF =
@@ -410,6 +410,10 @@ void initGlobalObject(Runtime &runtime, const JSLibFlags &jsLibFlags) {
               Handle<JSObject>::vmcast(&runtime.objectPrototype)))
           .getHermesValue();
 
+  // "Forward declaration" of BigInt.prototype. Its properties will be
+  // populated later.
+  runtime.bigintPrototype = JSObject::create(runtime).getHermesValue();
+
   // "Forward declaration" of Number.prototype. Its properties will be
   // populated later.
   runtime.numberPrototype =
@@ -442,7 +446,7 @@ void initGlobalObject(Runtime &runtime, const JSLibFlags &jsLibFlags) {
   // populated later.
   runtime.arrayPrototype =
       runtime
-          .ignoreAllocationFailure(JSArray::create(
+          .ignoreAllocationFailure(JSArray::createNoAllocPropStorage(
               runtime,
               Handle<JSObject>::vmcast(&runtime.objectPrototype),
               JSArray::createClass(
@@ -455,6 +459,12 @@ void initGlobalObject(Runtime &runtime, const JSLibFlags &jsLibFlags) {
   runtime.arrayClass =
       JSArray::createClass(
           runtime, Handle<JSObject>::vmcast(&runtime.arrayPrototype))
+          .getHermesValue();
+
+  // Declare the regexp match object class.
+  runtime.regExpMatchClass =
+      JSRegExp::createMatchClass(
+          runtime, Handle<HiddenClass>::vmcast(&runtime.arrayClass))
           .getHermesValue();
 
   // "Forward declaration" of ArrayBuffer.prototype. Its properties will be
@@ -512,6 +522,12 @@ void initGlobalObject(Runtime &runtime, const JSLibFlags &jsLibFlags) {
   // "Forward declaration" of WeakSet.prototype.
   runtime.weakSetPrototype = JSObject::create(runtime).getHermesValue();
 
+  // Only define WeakRef if microtasks are being used.
+  if (LLVM_UNLIKELY(runtime.hasMicrotaskQueue())) {
+    // "Forward declaration" of WeakRef.prototype.
+    runtime.weakRefPrototype = JSObject::create(runtime).getHermesValue();
+  }
+
   // "Forward declaration" of %ArrayIteratorPrototype%.
   runtime.arrayIteratorPrototype =
       JSObject::create(
@@ -566,6 +582,9 @@ void initGlobalObject(Runtime &runtime, const JSLibFlags &jsLibFlags) {
   // String constructor.
   createStringConstructor(runtime);
 
+  // BigInt constructor.
+  createBigIntConstructor(runtime);
+
   // Function constructor.
   runtime.functionConstructor =
       createFunctionConstructor(runtime).getHermesValue();
@@ -587,21 +606,25 @@ void initGlobalObject(Runtime &runtime, const JSLibFlags &jsLibFlags) {
   // Array constructor.
   createArrayConstructor(runtime);
 
-  // ArrayBuffer constructor.
-  createArrayBufferConstructor(runtime);
+  if (runtime.hasArrayBuffer()) {
+    // ArrayBuffer constructor.
+    createArrayBufferConstructor(runtime);
 
-  // DataView constructor.
-  createDataViewConstructor(runtime);
+    // DataView constructor.
+    createDataViewConstructor(runtime);
 
-  // TypedArrayBase constructor.
-  runtime.typedArrayBaseConstructor =
-      createTypedArrayBaseConstructor(runtime).getHermesValue();
+    // TypedArrayBase constructor.
+    runtime.typedArrayBaseConstructor =
+        createTypedArrayBaseConstructor(runtime).getHermesValue();
 
 #define TYPED_ARRAY(name, type)                                 \
   runtime.name##ArrayConstructor =                              \
       create##name##ArrayConstructor(runtime).getHermesValue(); \
   gcScope.clearAllHandles();
 #include "hermes/VM/TypedArrays.def"
+  } else {
+    gcScope.clearAllHandles();
+  } // hasArrayBuffer
 
   // Set constructor.
   createSetConstructor(runtime);
@@ -614,6 +637,12 @@ void initGlobalObject(Runtime &runtime, const JSLibFlags &jsLibFlags) {
 
   // WeakSet constructor.
   createWeakSetConstructor(runtime);
+
+  // Only define WeakRef constructor if microtasks are being used.
+  if (LLVM_UNLIKELY(runtime.hasMicrotaskQueue())) {
+    // WeakRef constructor.
+    createWeakRefConstructor(runtime);
+  }
 
   // Symbol constructor.
   createSymbolConstructor(runtime);
@@ -766,8 +795,7 @@ void initGlobalObject(Runtime &runtime, const JSLibFlags &jsLibFlags) {
 #ifdef HERMES_ENABLE_INTL
   // Define the global Intl object
   // TODO T65916424: Consider how we can move this somewhere more modular.
-
-  if (LLVM_UNLIKELY(runtime.hasIntl())) {
+  if (runtime.hasIntl()) {
     runtime.ignoreAllocationFailure(JSObject::defineOwnProperty(
         runtime.getGlobal(),
         runtime,

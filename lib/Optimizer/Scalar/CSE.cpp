@@ -18,12 +18,9 @@
 #include "llvh/ADT/Hashing.h"
 #include "llvh/ADT/STLExtras.h"
 #include "llvh/ADT/ScopedHashTable.h"
-#include "llvh/Support/Debug.h"
 #include "llvh/Support/RecyclingAllocator.h"
 
 using namespace hermes;
-using llvh::dbgs;
-using llvh::isa;
 
 STATISTIC(NumCSE, "Number of instructions CSE'd");
 
@@ -181,8 +178,8 @@ bool CSE::runOnFunction(Function *F) {
   return CCtx.run();
 }
 
-Pass *hermes::createCSE() {
-  return new CSE();
+std::unique_ptr<Pass> hermes::createCSE() {
+  return std::make_unique<CSE>();
 }
 
 #undef DEBUG_TYPE

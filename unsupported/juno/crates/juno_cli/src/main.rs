@@ -5,25 +5,45 @@
  * LICENSE file in the root directory of this source tree.
  */
 
-use anyhow::{self, ensure, Context, Error};
-use command_line::{CommandLine, Hidden, Opt, OptDesc};
-use juno::ast::{self, node_cast, validate_tree, NodeRc, SourceRange};
-use juno::hparser::{self, MagicCommentKind, ParsedJS, ParserDialect};
-use juno::sema::SemContext;
-use juno::sourcemap::merge_sourcemaps;
-use juno::{gen_js, resolve_dependency, sema};
-use juno_pass::PassManager;
-use juno_support::source_manager::SourceId;
-use juno_support::NullTerminatedBuf;
-use juno_support::{fetchurl, Timer};
-use sourcemap::SourceMap;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::ops::DerefMut;
+use std::path::Path;
+use std::path::PathBuf;
 use std::process::exit;
+use std::rc::Rc;
 use std::str::FromStr;
-use url::{self, Url};
+
+use anyhow::ensure;
+use anyhow::Context;
+use anyhow::Error;
+use command_line::CommandLine;
+use command_line::Hidden;
+use command_line::Opt;
+use command_line::OptDesc;
+use juno::ast;
+use juno::ast::node_cast;
+use juno::ast::validate_tree;
+use juno::ast::NodeRc;
+use juno::ast::SourceRange;
+use juno::gen_js;
+use juno::hparser;
+use juno::hparser::MagicCommentKind;
+use juno::hparser::ParsedJS;
+use juno::hparser::ParserDialect;
+use juno::resolve_dependency;
+use juno::sema;
+use juno::sema::SemContext;
+use juno::sourcemap::merge_sourcemaps;
+use juno_pass::PassManager;
+use juno_support::fetchurl;
+use juno_support::source_manager::SourceId;
+use juno_support::HeapSize;
+use juno_support::NullTerminatedBuf;
+use juno_support::Timer;
+use sourcemap::SourceMap;
+use url::Url;
 
 #[derive(Debug, Copy, Clone, PartialEq)]
 enum Gen {
@@ -81,6 +101,16 @@ struct Options {
     /// Whether to run strip flow types.
     strip_flow: Opt<bool>,
 
+    /// Whether to force a space after the `async` keyword in arrow functions.
+    force_async_arrow_space: Opt<bool>,
+
+    /// Whether to emit the doc block when generating JS.
+    /// The doc block contains every comment prior to the first non-directive token in the file.
+    emit_doc_block: Opt<bool>,
+
+    /// Whether to use double quotes on string literals.
+    double_quote_strings: Opt<bool>,
+
     /// Whether to run the parsed AST.
     run: Opt<bool>,
 
@@ -98,6 +128,9 @@ struct Options {
 
     /// Measure and print times.
     xtime: Opt<bool>,
+
+    /// Measure and print memory.
+    xmem: Opt<bool>,
 }
 
 impl Options {
@@ -229,6 +262,34 @@ impl Options {
                     ..Default::default()
                 },
             ),
+            force_async_arrow_space: Opt::new_bool(
+                cl,
+                OptDesc {
+                    long: Some("force-async-arrow-space"),
+                    desc: Some("Force a space after the `async` keyword in arrow functions."),
+                    ..Default::default()
+                },
+            ),
+            emit_doc_block: Opt::new_bool(
+                cl,
+                OptDesc {
+                    long: Some("emit-doc-block"),
+                    desc: Some(
+                        "Pass through the doc block from the original files when generating JS",
+                    ),
+                    ..Default::default()
+                },
+            ),
+            double_quote_strings: Opt::new_bool(
+                cl,
+                OptDesc {
+                    long: Some("double-quote-strings"),
+                    desc: Some(
+                        "When generating JS, use double quotes as the string literal delimiters",
+                    ),
+                    ..Default::default()
+                },
+            ),
             run: Opt::new_flag(
                 cl,
                 OptDesc {
@@ -245,8 +306,17 @@ impl Options {
                     values: Some(&[
                         ("js", ParserDialect::JavaScript, "JavaScript"),
                         ("flow", ParserDialect::Flow, "Flow"),
-                        ("flow-unambiguous", ParserDialect::Flow, "Flow unambiguous"),
-                        ("ts", ParserDialect::Flow, "TypeScript"),
+                        (
+                            "flow-unambiguous",
+                            ParserDialect::FlowUnambiguous,
+                            "Flow unambiguous",
+                        ),
+                        (
+                            "flow-detect",
+                            ParserDialect::FlowDetect,
+                            "Detect @flow pragma, otherwise only parse unambiguous Flow",
+                        ),
+                        ("ts", ParserDialect::TypeScript, "TypeScript"),
                     ]),
                     init: Some(ParserDialect::JavaScript),
                     category: input_cat,
@@ -284,6 +354,15 @@ impl Options {
                 OptDesc {
                     long: Some("Xtime"),
                     desc: Some("Measure and print times."),
+                    hidden: Hidden::Yes,
+                    ..Default::default()
+                },
+            ),
+            xmem: Opt::new_bool(
+                cl,
+                OptDesc {
+                    long: Some("Xmem"),
+                    desc: Some("Measure and print memory usage."),
                     hidden: Hidden::Yes,
                     ..Default::default()
                 },
@@ -354,7 +433,7 @@ fn script_to_module<'gc>(
                 phantom: Default::default(),
                 range: program.metadata.range,
             },
-            body: program.body.clone(),
+            body: program.body,
         },
     )
 }
@@ -365,20 +444,19 @@ fn gen_output(
     opt: &Options,
     ctx: &mut ast::Context,
     sem: Option<&SemContext>,
-    root: NodeRc,
-    input_map: &Option<SourceMap>,
+    js_module: &ParsedJSModule,
 ) -> anyhow::Result<bool> {
     let output_path = &*opt.output_path;
-    let out: Box<dyn Write> = if output_path == Path::new("-") {
+    let mut out: Box<dyn Write> = if output_path == Path::new("-") {
         Box::new(std::io::stdout())
     } else {
         Box::new(File::create(output_path).with_context(|| output_path.display().to_string())?)
     };
 
     let final_ast = if *opt.strip_flow {
-        PassManager::strip_flow().run(ctx, root)
+        PassManager::strip_flow().run(ctx, js_module.ast.clone())
     } else {
-        root
+        js_module.ast.clone()
     };
 
     let final_ast = if *opt.optimize {
@@ -408,17 +486,26 @@ fn gen_output(
         }
         Gen::Js | Gen::ResolvedJs => {
             let generated_map = gen_js::generate(
-                out,
+                out.deref_mut(),
                 ctx,
                 &final_ast,
-                if !*opt.pretty {
-                    gen_js::Pretty::No
-                } else {
-                    gen_js::Pretty::Yes
-                },
-                match sem {
-                    Some(sem) if *opt.gen == Gen::ResolvedJs => gen_js::Annotation::Sem(sem),
-                    _ => gen_js::Annotation::No,
+                gen_js::Opt {
+                    pretty: if *opt.pretty {
+                        gen_js::Pretty::Yes
+                    } else {
+                        gen_js::Pretty::No
+                    },
+                    annotation: match sem {
+                        Some(sem) if *opt.gen == Gen::ResolvedJs => gen_js::Annotation::Sem(sem),
+                        _ => gen_js::Annotation::No,
+                    },
+                    force_async_arrow_space: *opt.force_async_arrow_space,
+                    doc_block: js_module.doc_block.clone(),
+                    quote: if *opt.double_quote_strings {
+                        gen_js::QuoteChar::Double
+                    } else {
+                        gen_js::QuoteChar::Single
+                    },
                 },
             )?;
             if *opt.sourcemap {
@@ -426,12 +513,13 @@ fn gen_output(
                 // only to replace the existing one.
                 let mut path = output_path.clone().into_os_string();
                 path.push(".map");
-                let sourcemap_file = File::create(PathBuf::from(path))?;
-                let merged_map = match input_map {
+                let sourcemap_file = File::create(PathBuf::from(&path))?;
+                let merged_map = match &js_module.source_map {
                     None => generated_map,
                     Some(input_map) => merge_sourcemaps(input_map, &generated_map),
                 };
                 merged_map.to_writer(sourcemap_file)?;
+                write!(out, "\n//# sourceMappingURL={}", path.to_str().unwrap())?;
             }
             Ok(true)
         }
@@ -466,6 +554,8 @@ struct ParsedJSModule {
     /// AST node, may be either `Program` or `Module`.
     ast: NodeRc,
     source_map: Option<SourceMap>,
+    /// Doc block for the file if it exists.
+    doc_block: Option<Rc<String>>,
 }
 
 fn run(opt: &Options) -> anyhow::Result<TransformStatus> {
@@ -500,6 +590,7 @@ fn run(opt: &Options) -> anyhow::Result<TransformStatus> {
                 strict_mode: ctx.strict_mode(),
                 enable_jsx: *opt.jsx,
                 dialect: *opt.dialect,
+                store_doc_block: *opt.emit_doc_block,
             },
             &buf,
         );
@@ -533,6 +624,7 @@ fn run(opt: &Options) -> anyhow::Result<TransformStatus> {
                 }
             }
         };
+        let doc_block = parsed.get_doc_block().map(|s| Rc::new(s.to_string()));
         // We don't need the original parser anymore.
         drop(parsed);
         timer.mark("Cvt");
@@ -551,6 +643,7 @@ fn run(opt: &Options) -> anyhow::Result<TransformStatus> {
                 id: file_id,
                 ast,
                 source_map,
+                doc_block,
             },
         );
     }
@@ -560,11 +653,13 @@ fn run(opt: &Options) -> anyhow::Result<TransformStatus> {
         let sem = if *opt.sema {
             let lock = ast::GCLock::new(&mut ctx);
             let sem = sema::resolve_program(&lock, js_module.id, js_module.ast.node(&lock));
-            println!(
-                "{} error(s), {} warning(s)",
-                lock.sm().num_errors(),
-                lock.sm().num_warnings()
-            );
+            if lock.sm().num_errors() != 0 || lock.sm().num_warnings() != 0 {
+                eprintln!(
+                    "{} error(s), {} warning(s)",
+                    lock.sm().num_errors(),
+                    lock.sm().num_warnings()
+                );
+            }
             if lock.sm().num_errors() != 0 {
                 return Ok(TransformStatus::Error);
             }
@@ -576,19 +671,13 @@ fn run(opt: &Options) -> anyhow::Result<TransformStatus> {
         };
 
         // Generate output.
-        if gen_output(
-            opt,
-            &mut ctx,
-            sem.as_ref(),
-            js_module.ast,
-            &js_module.source_map,
-        )? {
+        if gen_output(opt, &mut ctx, sem.as_ref(), &js_module)? {
             timer.mark("Gen");
         }
     } else {
-        println!("{} modules", js_modules.len());
-
+        // Show information about semantic resolution for all modules if requested.
         if *opt.sema {
+            println!("{} modules", js_modules.len());
             let mut sems = Vec::new();
             let resolver = resolve_dependency::DefaultResolver::new(ctx.sm());
             for module in js_modules.into_values() {
@@ -609,7 +698,7 @@ fn run(opt: &Options) -> anyhow::Result<TransformStatus> {
                     }
                 }
                 // Generate output.
-                if gen_output(opt, &mut ctx, Some(&sem), module.ast, &module.source_map)? {
+                if gen_output(opt, &mut ctx, Some(&sem), &module)? {
                     timer.mark("Gen");
                 }
                 sems.push(sem);
@@ -619,6 +708,13 @@ fn run(opt: &Options) -> anyhow::Result<TransformStatus> {
             drop(sems);
             timer.mark("Drop Sema");
         }
+    }
+
+    // Optionally print memory usage.
+    if *opt.xmem {
+        println!("Context size:  {} MB", ctx.heap_size() / 1_000_000);
+        println!("Storage size:  {} MB", ctx.storage_size() / 1_000_000);
+        println!("# nodes:       {}", ctx.num_nodes());
     }
 
     // Drop the AST. We are doing it explicitly just to measure the time.

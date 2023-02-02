@@ -13,7 +13,9 @@
 #include "hermes/VM/JSArray.h"
 #include "hermes/VM/JSArrayBuffer.h"
 #include "hermes/VM/JSLib.h"
+#include "hermes/VM/JSRegExp.h"
 #include "hermes/VM/Operations.h"
+#include "hermes/VM/PrimitiveBox.h"
 #include "hermes/VM/StackFrame-inline.h"
 #include "hermes/VM/StringView.h"
 
@@ -249,12 +251,8 @@ CallResult<HermesValue> copyDataPropertiesSlowPath_RJS(
     Handle<JSObject> target,
     Handle<JSObject> from,
     Handle<JSObject> excludedItems) {
-  assert(
-      from->isProxyObject() &&
-      "copyDataPropertiesSlowPath_RJS is only for Proxy");
-
   // 5. Let keys be ? from.[[OwnPropertyKeys]]().
-  auto cr = JSProxy::getOwnPropertyKeys(
+  auto cr = JSObject::getOwnPropertyKeys(
       from,
       runtime,
       OwnKeysFlags()
@@ -275,7 +273,7 @@ CallResult<HermesValue> copyDataPropertiesSlowPath_RJS(
        nextKeyIdx < endIdx;
        ++nextKeyIdx) {
     marker.flush();
-    nextKeyHandle = keys->at(runtime, nextKeyIdx);
+    nextKeyHandle = keys->at(runtime, nextKeyIdx).unboxToHV(runtime);
     if (nextKeyHandle->isNumber()) {
       CallResult<PseudoHandle<StringPrimitive>> strRes =
           toString_RJS(runtime, nextKeyHandle);
@@ -308,15 +306,17 @@ CallResult<HermesValue> copyDataPropertiesSlowPath_RJS(
 
     //   i. Let desc be ? from.[[GetOwnProperty]](nextKey).
     ComputedPropertyDescriptor desc;
-    CallResult<bool> crb =
-        JSProxy::getOwnProperty(from, runtime, nextKeyHandle, desc, nullptr);
+    CallResult<bool> crb = JSObject::getOwnComputedDescriptor(
+        from, runtime, nextKeyHandle, tmpSymbolStorage, desc);
     if (LLVM_UNLIKELY(crb == ExecutionStatus::EXCEPTION))
       return ExecutionStatus::EXCEPTION;
     //   ii. If desc is not undefined and desc.[[Enumerable]] is true, then
-    if (*crb && desc.flags.enumerable) {
+    // TODO(T141997867), move this special case behavior for host objects to
+    // getOwnComputedDescriptor.
+    if ((*crb && desc.flags.enumerable) || from->isHostObject()) {
       //     1. Let propValue be ? Get(from, nextKey).
       CallResult<PseudoHandle<>> crv =
-          JSProxy::getComputed(from, runtime, nextKeyHandle, from);
+          JSObject::getComputed_RJS(from, runtime, nextKeyHandle);
       if (LLVM_UNLIKELY(crv == ExecutionStatus::EXCEPTION))
         return ExecutionStatus::EXCEPTION;
       propValueHandle = std::move(*crv);
@@ -378,7 +378,13 @@ hermesBuiltinCopyDataProperties(void *, Runtime &runtime, NativeArgs args) {
       (!excludedItems || !excludedItems->isProxyObject()) &&
       "excludedItems internal List is a Proxy");
 
-  if (source->isProxyObject()) {
+  // We cannot use the fast path if the object is a proxy, host object, or when
+  // there could potentially be an accessor defined on the object. This is
+  // because in order to use JSObject::forEachOwnPropertyWhile, we must not
+  // modify the underlying property map or hidden class. However, if we have an
+  // accessor, we cannot guarantee that condition, so we use the slow path.
+  if (source->isProxyObject() || source->isHostObject() ||
+      source->getClass(runtime)->getMayHaveAccessor()) {
     return copyDataPropertiesSlowPath_RJS(
         runtime, target, source, excludedItems);
   }
@@ -422,7 +428,8 @@ hermesBuiltinCopyDataProperties(void *, Runtime &runtime, NativeArgs args) {
             return true;
         }
 
-        valueHandle = JSObject::getOwnIndexed(*source, runtime, index);
+        valueHandle = JSObject::getOwnIndexed(
+            createPseudoHandle(source.get()), runtime, index);
 
         if (LLVM_UNLIKELY(
                 JSObject::defineOwnComputedPrimitive(
@@ -455,12 +462,9 @@ hermesBuiltinCopyDataProperties(void *, Runtime &runtime, NativeArgs args) {
             return true;
         }
 
-        auto cr =
-            JSObject::getNamedPropertyValue_RJS(source, runtime, source, desc);
-        if (LLVM_UNLIKELY(cr == ExecutionStatus::EXCEPTION))
-          return false;
-
-        valueHandle = std::move(*cr);
+        SmallHermesValue shv =
+            JSObject::getNamedSlotValueUnsafe(*source, runtime, desc);
+        valueHandle = runtime.makeHandle(shv.unboxToHV(runtime));
 
         // sym can be an index-like property, so we have to bypass the assert in
         // defineOwnPropertyInternal.
@@ -514,11 +518,10 @@ hermesBuiltinCopyRestArgs(void *, Runtime &runtime, NativeArgs args) {
   auto array = *cr;
   JSArray::setStorageEndIndex(array, runtime, length);
 
-  NoAllocScope noAlloc{runtime};
-  JSArray *arrPtr = array.get();
   for (uint32_t i = 0; i != length; ++i) {
-    JSArray::unsafeSetExistingElementAt(
-        arrPtr, runtime, i, it->getArgRef(from));
+    const auto shv =
+        SmallHermesValue::encodeHermesValue(it->getArgRef(from), runtime);
+    JSArray::unsafeSetExistingElementAt(*array, runtime, i, shv);
     ++from;
   }
 
@@ -567,7 +570,7 @@ hermesBuiltinArraySpread(void *, Runtime &runtime, NativeArgs args) {
              ++i) {
           marker.flush();
           // Fast path: look up the property in indexed storage.
-          nextValue = arr->at(runtime, i);
+          nextValue = arr->at(runtime, i).unboxToHV(runtime);
           if (LLVM_UNLIKELY(nextValue->isEmpty())) {
             // Slow path, just run the full getComputed_RJS path.
             // Runs when there is a hole, accessor, non-regular property, etc.
@@ -697,7 +700,7 @@ hermesBuiltinApply(void *, Runtime &runtime, NativeArgs args) {
 
   for (uint32_t i = 0; i < len; ++i) {
     assert(!argArray->at(runtime, i).isEmpty() && "arg array must be dense");
-    HermesValue arg = argArray->at(runtime, i);
+    HermesValue arg = argArray->at(runtime, i).unboxToHV(runtime);
     newFrame->getArgRef(i) = LLVM_UNLIKELY(arg.isEmpty())
         ? HermesValue::encodeUndefinedValue()
         : arg;
@@ -772,6 +775,50 @@ hermesBuiltinExportAll(void *, Runtime &runtime, NativeArgs args) {
   return HermesValue::encodeUndefinedValue();
 }
 
+CallResult<HermesValue>
+hermesBuiltinExponentiate(void *ctx, Runtime &runtime, NativeArgs args) {
+  CallResult<HermesValue> res = toNumeric_RJS(runtime, args.getArgHandle(0));
+  if (LLVM_UNLIKELY(res == ExecutionStatus::EXCEPTION)) {
+    return ExecutionStatus::EXCEPTION;
+  }
+  if (LLVM_LIKELY(!res->isBigInt())) {
+    double left = res->getNumber();
+    // Using ? toNumber() here causes an exception to be raised if args[1] is a
+    // BigInt.
+    CallResult<HermesValue> res = toNumber_RJS(runtime, args.getArgHandle(1));
+    if (LLVM_UNLIKELY(res == ExecutionStatus::EXCEPTION)) {
+      return ExecutionStatus::EXCEPTION;
+    }
+    return HermesValue::encodeNumberValue(expOp(left, res->getNumber()));
+  }
+
+  Handle<BigIntPrimitive> lhs = runtime.makeHandle(res->getBigInt());
+
+  // Can't use toBigInt() here as it converts boolean/strings to bigint.
+  res = toNumeric_RJS(runtime, args.getArgHandle(1));
+  if (LLVM_UNLIKELY(res == ExecutionStatus::EXCEPTION)) {
+    return ExecutionStatus::EXCEPTION;
+  }
+
+  if (!res->isBigInt()) {
+    return runtime.raiseTypeErrorForValue(
+        "Cannot convert ", args.getArgHandle(1), " to BigInt");
+  }
+
+  return BigIntPrimitive::exponentiate(
+      runtime, std::move(lhs), runtime.makeHandle(res->getBigInt()));
+}
+
+CallResult<HermesValue> hermesBuiltinInitRegexNamedGroups(
+    void *ctx,
+    Runtime &runtime,
+    NativeArgs args) {
+  auto *regexp = dyn_vmcast<JSRegExp>(args.getArg(0));
+  auto *groupsObj = dyn_vmcast<JSObject>(args.getArg(1));
+  regexp->setGroupNameMappings(runtime, groupsObj);
+  return HermesValue::encodeUndefinedValue();
+}
+
 void createHermesBuiltins(
     Runtime &runtime,
     llvh::MutableArrayRef<Callable *> builtins) {
@@ -842,7 +889,11 @@ void createHermesBuiltins(
   defineInternMethod(
       B::HermesBuiltin_exponentiationOperator,
       P::exponentiationOperator,
-      mathPow);
+      hermesBuiltinExponentiate);
+  defineInternMethod(
+      B::HermesBuiltin_initRegexNamedGroups,
+      P::initRegexNamedGroups,
+      hermesBuiltinInitRegexNamedGroups);
 
   // Define the 'requireFast' function, which takes a number argument.
   defineInternMethod(

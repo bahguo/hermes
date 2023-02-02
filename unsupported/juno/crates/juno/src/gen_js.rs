@@ -5,16 +5,58 @@
  * LICENSE file in the root directory of this source tree.
  */
 
-use crate::{
-    ast::*,
-    sema::{DeclKind, Resolution, SemContext},
-};
-use juno_support::{convert, source_manager::SourceLoc};
-use sourcemap::{RawToken, SourceMap, SourceMapBuilder};
-use std::{
-    fmt,
-    io::{self, BufWriter, Write},
-};
+use std::fmt;
+use std::io;
+use std::io::BufWriter;
+use std::io::Write;
+use std::rc::Rc;
+
+use juno_support::convert;
+use juno_support::source_manager::SourceLoc;
+use sourcemap::RawToken;
+use sourcemap::SourceMap;
+use sourcemap::SourceMapBuilder;
+
+use crate::ast::*;
+use crate::sema::DeclKind;
+use crate::sema::Resolution;
+use crate::sema::SemContext;
+
+/// Options for JS generation.
+pub struct Opt<'s> {
+    /// Whether to pretty-print the generated JS.
+    pub pretty: Pretty,
+
+    /// How to annotate the generated source.
+    pub annotation: Annotation<'s>,
+
+    /// Whether to force a space after the `async` keyword in arrow functions.
+    pub force_async_arrow_space: bool,
+
+    /// If `Some`, doc block to print at the top of the file.
+    pub doc_block: Option<Rc<String>>,
+
+    /// Delimiter to use for string literals.
+    pub quote: QuoteChar,
+}
+
+impl Default for Opt<'_> {
+    fn default() -> Self {
+        Opt {
+            pretty: Pretty::Yes,
+            annotation: Annotation::No,
+            force_async_arrow_space: true,
+            doc_block: None,
+            quote: QuoteChar::Single,
+        }
+    }
+}
+
+impl Opt<'_> {
+    pub fn new() -> Self {
+        Default::default()
+    }
+}
 
 /// Whether to pretty-print the generated JS.
 /// Does not do full formatting of the source, but does add indentation and
@@ -25,17 +67,34 @@ pub enum Pretty {
     Yes,
 }
 
+/// Delimiter to use for string literals.
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum QuoteChar {
+    Single,
+    Double,
+}
+
+impl QuoteChar {
+    /// The character representation of the quote.
+    #[inline]
+    fn as_char(self) -> char {
+        match self {
+            Self::Single => '\'',
+            Self::Double => '"',
+        }
+    }
+}
+
 /// Generate JS for `root` and print it to `out`.
 /// FIXME: This currently only returns an empty SourceMap.
-pub fn generate<W: Write>(
-    out: W,
+pub fn generate(
+    out: &mut dyn Write,
     ctx: &mut Context,
     root: &NodeRc,
-    pretty: Pretty,
-    annotation: Annotation,
+    opt: Opt,
 ) -> io::Result<SourceMap> {
     let gc = GCLock::new(ctx);
-    GenJS::gen_root(out, &gc, root.node(&gc), pretty, annotation)
+    GenJS::gen_root(out, &gc, root.node(&gc), opt)
 }
 
 /// Associativity direction.
@@ -49,7 +108,8 @@ enum Assoc {
 }
 
 mod precedence {
-    use crate::ast::{BinaryExpressionOperator, LogicalExpressionOperator};
+    use crate::ast::BinaryExpressionOperator;
+    use crate::ast::LogicalExpressionOperator;
 
     pub type Precedence = u32;
 
@@ -155,15 +215,12 @@ pub enum Annotation<'s> {
 }
 
 /// Generator for output JS. Walks the AST to output real JS.
-struct GenJS<'s, W: Write> {
+struct GenJS<'s, 'w> {
     /// Where to write the generated JS.
-    out: BufWriter<W>,
+    out: BufWriter<&'w mut dyn Write>,
 
-    /// How to annotate the generated source.
-    annotation: Annotation<'s>,
-
-    /// Whether to pretty print the output JS.
-    pretty: Pretty,
+    /// Options for generating JS.
+    opt: Opt<'s>,
 
     /// Size of the indentation step.
     /// May be configurable in the future.
@@ -204,21 +261,19 @@ macro_rules! out_token {
     }}
 }
 
-impl<W: Write> GenJS<'_, W> {
+impl GenJS<'_, '_> {
     /// Generate JS for `root` and flush the output.
     /// If at any point, JS generation resulted in an error, return `Err(err)`,
     /// otherwise return `Ok(())`.
-    fn gen_root<'s, 'gc>(
-        writer: W,
+    fn gen_root<'gc>(
+        writer: &mut dyn Write,
         ctx: &'gc GCLock,
         root: &'gc Node<'gc>,
-        pretty: Pretty,
-        annotation: Annotation<'s>,
+        opt: Opt,
     ) -> io::Result<SourceMap> {
         let mut gen_js = GenJS {
             out: BufWriter::new(writer),
-            annotation,
-            pretty,
+            opt,
             indent_step: 2,
             indent: 0,
             position: SourceLoc { line: 1, col: 1 },
@@ -227,8 +282,26 @@ impl<W: Write> GenJS<'_, W> {
             sourcemap: SourceMapBuilder::new(None),
             error: None,
         };
+        for i in 0..ctx.sm().num_sources() {
+            gen_js
+                .sourcemap
+                .add_source(ctx.sm().source_name(SourceId(i as u32)));
+        }
+
+        if let Some(doc_block) = gen_js.opt.doc_block.clone() {
+            let mut buf = [0u8; 4];
+            for c in doc_block.chars() {
+                if c == '\n' {
+                    gen_js.force_newline_without_indent();
+                } else {
+                    gen_js.write_char(c, &mut buf);
+                }
+            }
+        }
+
         root.visit(ctx, &mut gen_js, None);
         gen_js.force_newline();
+
         gen_js.flush_cur_token();
         match gen_js.error {
             None => gen_js
@@ -361,7 +434,13 @@ impl<W: Write> GenJS<'_, W> {
                 let mut need_sep = false;
                 if *is_async {
                     out!(self, "async");
-                    need_sep = true;
+                    if self.opt.force_async_arrow_space || self.opt.pretty == Pretty::Yes {
+                        // Force a space to work with certain transforms that match on `async`
+                        // followed by whitespace to detect async functions.
+                        self.space(ForceSpace::Yes);
+                    } else {
+                        need_sep = true;
+                    }
                 }
                 if let Some(type_parameters) = type_parameters {
                     type_parameters.visit(
@@ -377,17 +456,24 @@ impl<W: Write> GenJS<'_, W> {
                     && type_parameters.is_none()
                     && return_type.is_none()
                     && predicate.is_none()
-                    && node_isa!(Node::Identifier, params[0])
-                    && node_cast!(Node::Identifier, params[0])
-                        .type_annotation
-                        .is_none()
-                    && !node_cast!(Node::Identifier, params[0]).optional
-                    && (*expression || self.pretty == Pretty::No)
+                    && matches!(
+                        params.head().unwrap(),
+                        Node::Identifier(Identifier {
+                            type_annotation: None,
+                            optional: false,
+                            ..
+                        })
+                    )
+                    && (*expression || self.opt.pretty == Pretty::No)
                 {
                     if need_sep {
                         out!(self, " ");
                     }
-                    params[0].visit(ctx, self, Some(Path::new(node, NodeField::params)));
+                    params.head().unwrap().visit(
+                        ctx,
+                        self,
+                        Some(Path::new(node, NodeField::params)),
+                    );
                 } else {
                     out!(self, "(");
                     for (i, param) in params.iter().enumerate() {
@@ -398,8 +484,10 @@ impl<W: Write> GenJS<'_, W> {
                     }
                     out!(self, ")");
                 }
-                if let Some(return_type) = return_type {
+                if return_type.is_some() || predicate.is_some() {
                     out!(self, ":");
+                }
+                if let Some(return_type) = return_type {
                     self.space(ForceSpace::No);
                     self.print_child(
                         ctx,
@@ -452,7 +540,7 @@ impl<W: Write> GenJS<'_, W> {
                 body,
                 test,
             }) => {
-                out!(self, "do");
+                out!(self, "do ");
                 let block = self.visit_stmt_or_block(
                     ctx,
                     *body,
@@ -462,7 +550,6 @@ impl<W: Write> GenJS<'_, W> {
                 if block {
                     self.space(ForceSpace::No);
                 } else {
-                    out!(self, ";");
                     self.newline();
                 }
                 out!(self, "while");
@@ -619,7 +706,7 @@ impl<W: Write> GenJS<'_, W> {
                 self.space(ForceSpace::No);
                 out!(self, "{{");
                 self.newline();
-                for case in cases {
+                for case in cases.iter() {
                     case.visit(ctx, self, Some(Path::new(node, NodeField::cases)));
                     self.newline();
                 }
@@ -745,12 +832,19 @@ impl<W: Write> GenJS<'_, W> {
                 out_token!(self, node, "null");
             }
             Node::StringLiteral(StringLiteral { metadata: _, value }) => {
-                out_token!(self, node, "\"");
-                self.print_escaped_string_literal(value, '"');
-                out!(self, "\"");
+                out_token!(self, node, "{}", self.opt.quote.as_char());
+                self.print_escaped_string_literal(ctx, *value, self.opt.quote.as_char());
+                out!(self, "{}", self.opt.quote.as_char());
             }
             Node::NumericLiteral(NumericLiteral { metadata: _, value }) => {
                 out_token!(self, node, "{}", convert::number_to_string(*value));
+            }
+            Node::BigIntLiteral(BigIntLiteral {
+                metadata: _,
+                bigint,
+            }) => {
+                self.add_segment(node);
+                self.write_utf8(ctx.str(*bigint));
             }
             Node::RegExpLiteral(RegExpLiteral {
                 metadata: _,
@@ -782,7 +876,7 @@ impl<W: Write> GenJS<'_, W> {
                     }
                     self.print_child(
                         ctx,
-                        Some(*expr),
+                        Some(expr),
                         Path::new(node, NodeField::expressions),
                         if i == 1 {
                             ChildPos::Left
@@ -810,14 +904,18 @@ impl<W: Write> GenJS<'_, W> {
                     if i > 0 {
                         self.comma();
                     }
-                    if let Node::SpreadElement(_) = elem {
-                        elem.visit(ctx, self, Some(Path::new(node, NodeField::elements)));
-                    } else {
-                        self.print_comma_expression(
-                            ctx,
-                            *elem,
-                            Path::new(node, NodeField::elements),
-                        );
+                    match elem {
+                        Node::SpreadElement(_) => {
+                            elem.visit(ctx, self, Some(Path::new(node, NodeField::elements)));
+                        }
+                        Node::Empty(_) => {}
+                        _ => {
+                            self.print_comma_expression(
+                                ctx,
+                                elem,
+                                Path::new(node, NodeField::elements),
+                            );
+                        }
                     }
                 }
                 if *trailing_comma {
@@ -859,7 +957,12 @@ impl<W: Write> GenJS<'_, W> {
                     if i > 0 {
                         self.comma();
                     }
-                    self.print_comma_expression(ctx, *arg, Path::new(node, NodeField::arguments));
+                    self.print_child(
+                        ctx,
+                        Some(arg),
+                        Path::new(node, NodeField::arguments),
+                        ChildPos::Anywhere,
+                    );
                 }
                 out!(self, ")");
             }
@@ -936,7 +1039,7 @@ impl<W: Write> GenJS<'_, W> {
                     }
                     self.print_child(
                         ctx,
-                        Some(*arg),
+                        Some(arg),
                         Path::new(node, NodeField::arguments),
                         ChildPos::Anywhere,
                     );
@@ -970,7 +1073,7 @@ impl<W: Write> GenJS<'_, W> {
                     }
                     self.print_child(
                         ctx,
-                        Some(*arg),
+                        Some(arg),
                         Path::new(node, NodeField::arguments),
                         ChildPos::Anywhere,
                     );
@@ -1273,7 +1376,7 @@ impl<W: Write> GenJS<'_, W> {
                     out!(
                         self,
                         "{}",
-                        match self.pretty {
+                        match self.opt.pretty {
                             Pretty::Yes => " = ",
                             Pretty::No => "=",
                         }
@@ -1289,7 +1392,7 @@ impl<W: Write> GenJS<'_, W> {
             }) => {
                 out_token!(self, node, "`");
                 let mut it_expr = expressions.iter();
-                for quasi in quasis {
+                for quasi in quasis.iter() {
                     if let Node::TemplateElement(TemplateElement {
                         metadata: _,
                         raw,
@@ -1364,7 +1467,6 @@ impl<W: Write> GenJS<'_, W> {
                             if *generator {
                                 out!(self, "*");
                                 need_sep = false;
-                                self.space(ForceSpace::No);
                             }
                         }
                         _ => unreachable!(),
@@ -1469,7 +1571,7 @@ impl<W: Write> GenJS<'_, W> {
                 body,
             }) => {
                 if !decorators.is_empty() {
-                    for decorator in decorators {
+                    for decorator in decorators.iter() {
                         decorator.visit(ctx, self, Some(Path::new(node, NodeField::decorators)));
                         self.force_newline();
                     }
@@ -1520,7 +1622,7 @@ impl<W: Write> GenJS<'_, W> {
                     out!(self, "{{");
                     self.inc_indent();
                     self.newline();
-                    for prop in body {
+                    for prop in body.iter() {
                         prop.visit(ctx, self, Some(Path::new(node, NodeField::body)));
                         self.newline();
                     }
@@ -1540,14 +1642,14 @@ impl<W: Write> GenJS<'_, W> {
                 variance,
                 type_annotation,
             }) => {
-                if let Some(variance) = variance {
-                    variance.visit(ctx, self, Some(Path::new(node, NodeField::variance)));
+                if *declare {
+                    out!(self, "declare ");
                 }
                 if *is_static {
                     out!(self, "static ");
                 }
-                if *declare {
-                    out!(self, "declare ");
+                if let Some(variance) = variance {
+                    variance.visit(ctx, self, Some(Path::new(node, NodeField::variance)));
                 }
                 if *computed {
                     out!(self, "[");
@@ -1939,7 +2041,7 @@ impl<W: Write> GenJS<'_, W> {
             }) => {
                 out!(self, "<");
                 name.visit(ctx, self, Some(Path::new(node, NodeField::name)));
-                for attr in attributes {
+                for attr in attributes.iter() {
                     self.space(ForceSpace::Yes);
                     attr.visit(ctx, self, Some(Path::new(node, NodeField::attributes)));
                 }
@@ -2009,7 +2111,7 @@ impl<W: Write> GenJS<'_, W> {
             }) => {
                 opening_element.visit(ctx, self, Some(Path::new(node, NodeField::opening_element)));
                 if let Some(closing_element) = closing_element {
-                    for child in children {
+                    for child in *children {
                         child.visit(ctx, self, Some(Path::new(node, NodeField::children)));
                     }
                     closing_element.visit(
@@ -2030,7 +2132,7 @@ impl<W: Write> GenJS<'_, W> {
                     self,
                     Some(Path::new(node, NodeField::opening_fragment)),
                 );
-                for child in children {
+                for child in *children {
                     child.visit(ctx, self, Some(Path::new(node, NodeField::children)));
                 }
                 closing_fragment.visit(
@@ -2055,6 +2157,9 @@ impl<W: Write> GenJS<'_, W> {
             Node::StringTypeAnnotation(_) => {
                 out_token!(self, node, "string");
             }
+            Node::BigIntTypeAnnotation(_) => {
+                out_token!(self, node, "bigint");
+            }
             Node::NumberTypeAnnotation(_) => {
                 out_token!(self, node, "number");
             }
@@ -2063,9 +2168,10 @@ impl<W: Write> GenJS<'_, W> {
                 value,
                 raw,
             }) => {
-                let quote = raw.str[0] as u8 as char;
+                let s = ctx.str_u16(*raw);
+                let quote = s[0] as u8 as char;
                 out_token!(self, node, "{}", quote);
-                self.print_escaped_string_literal(value, quote);
+                self.print_escaped_string_literal(ctx, *value, quote);
                 out!(self, "{}", quote);
             }
             Node::NumberLiteralTypeAnnotation(NumberLiteralTypeAnnotation {
@@ -2074,6 +2180,10 @@ impl<W: Write> GenJS<'_, W> {
                 ..
             }) => {
                 out_token!(self, node, "{}", convert::number_to_string(*value));
+            }
+            Node::BigIntLiteralTypeAnnotation(BigIntLiteralTypeAnnotation { metadata: _, raw }) => {
+                self.add_segment(node);
+                self.write_utf8(ctx.str(*raw));
             }
             Node::BooleanTypeAnnotation(_) => {
                 out_token!(self, node, "boolean");
@@ -2136,7 +2246,6 @@ impl<W: Write> GenJS<'_, W> {
                             unimplemented!("Malformed AST: Need to handle error");
                         }
                     }
-                    this.visit(ctx, self, Some(Path::new(node, NodeField::this)));
                     need_comma = true;
                 }
                 for param in params.iter() {
@@ -2154,7 +2263,7 @@ impl<W: Write> GenJS<'_, W> {
                     rest.visit(ctx, self, Some(Path::new(node, NodeField::rest)));
                 }
                 out!(self, ")");
-                if self.pretty == Pretty::Yes {
+                if self.opt.pretty == Pretty::Yes {
                     out!(self, " => ");
                 } else {
                     out!(self, "=>");
@@ -2231,7 +2340,7 @@ impl<W: Write> GenJS<'_, W> {
                     }
                     self.print_child(
                         ctx,
-                        Some(*ty),
+                        Some(ty),
                         Path::new(node, NodeField::types),
                         ChildPos::Anywhere,
                     );
@@ -2246,7 +2355,7 @@ impl<W: Write> GenJS<'_, W> {
                     }
                     self.print_child(
                         ctx,
-                        Some(*ty),
+                        Some(ty),
                         Path::new(node, NodeField::types),
                         ChildPos::Anywhere,
                     );
@@ -2322,7 +2431,7 @@ impl<W: Write> GenJS<'_, W> {
                 right,
             }) => {
                 if matches!(&node, Node::DeclareTypeAlias(_)) {
-                    out_token!(self, node, "declare type");
+                    out_token!(self, node, "declare type ");
                 } else {
                     out_token!(self, node, "type ");
                 }
@@ -2334,7 +2443,7 @@ impl<W: Write> GenJS<'_, W> {
                         Some(Path::new(node, NodeField::type_parameters)),
                     );
                 }
-                if self.pretty == Pretty::Yes {
+                if self.opt.pretty == Pretty::Yes {
                     out!(self, " = ");
                 } else {
                     out!(self, "=");
@@ -2362,7 +2471,7 @@ impl<W: Write> GenJS<'_, W> {
                     self.space(ForceSpace::No);
                     supertype.visit(ctx, self, Some(Path::new(node, NodeField::supertype)));
                 }
-                if self.pretty == Pretty::Yes {
+                if self.opt.pretty == Pretty::Yes {
                     out!(self, " = ");
                 } else {
                     out!(self, "=");
@@ -2404,6 +2513,12 @@ impl<W: Write> GenJS<'_, W> {
                 impltype,
                 supertype,
             }) => {
+                if matches!(path,
+                    Some(path) if !matches!(path.parent, Node::DeclareExportDeclaration(_)))
+                    || path.is_none()
+                {
+                    out!(self, "declare ");
+                }
                 out_token!(self, node, "opaque type ");
                 id.visit(ctx, self, Some(Path::new(node, NodeField::id)));
                 if let Some(type_parameters) = type_parameters {
@@ -2418,12 +2533,12 @@ impl<W: Write> GenJS<'_, W> {
                     self.space(ForceSpace::No);
                     supertype.visit(ctx, self, Some(Path::new(node, NodeField::supertype)));
                 }
-                if self.pretty == Pretty::Yes {
-                    out!(self, " = ");
-                } else {
-                    out!(self, "=");
-                }
                 if let Some(impltype) = impltype {
+                    if self.opt.pretty == Pretty::Yes {
+                        out!(self, " = ");
+                    } else {
+                        out!(self, "=");
+                    }
                     impltype.visit(ctx, self, Some(Path::new(node, NodeField::impltype)));
                 }
             }
@@ -2436,7 +2551,16 @@ impl<W: Write> GenJS<'_, W> {
                 mixins,
                 body,
             }) => {
-                out_token!(self, node, "declare class ");
+                match path {
+                    Some(path) if !matches!(path.parent, Node::DeclareExportDeclaration(_)) => {
+                        out!(self, "declare ");
+                    }
+                    None => {
+                        out!(self, "declare ");
+                    }
+                    _ => {}
+                };
+                out_token!(self, node, "class ");
                 id.visit(ctx, self, Some(Path::new(node, NodeField::id)));
                 if let Some(type_parameters) = type_parameters {
                     type_parameters.visit(
@@ -2480,10 +2604,17 @@ impl<W: Write> GenJS<'_, W> {
                 id,
                 predicate,
             }) => {
+                if matches!(path,
+                    Some(path) if !matches!(path.parent, Node::DeclareExportDeclaration(_)))
+                    || path.is_none()
+                {
+                    out_token!(self, node, "declare function ");
+                } else {
+                    out_token!(self, node, "function ");
+                }
                 // This AST type uses the Identifier/TypeAnnotation
                 // pairing to put a name on a function header-looking construct,
                 // so we have to do some deep matching to get it to come out right.
-                out_token!(self, node, "declare function ");
                 match id {
                     Node::Identifier(Identifier {
                         metadata: _,
@@ -2540,6 +2671,7 @@ impl<W: Write> GenJS<'_, W> {
                     if !matches!(path.parent, Node::DeclareExportDeclaration(_)) {
                         out!(self, "declare ");
                     }
+                    out!(self, "var ");
                 }
                 id.visit(ctx, self, Some(Path::new(node, NodeField::id)));
             }
@@ -2639,7 +2771,7 @@ impl<W: Write> GenJS<'_, W> {
 
                 let mut need_comma = false;
 
-                for prop in properties {
+                for prop in *properties {
                     if need_comma {
                         self.comma();
                     }
@@ -2647,7 +2779,7 @@ impl<W: Write> GenJS<'_, W> {
                     self.newline();
                     need_comma = true;
                 }
-                for prop in indexers {
+                for prop in *indexers {
                     if need_comma {
                         self.comma();
                     }
@@ -2655,7 +2787,7 @@ impl<W: Write> GenJS<'_, W> {
                     self.newline();
                     need_comma = true;
                 }
-                for prop in call_properties {
+                for prop in *call_properties {
                     if need_comma {
                         self.comma();
                     }
@@ -2663,7 +2795,7 @@ impl<W: Write> GenJS<'_, W> {
                     self.newline();
                     need_comma = true;
                 }
-                for prop in internal_slots {
+                for prop in *internal_slots {
                     if need_comma {
                         self.comma();
                     }
@@ -2763,10 +2895,10 @@ impl<W: Write> GenJS<'_, W> {
                 }
                 out!(self, "[[");
                 id.visit(ctx, self, Some(Path::new(node, NodeField::id)));
+                out!(self, "]]");
                 if *optional {
                     out!(self, "?");
                 }
-                out!(self, "]]");
                 if *method {
                     match value {
                         Node::FunctionTypeAnnotation(FunctionTypeAnnotation {
@@ -3030,7 +3162,7 @@ impl<W: Write> GenJS<'_, W> {
                 out!(
                     self,
                     "{}",
-                    match self.pretty {
+                    match self.opt.pretty {
                         Pretty::Yes => " = ",
                         Pretty::No => "=",
                     }
@@ -3059,7 +3191,7 @@ impl<W: Write> GenJS<'_, W> {
         out!(
             self,
             "{}",
-            match self.pretty {
+            match self.opt.pretty {
                 Pretty::No => ",",
                 Pretty::Yes => ", ",
             }
@@ -3068,14 +3200,14 @@ impl<W: Write> GenJS<'_, W> {
 
     /// Print a ' ' if forced by ForceSpace::Yes or pretty mode.
     fn space(&mut self, force: ForceSpace) {
-        if self.pretty == Pretty::Yes || force == ForceSpace::Yes {
+        if self.opt.pretty == Pretty::Yes || force == ForceSpace::Yes {
             out!(self, " ");
         }
     }
 
     /// Print a newline and indent if pretty.
     fn newline(&mut self) {
-        if self.pretty == Pretty::Yes {
+        if self.opt.pretty == Pretty::Yes {
             self.force_newline();
         }
     }
@@ -3149,8 +3281,14 @@ impl<W: Write> GenJS<'_, W> {
         }
     }
 
-    fn print_escaped_string_literal(&mut self, value: &NodeString, esc: char) {
-        for &c in &value.str {
+    fn print_escaped_string_literal<'gc>(
+        &mut self,
+        ctx: &'gc GCLock,
+        value: NodeString,
+        esc: char,
+    ) {
+        let str = ctx.str_u16(value);
+        for &c in str {
             if c <= u8::MAX as u16 {
                 match char::from(c as u8) {
                     '\\' => {
@@ -3196,7 +3334,7 @@ impl<W: Write> GenJS<'_, W> {
         }
     }
 
-    fn visit_props<'gc>(&mut self, ctx: &'gc GCLock, props: &[&'gc Node<'gc>], path: Path<'gc>) {
+    fn visit_props<'gc>(&mut self, ctx: &'gc GCLock, props: &'gc NodeList<'gc>, path: Path<'gc>) {
         out!(self, "{{");
         for (i, prop) in props.iter().enumerate() {
             if i > 0 {
@@ -3211,7 +3349,7 @@ impl<W: Write> GenJS<'_, W> {
     fn visit_func_params_body<'gc>(
         &mut self,
         ctx: &'gc GCLock,
-        params: &[&'gc Node<'gc>],
+        params: &'gc NodeList<'gc>,
         type_parameters: Option<&'gc Node<'gc>>,
         return_type: Option<&'gc Node<'gc>>,
         predicate: Option<&'gc Node<'gc>>,
@@ -3229,8 +3367,10 @@ impl<W: Write> GenJS<'_, W> {
             param.visit(ctx, self, Some(Path::new(node, NodeField::param)));
         }
         out!(self, ")");
-        if let Some(return_type) = return_type {
+        if return_type.is_some() || predicate.is_some() {
             out!(self, ":");
+        }
+        if let Some(return_type) = return_type {
             self.space(ForceSpace::No);
             return_type.visit(ctx, self, Some(Path::new(node, NodeField::return_type)));
         }
@@ -3245,7 +3385,7 @@ impl<W: Write> GenJS<'_, W> {
     fn visit_func_type_params<'gc>(
         &mut self,
         ctx: &'gc GCLock,
-        params: &[&'gc Node<'gc>],
+        params: &'gc NodeList<'gc>,
         this: Option<&'gc Node<'gc>>,
         rest: Option<&'gc Node<'gc>>,
         type_parameters: Option<&'gc Node<'gc>>,
@@ -3275,7 +3415,6 @@ impl<W: Write> GenJS<'_, W> {
                     unimplemented!("Malformed AST: Need to handle error");
                 }
             }
-            this.visit(ctx, self, Some(Path::new(node, NodeField::this)));
             need_comma = true;
         }
         for param in params.iter() {
@@ -3302,7 +3441,7 @@ impl<W: Write> GenJS<'_, W> {
         decl: &str,
         id: &'gc Node<'gc>,
         type_parameters: Option<&'gc Node<'gc>>,
-        extends: &[&'gc Node<'gc>],
+        extends: &'gc NodeList<'gc>,
         body: &'gc Node<'gc>,
         node: &'gc Node<'gc>,
     ) {
@@ -3313,7 +3452,7 @@ impl<W: Write> GenJS<'_, W> {
         }
         self.space(ForceSpace::No);
         if !extends.is_empty() {
-            out!(self, "extends ");
+            out!(self, " extends ");
             for (i, extend) in extends.iter().enumerate() {
                 if i > 0 {
                     self.comma();
@@ -3330,16 +3469,15 @@ impl<W: Write> GenJS<'_, W> {
         &mut self,
         ctx: &'gc GCLock,
         kind: &str,
-        members: &[&'gc Node<'gc>],
+        members: &'gc NodeList<'gc>,
         explicit_type: bool,
         has_unknown_members: bool,
         node: &'gc Node<'gc>,
     ) {
         if explicit_type {
-            out!(self, ":");
-            self.space(ForceSpace::No);
-            out!(self, "{}", kind);
+            out!(self, " of {}", kind);
         }
+        self.space(ForceSpace::No);
         out!(self, "{{");
         self.inc_indent();
         self.newline();
@@ -3411,12 +3549,12 @@ impl<W: Write> GenJS<'_, W> {
         }
     }
 
-    fn visit_stmt_list<'gc>(&mut self, ctx: &'gc GCLock, list: &[&'gc Node<'gc>], path: Path<'gc>) {
+    fn visit_stmt_list<'gc>(&mut self, ctx: &'gc GCLock, list: &NodeList<'gc>, path: Path<'gc>) {
         for (i, stmt) in list.iter().enumerate() {
             if i > 0 {
                 self.newline();
             }
-            self.visit_stmt_in_block(ctx, *stmt, path);
+            self.visit_stmt_in_block(ctx, stmt, path);
         }
     }
 
@@ -3467,7 +3605,7 @@ impl<W: Write> GenJS<'_, W> {
             }) => {
                 // `new foo()` has higher precedence than `new foo`. In pretty mode we
                 // always append the `()`, but otherwise we must check the number of args.
-                if self.pretty == Pretty::Yes || !arguments.is_empty() {
+                if self.opt.pretty == Pretty::Yes || !arguments.is_empty() {
                     (MEMBER, Assoc::Ltr)
                 } else {
                     (NEW_NO_ARGS, Assoc::Ltr)
@@ -3507,6 +3645,7 @@ impl<W: Write> GenJS<'_, W> {
             Node::ExistsTypeAnnotation(_)
             | Node::EmptyTypeAnnotation(_)
             | Node::StringTypeAnnotation(_)
+            | Node::BigIntTypeAnnotation(_)
             | Node::NumberTypeAnnotation(_)
             | Node::StringLiteralTypeAnnotation(_)
             | Node::NumberLiteralTypeAnnotation(_)
@@ -3538,7 +3677,11 @@ impl<W: Write> GenJS<'_, W> {
         if matches!(path.parent, Node::ArrowFunctionExpression(_)) {
             // (x) => ({x: 10}) needs parens to avoid confusing it with a block and a
             // labelled statement.
-            if child_pos == ChildPos::Right && matches!(child, Node::ObjectExpression(_)) {
+            if child_pos == ChildPos::Right
+                && self.expr_starts_with(ctx, child, Some(path), |n| {
+                    matches!(n, Node::ObjectExpression(_))
+                })
+            {
                 return NeedParens::Yes;
             }
         } else if matches!(path.parent, Node::ForStatement(_)) {
@@ -3561,6 +3704,10 @@ impl<W: Write> GenJS<'_, W> {
             // `new foo().bar` (which gets `bar` on `new foo()`)
             if child_pos == ChildPos::Left && contains_call(ctx, child) {
                 return NeedParens::Yes;
+            }
+            // It's illegal to place parens around spread arguments.
+            if matches!(child, Node::SpreadElement(_)) {
+                return NeedParens::No;
             }
         } else if matches!(path.parent, Node::ExpressionStatement(_)) {
             // Expression statement like (function () {} + 1) needs parens.
@@ -3588,7 +3735,7 @@ impl<W: Write> GenJS<'_, W> {
             // +(+x) or +(++x)
             // a-(-x) or a-(--x) or a-(-5)
             // a+(+x) or a+(++x)
-            return if self.pretty == Pretty::Yes {
+            return if self.opt.pretty == Pretty::Yes {
                 NeedParens::Yes
             } else {
                 NeedParens::Space
@@ -3617,6 +3764,12 @@ impl<W: Write> GenJS<'_, W> {
         ) && matches!(child, Node::SpreadElement(_))
         {
             // It's illegal to place parens around spread arguments.
+            return NeedParens::No;
+        } else if matches!(path.parent, Node::AssignmentExpression(_))
+            && matches!(child, Node::ObjectPattern(_) | Node::ArrayPattern(_))
+            && child_pos == ChildPos::Left
+        {
+            // Avoid parentheses for destructuring patterns.
             return NeedParens::No;
         }
 
@@ -3795,8 +3948,8 @@ impl<W: Write> GenJS<'_, W> {
     }
 
     /// Add an "@" and some information tagging an identifier with its declaration ID.
-    fn annotate_identifier(&mut self, lock: &GCLock, node: &Node) {
-        if let Annotation::Sem(sem) = &self.annotation {
+    fn annotate_identifier<'gc>(&mut self, lock: &'gc GCLock, node: &'gc Node<'gc>) {
+        if let Annotation::Sem(sem) = &self.opt.annotation {
             match sem.ident_decl(&NodeRc::from_node(lock, node)) {
                 Some(Resolution::Decl(decl_id)) => {
                     match sem.decl(decl_id).kind {
@@ -3828,7 +3981,7 @@ impl<W: Write> GenJS<'_, W> {
     }
 }
 
-impl<'gc, W: Write> Visitor<'gc> for GenJS<'_, W> {
+impl<'gc> Visitor<'gc> for GenJS<'_, '_> {
     fn call(&mut self, ctx: &'gc GCLock, node: &'gc Node<'gc>, path: Option<Path<'gc>>) {
         self.gen_node(ctx, node, path);
     }
@@ -3942,6 +4095,15 @@ fn stmt_skip_semi<'gc>(ctx: &'gc GCLock, node: Option<&'gc Node<'gc>>) -> bool {
             | Node::ForOfStatement(_)
             | Node::IfStatement(_)
             | Node::WithStatement(_) => true,
+            Node::InterfaceDeclaration(_)
+            | Node::DeclareInterface(_)
+            | Node::DeclareClass(_)
+            | Node::DeclareModule(_) => true,
+            Node::DeclareExportDeclaration(DeclareExportDeclaration {
+                declaration,
+                source: None,
+                ..
+            }) => stmt_skip_semi(ctx, *declaration),
             Node::SwitchStatement(_) => true,
             Node::LabeledStatement(LabeledStatement { body, .. }) => {
                 stmt_skip_semi(ctx, Some(*body))

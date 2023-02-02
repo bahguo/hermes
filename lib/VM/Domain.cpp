@@ -11,7 +11,11 @@
 #include "hermes/VM/GCPointer-inline.h"
 #include "hermes/VM/JSLib.h"
 #include "hermes/VM/Profiler/SamplingProfiler.h"
+#pragma GCC diagnostic push
 
+#ifdef HERMES_COMPILER_SUPPORTS_WSHORTEN_64_TO_32
+#pragma GCC diagnostic ignored "-Wshorten-64-to-32"
+#endif
 namespace hermes {
 namespace vm {
 
@@ -19,15 +23,19 @@ const VTable Domain::vt{
     CellKind::DomainKind,
     cellSize<Domain>(),
     _finalizeImpl,
-    _markWeakImpl,
-    _mallocSizeImpl,
     nullptr,
+    _mallocSizeImpl,
+    nullptr
+#ifdef HERMES_MEMORY_INSTRUMENTATION
+    ,
     VTable::HeapSnapshotMetadata{
         HeapSnapshot::NodeType::Code,
         nullptr,
         Domain::_snapshotAddEdgesImpl,
         Domain::_snapshotAddNodesImpl,
-        nullptr}};
+        nullptr}
+#endif
+};
 
 void DomainBuildMeta(const GCCell *cell, Metadata::Builder &mb) {
   const auto *self = static_cast<const Domain *>(cell);
@@ -42,10 +50,10 @@ PseudoHandle<Domain> Domain::create(Runtime &runtime) {
   return self;
 }
 
-void Domain::_finalizeImpl(GCCell *cell, GC *gc) {
+void Domain::_finalizeImpl(GCCell *cell, GC &gc) {
   auto *self = vmcast<Domain>(cell);
   for (RuntimeModule *rm : self->runtimeModules_) {
-    gc->getIDTracker().untrackNative(rm);
+    gc.getIDTracker().untrackNative(rm);
   }
   self->~Domain();
 }
@@ -61,17 +69,6 @@ PseudoHandle<NativeFunction> Domain::getThrowingRequire(
   return createPseudoHandle(throwingRequire_.get(runtime));
 }
 
-void Domain::_markWeakImpl(GCCell *cell, WeakRefAcceptor &acceptor) {
-  auto *self = reinterpret_cast<Domain *>(cell);
-  self->markWeakRefs(acceptor);
-}
-
-void Domain::markWeakRefs(WeakRefAcceptor &acceptor) {
-  for (RuntimeModule *rm : runtimeModules_) {
-    rm->markDomainRef(acceptor);
-  }
-}
-
 size_t Domain::_mallocSizeImpl(GCCell *cell) {
   auto *self = vmcast<Domain>(cell);
   size_t rmSize = 0;
@@ -83,14 +80,15 @@ size_t Domain::_mallocSizeImpl(GCCell *cell) {
       self->runtimeModules_.capacity_in_bytes() + rmSize;
 }
 
-void Domain::_snapshotAddEdgesImpl(GCCell *cell, GC *gc, HeapSnapshot &snap) {
+#ifdef HERMES_MEMORY_INSTRUMENTATION
+void Domain::_snapshotAddEdgesImpl(GCCell *cell, GC &gc, HeapSnapshot &snap) {
   auto *const self = vmcast<Domain>(cell);
   for (RuntimeModule *rm : self->runtimeModules_)
     snap.addNamedEdge(
-        HeapSnapshot::EdgeType::Internal, "RuntimeModule", gc->getNativeID(rm));
+        HeapSnapshot::EdgeType::Internal, "RuntimeModule", gc.getNativeID(rm));
 }
 
-void Domain::_snapshotAddNodesImpl(GCCell *cell, GC *gc, HeapSnapshot &snap) {
+void Domain::_snapshotAddNodesImpl(GCCell *cell, GC &gc, HeapSnapshot &snap) {
   auto *const self = vmcast<Domain>(cell);
   for (RuntimeModule *rm : self->runtimeModules_) {
     // Create a native node for each RuntimeModule owned by this domain.
@@ -100,11 +98,12 @@ void Domain::_snapshotAddNodesImpl(GCCell *cell, GC *gc, HeapSnapshot &snap) {
     snap.endNode(
         HeapSnapshot::NodeType::Native,
         "RuntimeModule",
-        gc->getNativeID(rm),
+        gc.getNativeID(rm),
         sizeof(RuntimeModule) + rm->additionalMemorySize(),
         0);
   }
 }
+#endif
 
 ExecutionStatus Domain::importCJSModuleTable(
     Handle<Domain> self,
@@ -148,7 +147,7 @@ ExecutionStatus Domain::importCJSModuleTable(
     self->cjsRuntimeModules_.reserve(firstSegmentModules);
     for (size_t i = self->cjsRuntimeModules_.size(); i < firstSegmentModules;
          i++) {
-      self->cjsRuntimeModules_.push_back(nullptr, &runtime.getHeap());
+      self->cjsRuntimeModules_.push_back(nullptr, runtime.getHeap());
     }
 
     auto requireFn = NativeFunction::create(
@@ -179,7 +178,7 @@ ExecutionStatus Domain::importCJSModuleTable(
       return ExecutionStatus::EXCEPTION;
     }
 
-    self->throwingRequire_.set(runtime, *requireFn, &runtime.getHeap());
+    self->throwingRequire_.set(runtime, *requireFn, runtime.getHeap());
   } else {
     cjsModules = self->cjsModules_.get(runtime);
   }
@@ -230,7 +229,7 @@ ExecutionStatus Domain::importCJSModuleTable(
     }
     self->cjsRuntimeModules_.reserve(maxModuleID + 1);
     for (size_t i = self->cjsRuntimeModules_.size(); i <= maxModuleID; i++) {
-      self->cjsRuntimeModules_.push_back(nullptr, &runtime.getHeap());
+      self->cjsRuntimeModules_.push_back(nullptr, runtime.getHeap());
     }
   }
 
@@ -276,15 +275,15 @@ ExecutionStatus Domain::importCJSModuleTable(
     cjsModules->set(
         index + CachedExportsOffset,
         HermesValue::encodeEmptyValue(),
-        &runtime.getHeap());
+        runtime.getHeap());
     cjsModules->set(
         index + ModuleOffset,
         HermesValue::encodeNullValue(),
-        &runtime.getHeap());
+        runtime.getHeap());
     cjsModules->set(
         index + FunctionIndexOffset,
         HermesValue::encodeNativeUInt32(functionID),
-        &runtime.getHeap());
+        runtime.getHeap());
     cjsRuntimeModules[moduleID] = runtimeModule;
     assert(isModuleRegistered(moduleID) && "CJS module was not registered");
     return index;
@@ -320,7 +319,7 @@ ExecutionStatus Domain::importCJSModuleTable(
     }
   }
 
-  self->cjsModules_.set(runtime, cjsModules.get(), &runtime.getHeap());
+  self->cjsModules_.set(runtime, cjsModules.get(), runtime.getHeap());
   return ExecutionStatus::RETURNED;
 }
 
@@ -355,8 +354,8 @@ Handle<RequireContext> RequireContext::create(
       runtime.getHiddenClassForPrototype(
           *objProto, numOverlapSlots<RequireContext>()));
   auto self = JSObjectInit::initToHandle(runtime, cell);
-  self->domain_.set(runtime, *domain, &runtime.getHeap());
-  self->dirname_.set(runtime, *dirname, &runtime.getHeap());
+  self->domain_.set(runtime, *domain, runtime.getHeap());
+  self->dirname_.set(runtime, *dirname, runtime.getHeap());
   return self;
 }
 

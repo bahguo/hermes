@@ -7,7 +7,6 @@
 
 #include <hermes/SynthTrace.h>
 
-#include <hermes/Parser/JSONParser.h>
 #include <hermes/Support/Algorithms.h>
 #include <hermes/TraceInterpreter.h>
 #include <hermes/TracingRuntime.h>
@@ -22,7 +21,6 @@
 
 using namespace facebook::hermes::tracing;
 using namespace facebook::hermes;
-using namespace ::hermes::parser;
 namespace jsi = facebook::jsi;
 
 namespace {
@@ -132,7 +130,7 @@ TEST_F(SynthTraceSerializationTest, ReturnEncodeUTF8String) {
 TEST_F(SynthTraceSerializationTest, GetProperty) {
   const std::string ex =
       std::string(
-          R"({"type":"GetPropertyRecord","time":0,"objID":1,"propID":1111,)") +
+          R"({"type":"GetPropertyRecord","time":0,"objID":1,"propID":"propNameID:1111",)") +
 #ifdef HERMESVM_API_TRACE_DEBUG
       R"("propName":"x",)" +
 #endif
@@ -140,7 +138,7 @@ TEST_F(SynthTraceSerializationTest, GetProperty) {
   auto testRec = SynthTrace::GetPropertyRecord(
       dummyTime,
       1,
-      1111,
+      SynthTrace::encodePropNameID(1111),
 #ifdef HERMESVM_API_TRACE_DEBUG
       "x",
 #endif
@@ -151,7 +149,7 @@ TEST_F(SynthTraceSerializationTest, GetProperty) {
 TEST_F(SynthTraceSerializationTest, SetProperty) {
   const std::string ex =
       std::string(
-          R"({"type":"SetPropertyRecord","time":0,"objID":1,"propID":1111,)") +
+          R"({"type":"SetPropertyRecord","time":0,"objID":1,"propID":"string:1111",)") +
 #ifdef HERMESVM_API_TRACE_DEBUG
       R"("propName":"x",)" +
 #endif
@@ -159,7 +157,7 @@ TEST_F(SynthTraceSerializationTest, SetProperty) {
   auto testRec = SynthTrace::SetPropertyRecord(
       dummyTime,
       1,
-      1111,
+      SynthTrace::encodeString(1111),
 #ifdef HERMESVM_API_TRACE_DEBUG
       "x",
 #endif
@@ -170,7 +168,7 @@ TEST_F(SynthTraceSerializationTest, SetProperty) {
 TEST_F(SynthTraceSerializationTest, HasProperty) {
   const std::string ex =
       std::string(
-          R"({"type":"HasPropertyRecord","time":0,"objID":1,"propID":1111)") +
+          R"({"type":"HasPropertyRecord","time":0,"objID":1,"propID":"string:1111")") +
 #ifdef HERMESVM_API_TRACE_DEBUG
       R"(,"propName":"a")" +
 #endif
@@ -178,9 +176,9 @@ TEST_F(SynthTraceSerializationTest, HasProperty) {
   auto testRec = SynthTrace::HasPropertyRecord(
       dummyTime,
       1,
-      1111
+      SynthTrace::encodeString(1111)
 #ifdef HERMESVM_API_TRACE_DEBUG
-      ,
+          ,
       "a"
 #endif
   );
@@ -264,69 +262,62 @@ TEST_F(SynthTraceSerializationTest, TraceHeader) {
 
   rt->flushAndDisableTrace();
 
-  JSONFactory::Allocator alloc;
-  JSONFactory jsonFactory{alloc};
-  hermes::SourceErrorManager sm;
-  JSONParser parser{jsonFactory, result, sm};
-  auto optTrace = parser.parse();
-  ASSERT_TRUE(optTrace) << "Trace file is not valid JSON:\n" << result << "\n";
+  auto optTrace = rt->global()
+                      .getPropertyAsObject(*rt, "JSON")
+                      .getPropertyAsFunction(*rt, "parse")
+                      .call(*rt, result)
+                      .asObject(*rt);
 
-  JSONObject *root = llvh::cast<JSONObject>(optTrace.getValue());
   EXPECT_EQ(
       SynthTrace::synthVersion(),
-      llvh::cast<JSONNumber>(root->at("version"))->getValue());
-  EXPECT_EQ(
-      globalObjID, llvh::cast<JSONNumber>(root->at("globalObjID"))->getValue());
+      optTrace.getProperty(*rt, "version").asNumber());
+  EXPECT_EQ(globalObjID, optTrace.getProperty(*rt, "globalObjID").asNumber());
 
-  JSONObject *rtConfig = llvh::cast<JSONObject>(root->at("runtimeConfig"));
+  auto rtConfig = optTrace.getPropertyAsObject(*rt, "runtimeConfig");
 
-  JSONObject *gcConfig = llvh::cast<JSONObject>(rtConfig->at("gcConfig"));
+  auto gcConfig = rtConfig.getPropertyAsObject(*rt, "gcConfig");
   EXPECT_EQ(
       conf.getGCConfig().getMinHeapSize(),
-      llvh::cast<JSONNumber>(gcConfig->at("minHeapSize"))->getValue());
+      gcConfig.getProperty(*rt, "minHeapSize").asNumber());
   EXPECT_EQ(
       conf.getGCConfig().getInitHeapSize(),
-      llvh::cast<JSONNumber>(gcConfig->at("initHeapSize"))->getValue());
+      gcConfig.getProperty(*rt, "initHeapSize").asNumber());
   EXPECT_EQ(
       conf.getGCConfig().getMaxHeapSize(),
-      llvh::cast<JSONNumber>(gcConfig->at("maxHeapSize"))->getValue());
+      gcConfig.getProperty(*rt, "maxHeapSize").asNumber());
   EXPECT_EQ(
       conf.getGCConfig().getOccupancyTarget(),
-      llvh::cast<JSONNumber>(gcConfig->at("occupancyTarget"))->getValue());
+      gcConfig.getProperty(*rt, "occupancyTarget").asNumber());
   EXPECT_EQ(
       conf.getGCConfig().getEffectiveOOMThreshold(),
-      llvh::cast<JSONNumber>(gcConfig->at("effectiveOOMThreshold"))
-          ->getValue());
+      gcConfig.getProperty(*rt, "effectiveOOMThreshold").asNumber());
   EXPECT_EQ(
       conf.getGCConfig().getShouldReleaseUnused(),
       SynthTrace::releaseUnusedFromName(
-          llvh::cast<JSONString>(gcConfig->at("shouldReleaseUnused"))
-              ->c_str()));
+          gcConfig.getProperty(*rt, "shouldReleaseUnused")
+              .asString(*rt)
+              .utf8(*rt)
+              .c_str()));
   EXPECT_EQ(
       conf.getGCConfig().getName(),
-      llvh::cast<JSONString>(gcConfig->at("name"))->str());
+      gcConfig.getProperty(*rt, "name").asString(*rt).utf8(*rt));
   EXPECT_EQ(
       conf.getGCConfig().getAllocInYoung(),
-      llvh::cast<JSONBoolean>(gcConfig->at("allocInYoung"))->getValue());
+      gcConfig.getProperty(*rt, "allocInYoung").asBool());
 
   EXPECT_EQ(
       conf.getMaxNumRegisters(),
-      llvh::cast<JSONNumber>(rtConfig->at("maxNumRegisters"))->getValue());
+      rtConfig.getProperty(*rt, "maxNumRegisters").asNumber());
   EXPECT_EQ(
-      conf.getES6Promise(),
-      llvh::cast<JSONBoolean>(rtConfig->at("ES6Promise"))->getValue());
-  EXPECT_EQ(
-      conf.getES6Proxy(),
-      llvh::cast<JSONBoolean>(rtConfig->at("ES6Proxy"))->getValue());
-  EXPECT_EQ(
-      conf.getIntl(),
-      llvh::cast<JSONBoolean>(rtConfig->at("Intl"))->getValue());
+      conf.getES6Promise(), rtConfig.getProperty(*rt, "ES6Promise").asBool());
+  EXPECT_EQ(conf.getES6Proxy(), rtConfig.getProperty(*rt, "ES6Proxy").asBool());
+  EXPECT_EQ(conf.getIntl(), rtConfig.getProperty(*rt, "Intl").asBool());
   EXPECT_EQ(
       conf.getEnableSampledStats(),
-      llvh::cast<JSONBoolean>(rtConfig->at("enableSampledStats"))->getValue());
+      rtConfig.getProperty(*rt, "enableSampledStats").asBool());
   EXPECT_EQ(
       conf.getVMExperimentFlags(),
-      llvh::cast<JSONNumber>(rtConfig->at("vmExperimentFlags"))->getValue());
+      rtConfig.getProperty(*rt, "vmExperimentFlags").asNumber());
 }
 
 TEST_F(SynthTraceSerializationTest, FullTrace) {
@@ -351,171 +342,41 @@ TEST_F(SynthTraceSerializationTest, FullTrace) {
 
   rt->flushAndDisableTrace();
 
-  JSONFactory::Allocator alloc;
-  JSONFactory jsonFactory{alloc};
-  hermes::SourceErrorManager sm;
-  JSONParser parser{jsonFactory, result, sm};
-  auto optTrace = parser.parse();
-  ASSERT_TRUE(optTrace) << "Trace file is not valid JSON:\n" << result << "\n";
+  auto optTrace = rt->global()
+                      .getPropertyAsObject(*rt, "JSON")
+                      .getPropertyAsFunction(*rt, "parse")
+                      .call(*rt, result)
+                      .asObject(*rt);
 
-  // Too verbose to check every key, so let llvh::cast do the checks.
-  JSONObject *root = llvh::cast<JSONObject>(optTrace.getValue());
+  auto records = optTrace.getPropertyAsObject(*rt, "trace").asArray(*rt);
 
-  JSONObject *environment = llvh::cast<JSONObject>(root->at("env"));
-  EXPECT_TRUE(llvh::isa<JSONNumber>(environment->at("mathRandomSeed")));
+  auto record = records.getValueAtIndex(*rt, 0).asObject(*rt);
   EXPECT_EQ(
-      0, llvh::cast<JSONArray>(environment->at("callsToDateNow"))->size());
-  EXPECT_EQ(
-      0, llvh::cast<JSONArray>(environment->at("callsToNewDate"))->size());
-  EXPECT_EQ(
-      0,
-      llvh::cast<JSONArray>(environment->at("callsToDateAsFunction"))->size());
-
-  JSONArray *records = llvh::cast<JSONArray>(root->at("trace"));
-
-  const JSONObject *record = llvh::cast<JSONObject>(records->at(0));
-  EXPECT_EQ(
-      "CreateObjectRecord", llvh::cast<JSONString>(record->at("type"))->str());
-  EXPECT_TRUE(llvh::isa<JSONNumber>(record->at("time")));
-  EXPECT_EQ(objID, llvh::cast<JSONNumber>(record->at("objID"))->getValue());
+      "CreateObjectRecord",
+      record.getProperty(*rt, "type").asString(*rt).utf8(*rt));
+  EXPECT_TRUE(record.getProperty(*rt, "time").isNumber());
+  EXPECT_EQ(objID, record.getProperty(*rt, "objID").asNumber());
 
   // The obj.getProperty(*rt, "a") creates a string primitive for "a".
-  record = llvh::cast<JSONObject>(records->at(1));
+  record = records.getValueAtIndex(*rt, 1).asObject(*rt);
   EXPECT_EQ(
-      "CreateStringRecord", llvh::cast<JSONString>(record->at("type"))->str());
-  EXPECT_TRUE(llvh::isa<JSONNumber>(record->at("time")));
-  EXPECT_TRUE(llvh::isa<JSONNumber>(record->at("objID")));
-  auto stringID = llvh::cast<JSONNumber>(record->at("objID"))->getValue();
+      "CreateStringRecord",
+      record.getProperty(*rt, "type").asString(*rt).utf8(*rt));
+  EXPECT_TRUE(record.getProperty(*rt, "time").isNumber());
+  EXPECT_TRUE(record.getProperty(*rt, "objID").isNumber());
+  auto stringID = record.getProperty(*rt, "objID").asNumber();
 
-  record = llvh::cast<JSONObject>(records->at(2));
+  record = records.getValueAtIndex(*rt, 2).asObject(*rt);
   EXPECT_EQ(
-      "GetPropertyRecord", llvh::cast<JSONString>(record->at("type"))->str());
-  EXPECT_TRUE(llvh::isa<JSONNumber>(record->at("time")));
-  EXPECT_EQ(objID, llvh::cast<JSONNumber>(record->at("objID"))->getValue());
-  EXPECT_EQ(stringID, llvh::cast<JSONNumber>(record->at("propID"))->getValue());
-  EXPECT_EQ("undefined:", llvh::cast<JSONString>(record->at("value"))->str());
-}
-
-TEST_F(SynthTraceSerializationTest, FullTraceWithDateAndMath) {
-  const ::hermes::vm::RuntimeConfig conf =
-      ::hermes::vm::RuntimeConfig::Builder().withTraceEnabled(true).build();
-  std::string result;
-  auto resultStream = std::make_unique<llvh::raw_string_ostream>(result);
-  std::unique_ptr<TracingHermesRuntime> rt(makeTracingHermesRuntime(
-      makeHermesRuntime(conf), conf, std::move(resultStream)));
-
-  uint64_t dateNow = 0;
-  uint64_t newDate = 0;
-  std::string dateAsFunc;
-  {
-    jsi::Object math = rt->global().getPropertyAsObject(*rt, "Math");
-    jsi::Object date = rt->global().getPropertyAsObject(*rt, "Date");
-    // Don't need the result, just making sure the seed gets set.
-    math.getPropertyAsFunction(*rt, "random").call(*rt).asNumber();
-    dateNow = date.getPropertyAsFunction(*rt, "now").call(*rt).asNumber();
-    jsi::Function dateFunc = date.asFunction(*rt);
-    auto createdDateObj = dateFunc.callAsConstructor(*rt).asObject(*rt);
-    newDate = createdDateObj.getPropertyAsFunction(*rt, "getTime")
-                  .callWithThis(*rt, createdDateObj)
-                  .asNumber();
-    dateAsFunc = dateFunc.call(*rt).asString(*rt).utf8(*rt);
-  }
-
-  rt->flushAndDisableTrace();
-
-  JSONFactory::Allocator alloc;
-  JSONFactory jsonFactory{alloc};
-  hermes::SourceErrorManager sm;
-  JSONParser parser{jsonFactory, result, sm};
-  auto optTrace = parser.parse();
-  ASSERT_TRUE(optTrace) << "Trace file is not valid JSON:\n" << result << "\n";
-
-  // Too verbose to check every key, so let llvh::cast do the checks.
-  JSONObject *root = llvh::cast<JSONObject>(optTrace.getValue());
-
-  JSONObject *environment = llvh::cast<JSONObject>(root->at("env"));
-  EXPECT_TRUE(llvh::isa<JSONNumber>(environment->at("mathRandomSeed")));
-  JSONArray *callsToDateNow =
-      llvh::cast<JSONArray>(environment->at("callsToDateNow"));
-  JSONArray *callsToNewDate =
-      llvh::cast<JSONArray>(environment->at("callsToNewDate"));
-  JSONArray *callsToDateAsFunction =
-      llvh::cast<JSONArray>(environment->at("callsToDateAsFunction"));
-  EXPECT_EQ(1, callsToDateNow->size());
-  EXPECT_EQ(dateNow, llvh::cast<JSONNumber>(callsToDateNow->at(0))->getValue());
-  EXPECT_EQ(1, callsToNewDate->size());
-  EXPECT_EQ(newDate, llvh::cast<JSONNumber>(callsToNewDate->at(0))->getValue());
-  EXPECT_EQ(1, callsToDateAsFunction->size());
+      "GetPropertyRecord",
+      record.getProperty(*rt, "type").asString(*rt).utf8(*rt));
+  EXPECT_TRUE(record.getProperty(*rt, "time").isNumber());
+  EXPECT_EQ(objID, record.getProperty(*rt, "objID").asNumber());
   EXPECT_EQ(
-      dateAsFunc, llvh::cast<JSONString>(callsToDateAsFunction->at(0))->str());
-  // Ignore the elements inside the trace, those are tested elsewhere.
+      SynthTrace::encodeString(stringID),
+      SynthTrace::decode(
+          record.getProperty(*rt, "propID").asString(*rt).utf8(*rt)));
+  EXPECT_EQ(
+      "undefined:", record.getProperty(*rt, "value").asString(*rt).utf8(*rt));
 }
-
-// Handle sanitization does extra "FillerCell" allocations that break this test.
-#ifndef HERMESVM_SANITIZE_HANDLES
-TEST_F(SynthTraceSerializationTest, TracePreservesStringAllocs) {
-  const ::hermes::vm::RuntimeConfig conf =
-      ::hermes::vm::RuntimeConfig::Builder().withTraceEnabled(true).build();
-  std::string traceResult;
-  auto resultStream = std::make_unique<llvh::raw_string_ostream>(traceResult);
-  std::unique_ptr<TracingHermesRuntime> rt(makeTracingHermesRuntime(
-      makeHermesRuntime(conf), conf, std::move(resultStream)));
-
-  std::string source = R"(
-var s1 = "a";
-var s2 = "b";
-var s3 = s1 + s2;
-function f(s) {
-  return s == s3;
-}
-)";
-
-  rt->evaluateJavaScript(std::make_unique<jsi::StringBuffer>(source), "source");
-  // Do get property to get "ab" in the string table.
-  auto s = rt->global().getProperty(*rt, "s3");
-
-  auto f = rt->global().getProperty(*rt, "f").asObject(*rt).getFunction(*rt);
-  auto res = f.call(*rt, {std::move(s)});
-  EXPECT_TRUE(res.getBool());
-
-  const auto &heapInfo = rt->instrumentation().getHeapInfo(false);
-  // This test is Hermes-specific -- return early if the heapInfo does
-  // not have the hermes keys we expect.
-  const std::string kNumAllocObjects{"hermes_numAllocatedObjects"};
-  auto iter = heapInfo.find(kNumAllocObjects);
-  if (iter == heapInfo.end()) {
-    return;
-  }
-  auto allocObjsOrig = iter->second;
-
-  rt->flushAndDisableTrace();
-
-  // Now replay the trace, see if we get extra allocations.
-  std::vector<std::unique_ptr<llvh::MemoryBuffer>> sources;
-  sources.emplace_back(llvh::MemoryBuffer::getMemBuffer(source));
-  tracing::TraceInterpreter::ExecuteOptions options;
-  std::string replayTraceStr;
-  auto replayTraceStream =
-      std::make_unique<llvh::raw_string_ostream>(replayTraceStr);
-  std::unique_ptr<TracingHermesRuntime> rt2(makeTracingHermesRuntime(
-      makeHermesRuntime(conf),
-      conf,
-      std::move(replayTraceStream),
-      /* forReplay */ true));
-
-  EXPECT_NO_THROW({
-    tracing::TraceInterpreter::execFromMemoryBuffer(
-        llvh::MemoryBuffer::getMemBuffer(traceResult),
-        std::move(sources),
-        *rt2,
-        options);
-  });
-  rt2->flushAndDisableTrace();
-
-  auto allocObjsFinal =
-      rt2->instrumentation().getHeapInfo(false).at(kNumAllocObjects);
-  EXPECT_EQ(allocObjsOrig, allocObjsFinal);
-}
-#endif
-
 } // namespace

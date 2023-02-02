@@ -9,8 +9,10 @@
 /// \file
 /// ES5.1 15.4 Initialize the Array constructor.
 //===----------------------------------------------------------------------===//
+
 #include "JSLibInternal.h"
 
+#include "hermes/ADT/SafeInt.h"
 #include "hermes/VM/HandleRootOwner-inline.h"
 #include "hermes/VM/JSLib/Sorting.h"
 #include "hermes/VM/Operations.h"
@@ -19,7 +21,11 @@
 #include "hermes/VM/StringView.h"
 
 #include "llvh/ADT/ScopeExit.h"
+#pragma GCC diagnostic push
 
+#ifdef HERMES_COMPILER_SUPPORTS_WSHORTEN_64_TO_32
+#pragma GCC diagnostic ignored "-Wshorten-64-to-32"
+#endif
 namespace hermes {
 namespace vm {
 
@@ -44,6 +50,13 @@ Handle<JSObject> createArrayConstructor(Runtime &runtime) {
       nullptr,
       arrayPrototypeToLocaleString,
       0);
+  defineMethod(
+      runtime,
+      arrayPrototype,
+      Predefined::getSymbolID(Predefined::at),
+      nullptr,
+      arrayPrototypeAt,
+      1);
   defineMethod(
       runtime,
       arrayPrototype,
@@ -522,15 +535,87 @@ arrayPrototypeToLocaleString(void *, Runtime &runtime, NativeArgs args) {
     return ExecutionStatus::EXCEPTION;
   }
   MutableHandle<StringPrimitive> element{runtime};
-  element = strings->at(runtime, 0).getString();
+  element = strings->at(runtime, 0).getString(runtime);
   builder->appendStringPrim(element);
   for (uint32_t j = 1; j < len; ++j) {
     // Every element after the first needs a separator before it.
     builder->appendCharacter(separator);
-    element = strings->at(runtime, j).getString();
+    element = strings->at(runtime, j).getString(runtime);
     builder->appendStringPrim(element);
   }
   return HermesValue::encodeStringValue(*builder->getStringPrimitive());
+}
+
+// 23.1.3.1
+CallResult<HermesValue>
+arrayPrototypeAt(void *, Runtime &runtime, NativeArgs args) {
+  GCScope gcScope(runtime);
+  // 1. Let O be ? ToObject(this value).
+  auto objRes = toObject(runtime, args.getThisHandle());
+  if (LLVM_UNLIKELY(objRes == ExecutionStatus::EXCEPTION)) {
+    return ExecutionStatus::EXCEPTION;
+  }
+  auto O = runtime.makeHandle<JSObject>(objRes.getValue());
+
+  // 2. Let len be ? LengthOfArrayLike(O).
+  Handle<JSArray> jsArr = Handle<JSArray>::dyn_vmcast(O);
+  uint32_t len = 0;
+  if (LLVM_LIKELY(jsArr)) {
+    // Fast path for getting the length.
+    len = JSArray::getLength(jsArr.get(), runtime);
+  } else {
+    // Slow path
+    CallResult<PseudoHandle<>> propRes = JSObject::getNamed_RJS(
+        O, runtime, Predefined::getSymbolID(Predefined::length));
+    if (LLVM_UNLIKELY(propRes == ExecutionStatus::EXCEPTION)) {
+      return ExecutionStatus::EXCEPTION;
+    }
+    auto lenRes = toLength(runtime, runtime.makeHandle(std::move(*propRes)));
+    if (LLVM_UNLIKELY(lenRes == ExecutionStatus::EXCEPTION)) {
+      return ExecutionStatus::EXCEPTION;
+    }
+    len = lenRes->getNumber();
+  }
+
+  // 3. Let relativeIndex be ? ToIntegerOrInfinity(index).
+  auto idx = args.getArgHandle(0);
+  auto relativeIndexRes = toIntegerOrInfinity(runtime, idx);
+  if (relativeIndexRes == ExecutionStatus::EXCEPTION) {
+    return ExecutionStatus::EXCEPTION;
+  }
+  const double relativeIndex = relativeIndexRes->getNumber();
+
+  double k;
+  // 4. If relativeIndex ≥ 0, then
+  if (relativeIndex >= 0) {
+    // a. Let k be relativeIndex.
+    k = relativeIndex;
+  } else {
+    // 5. Else,
+    // a. Let k be len + relativeIndex.
+    k = len + relativeIndex;
+  }
+
+  // 6. If k < 0 or k ≥ len, return undefined.
+  if (k < 0 || k >= len) {
+    return HermesValue::encodeUndefinedValue();
+  }
+
+  // 7. Return ? Get(O, ! ToString(𝔽(k))).
+  if (LLVM_LIKELY(jsArr)) {
+    const SmallHermesValue elm = jsArr->at(runtime, k);
+    if (elm.isEmpty()) {
+      return HermesValue::encodeUndefinedValue();
+    } else {
+      return elm.unboxToHV(runtime);
+    }
+  }
+  CallResult<PseudoHandle<>> propRes = JSObject::getComputed_RJS(
+      O, runtime, runtime.makeHandle(HermesValue::encodeDoubleValue(k)));
+  if (LLVM_UNLIKELY(propRes == ExecutionStatus::EXCEPTION)) {
+    return ExecutionStatus::EXCEPTION;
+  }
+  return propRes->getHermesValue();
 }
 
 CallResult<HermesValue>
@@ -548,22 +633,26 @@ arrayPrototypeConcat(void *, Runtime &runtime, NativeArgs args) {
   // Precompute the final size of the array so it can be preallocated.
   // Note this is necessarily an estimate because an accessor on one array
   // may change the length of subsequent arrays.
-  uint64_t finalSizeEstimate = 0;
+  SafeUInt32 finalSizeEstimate{0};
   if (JSArray *arr = dyn_vmcast<JSArray>(O.get())) {
-    finalSizeEstimate += JSArray::getLength(arr, runtime);
+    finalSizeEstimate.add(JSArray::getLength(arr, runtime));
   } else {
-    ++finalSizeEstimate;
+    finalSizeEstimate.add(1);
   }
   for (int64_t i = 0; i < argCount; ++i) {
     if (JSArray *arr = dyn_vmcast<JSArray>(args.getArg(i))) {
-      finalSizeEstimate += JSArray::getLength(arr, runtime);
+      finalSizeEstimate.add(JSArray::getLength(arr, runtime));
     } else {
-      ++finalSizeEstimate;
+      finalSizeEstimate.add(1);
     }
+  }
+  if (finalSizeEstimate.isOverflowed()) {
+    return runtime.raiseTypeError("Array.prototype.concat result out of space");
   }
 
   // Resultant array.
-  auto arrRes = JSArray::create(runtime, finalSizeEstimate, finalSizeEstimate);
+  auto arrRes =
+      JSArray::create(runtime, *finalSizeEstimate, *finalSizeEstimate);
   if (LLVM_UNLIKELY(arrRes == ExecutionStatus::EXCEPTION)) {
     return ExecutionStatus::EXCEPTION;
   }
@@ -642,9 +731,9 @@ arrayPrototypeConcat(void *, Runtime &runtime, NativeArgs args) {
       // appended to the result array.
       // 5.c.iv. Repeat, while k < len
       for (uint64_t k = 0; k < len; ++k, ++n) {
-        HermesValue subElement = LLVM_LIKELY(arrHandle)
+        SmallHermesValue subElement = LLVM_LIKELY(arrHandle)
             ? arrHandle->at(runtime, k)
-            : HermesValue::encodeEmptyValue();
+            : SmallHermesValue::encodeEmptyValue();
         if (LLVM_LIKELY(!subElement.isEmpty()) &&
             LLVM_LIKELY(n < A->getEndIndex())) {
           // Fast path: quickly set element without making any extra calls.
@@ -718,7 +807,10 @@ arrayPrototypeConcat(void *, Runtime &runtime, NativeArgs args) {
   }
   // Update the array's length. We never expect this to fail since we just
   // created the array.
-  auto res = JSArray::setLengthProperty(A, runtime, n);
+  if (n > UINT32_MAX) {
+    return runtime.raiseRangeError("invalid array length");
+  }
+  auto res = JSArray::setLengthProperty(A, runtime, static_cast<uint32_t>(n));
   assert(
       res == ExecutionStatus::RETURNED &&
       "Setting length of new array should never fail");
@@ -827,11 +919,11 @@ arrayPrototypeJoin(void *, Runtime &runtime, NativeArgs args) {
     return ExecutionStatus::EXCEPTION;
   }
   MutableHandle<StringPrimitive> element{runtime};
-  element = strings->at(runtime, 0).getString();
+  element = strings->at(runtime, 0).getString(runtime);
   builder->appendStringPrim(element);
   for (size_t i = 1; i < len; ++i) {
     builder->appendStringPrim(sep);
-    element = strings->at(runtime, i).getString();
+    element = strings->at(runtime, i).getString(runtime);
     builder->appendStringPrim(element);
   }
   return HermesValue::encodeStringValue(*builder->getStringPrimitive());
@@ -1246,14 +1338,14 @@ CallResult<HermesValue> sortSparse(
 
   // Find out how many sortable numeric properties we have.
   JSArray::StorageType::size_type numProps = 0;
-  for (JSArray::StorageType::size_type e = names->size(); numProps != e;
+  for (JSArray::StorageType::size_type e = names->size(runtime); numProps != e;
        ++numProps) {
-    HermesValue hv = names->at(numProps);
+    SmallHermesValue hv = names->at(runtime, numProps);
     // Stop at the first non-number.
     if (!hv.isNumber())
       break;
     // Stop if the property name is beyond "len".
-    if (hv.getNumberAs<uint64_t>() >= len)
+    if (hv.getNumber(runtime) >= len)
       break;
   }
 
@@ -1281,7 +1373,7 @@ CallResult<HermesValue> sortSparse(
   for (decltype(numProps) i = 0; i != numProps; ++i) {
     gcMarker.flush();
 
-    propName = names->at(i);
+    propName = names->at(runtime, i).unboxToHV(runtime);
     auto res = JSObject::getComputed_RJS(O, runtime, propName);
     if (res == ExecutionStatus::EXCEPTION)
       return ExecutionStatus::EXCEPTION;
@@ -1289,8 +1381,8 @@ CallResult<HermesValue> sortSparse(
     if (res->getHermesValue().isEmpty())
       continue;
 
-    JSArray::unsafeSetExistingElementAt(
-        *array, runtime, i, res->getHermesValue());
+    const auto shv = SmallHermesValue::encodeHermesValue(res->get(), runtime);
+    JSArray::unsafeSetExistingElementAt(*array, runtime, i, shv);
 
     if (JSObject::deleteComputed(
             O, runtime, propName, PropOpFlags().plusThrowOnError()) ==
@@ -1311,7 +1403,7 @@ CallResult<HermesValue> sortSparse(
   for (decltype(numProps) i = 0; i != numProps; ++i) {
     gcMarker.flush();
 
-    auto hv = array->at(runtime, i);
+    auto hv = array->at(runtime, i).unboxToHV(runtime);
     assert(
         !hv.isEmpty() &&
         "empty values cannot appear in the array out of nowhere");

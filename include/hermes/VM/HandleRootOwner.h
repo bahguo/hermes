@@ -13,8 +13,12 @@
 #include "hermes/VM/GCPointer.h"
 #include "hermes/VM/HermesValueTraits.h"
 #include "hermes/VM/SymbolID.h"
-#include "hermes/VM/WeakRef.h"
 
+#pragma GCC diagnostic push
+
+#ifdef HERMES_COMPILER_SUPPORTS_WSHORTEN_64_TO_32
+#pragma GCC diagnostic ignored "-Wshorten-64-to-32"
+#endif
 namespace hermes {
 namespace vm {
 
@@ -144,6 +148,13 @@ class HandleRootOwner {
 
   /// The top-most GC scope.
   GCScope *topGCScope_{};
+
+#ifndef NDEBUG
+  /// The number of reasons why no handle allocation is allowed right now.
+  uint32_t noHandleLevel_{0};
+
+  friend class NoHandleScope;
+#endif
 
   /// Allocate storage for a new PinnedHermesValue in the specified GCScope and
   /// initialize it with \p value.
@@ -432,6 +443,7 @@ class GCScope : public GCScopeDebugBase {
     assert(
         getHandleCountDbg() < handlesLimit_ &&
         "Too many handles allocated in GCScope");
+    assert(runtime_.noHandleLevel_ == 0 && "No handles allowed right now.");
 
     setHandleCountDbg(getHandleCountDbg() + 1);
 #ifdef HERMESVM_DEBUG_TRACK_GCSCOPE_HANDLES
@@ -495,4 +507,5 @@ class GCScopeMarkerRAII {
 } // namespace vm
 } // namespace hermes
 
+#pragma GCC diagnostic pop
 #endif

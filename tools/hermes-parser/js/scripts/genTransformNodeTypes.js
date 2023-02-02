@@ -9,8 +9,8 @@
  */
 
 import {
-  HermesESTreeJSON,
-  formatAndWriteDistArtifact,
+  GetHermesESTreeJSON,
+  formatAndWriteSrcArtifact,
   LITERAL_TYPES,
   NODES_WITHOUT_TRANSFORM_NODE_TYPES,
 } from './utils/scriptUtils';
@@ -24,15 +24,21 @@ const NODES_WITH_SPECIAL_HANDLING = new Set([
   'ArrowFunctionExpression',
   'BigIntLiteral',
   'BooleanLiteral',
+  'ClassDeclaration',
+  'DeclareExportDeclaration',
+  'DeclareFunction',
+  'ExportNamedDeclaration',
   'Identifier',
   'NullLiteral',
   'NumericLiteral',
+  'ObjectTypeProperty',
+  'Program',
   'RegExpLiteral',
   'StringLiteral',
   'TemplateElement',
 ]);
 
-for (const node of HermesESTreeJSON) {
+for (const node of GetHermesESTreeJSON()) {
   if (
     NODES_WITH_SPECIAL_HANDLING.has(node.name) ||
     NODES_WITHOUT_TRANSFORM_NODE_TYPES.has(node.name)
@@ -50,12 +56,10 @@ export type ${node.name}Props = {};
 `);
     nodeTypeFunctions.push(
       `\
-export function ${node.name}({
-  parent,
-}: {
+export function ${node.name}(props: {
   +parent?: ESNode,
-} = {}): DetachedNode<${node.name}Type> {
-  return detachedProps<${node.name}Type>(parent, {
+} = {...null}): DetachedNode<${node.name}Type> {
+  return detachedProps<${node.name}Type>(props.parent, {
     type: '${type}',
   });
 }
@@ -70,9 +74,9 @@ export type ${node.name}Props = {
       const baseType = `${node.name}Type['${arg.name}']`;
       let type = baseType;
       if (arg.type === 'NodePtr') {
-        type = `DetachedNode<${type}>`;
+        type = `MaybeDetachedNode<${type}>`;
       } else if (arg.type === 'NodeList') {
-        type = `$ReadOnlyArray<DetachedNode<${type}[number]>>`;
+        type = `$ReadOnlyArray<MaybeDetachedNode<${type}[number]>>`;
       }
 
       if (arg.optional) {
@@ -86,13 +90,26 @@ export type ${node.name}Props = {
     );
     nodeTypeFunctions.push(
       `\
-export function ${node.name}({parent, ...props}: {
+export function ${node.name}(props: {
   ...$ReadOnly<${node.name}Props>,
   +parent?: ESNode,
 }): DetachedNode<${node.name}Type> {
-  const node = detachedProps<${node.name}Type>(parent, {
+  const node = detachedProps<${node.name}Type>(props.parent, {
     type: '${type}',
-    ...props,
+    ${node.arguments
+      .map(arg => {
+        switch (arg.type) {
+          case 'NodePtr':
+            return `${arg.name}: asDetachedNode(props.${arg.name})`;
+          case 'NodeList':
+            return `${arg.name}: props.${arg.name}${
+              arg.optional ? '?.' : '.'
+            }map(n => asDetachedNode(n))`;
+          default:
+            return `${arg.name}: props.${arg.name}`;
+        }
+      })
+      .join(',\n')},
   });
   setParentPointersInDirectChildren(node);
   return node;
@@ -107,9 +124,10 @@ import type {
 ESNode,
 ${imports.map(imp => `${imp} as ${imp}Type`).join(',\n')}
 } from 'hermes-estree';
-import type {DetachedNode} from '../detachedNode';
+import type {DetachedNode, MaybeDetachedNode} from '../detachedNode';
 
 import {
+  asDetachedNode,
   detachedProps,
   setParentPointersInDirectChildren,
 } from '../detachedNode';
@@ -121,16 +139,9 @@ ${nodeTypeFunctions.join('\n')}
 export * from './special-case-node-types';
 `;
 
-formatAndWriteDistArtifact({
+formatAndWriteSrcArtifact({
   code: fileContents,
   package: 'hermes-transform',
-  filename: 'node-types.js',
-  subdirSegments: ['generated'],
-});
-formatAndWriteDistArtifact({
-  code: fileContents,
-  package: 'hermes-transform',
-  filename: 'node-types.js.flow',
+  file: 'generated/node-types.js',
   flow: 'strict-local',
-  subdirSegments: ['generated'],
 });

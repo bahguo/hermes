@@ -12,7 +12,7 @@ import type {ESNode, ModuleDeclaration, Statement} from 'hermes-estree';
 import type {MutationContext} from '../MutationContext';
 import type {DetachedNode} from '../../detachedNode';
 
-import {insertInArray} from './utils/arrayUtils';
+import {astArrayMutationHelpers} from 'hermes-parser';
 import {getStatementParent} from './utils/getStatementParent';
 import {isValidModuleDeclarationParent} from './utils/isValidModuleDeclarationParent';
 import {InvalidInsertionError} from '../Errors';
@@ -46,6 +46,11 @@ export function performInsertStatementMutation(
   mutationContext: MutationContext,
   mutation: InsertStatementMutation,
 ): ESNode {
+  mutationContext.assertNotDeleted(
+    mutation.target,
+    `Attempted to insert ${mutation.side} a deleted ${mutation.target.type} node. This likely means that you attempted to mutate around the target after it was deleted/replaced.`,
+  );
+
   const insertionParent = getStatementParent(mutation.target);
 
   // enforce that if we are inserting module declarations - they are being inserted in a valid location
@@ -68,7 +73,7 @@ export function performInsertStatementMutation(
     } = insertionParent.parent;
     switch (mutation.side) {
       case 'before': {
-        parent[insertionParent.key] = insertInArray(
+        parent[insertionParent.key] = astArrayMutationHelpers.insertInArray(
           parent[insertionParent.key],
           insertionParent.targetIndex,
           mutation.nodesToInsert,
@@ -77,7 +82,7 @@ export function performInsertStatementMutation(
       }
 
       case 'after': {
-        parent[insertionParent.key] = insertInArray(
+        parent[insertionParent.key] = astArrayMutationHelpers.insertInArray(
           parent[insertionParent.key],
           insertionParent.targetIndex + 1,
           mutation.nodesToInsert,
@@ -108,6 +113,7 @@ export function performInsertStatementMutation(
 
   (insertionParent.parent: interface {[string]: mixed})[insertionParent.key] =
     blockStatement;
+  statementToWrap.parent = blockStatement;
 
   return insertionParent.parent;
 }

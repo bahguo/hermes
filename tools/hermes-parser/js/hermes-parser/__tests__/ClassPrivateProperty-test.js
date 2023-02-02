@@ -10,26 +10,295 @@
 
 'use strict';
 
-import {parse} from '../__test_utils__/parse';
+import type {AlignmentCase} from '../__test_utils__/alignment-utils';
+
+import {
+  expectBabelAlignment,
+  expectEspreeAlignment,
+} from '../__test_utils__/alignment-utils';
+import {parseForSnapshot} from '../__test_utils__/parse';
 
 describe('Private properties', () => {
-  test('ESTree', () => {
-    // Private property uses are not supported
-    expect(() => parse(`foo.#private`)).toThrow(
-      new SyntaxError('Private properties are not supported (1:4)'),
-    );
+  describe('Property Definition', () => {
+    const testCase: AlignmentCase = {
+      code: `
+        class Foo {
+          #private;
+        }
+      `,
+      espree: {expectToFail: false},
+      babel: {expectToFail: false},
+    };
 
-    // Private property brand checks are not supported
-    expect(() => parse(`#private in foo`)).toThrow(
-      new SyntaxError(`\
-invalid expression (1:0)
-#private in foo
-^`),
-    );
+    test('ESTree', () => {
+      expect(parseForSnapshot(testCase.code)).toMatchInlineSnapshot(`
+        {
+          "body": [
+            {
+              "body": {
+                "body": [
+                  {
+                    "computed": false,
+                    "declare": false,
+                    "key": {
+                      "name": "private",
+                      "type": "PrivateIdentifier",
+                    },
+                    "optional": false,
+                    "static": false,
+                    "type": "PropertyDefinition",
+                    "typeAnnotation": null,
+                    "value": null,
+                    "variance": null,
+                  },
+                ],
+                "type": "ClassBody",
+              },
+              "decorators": [],
+              "id": {
+                "name": "Foo",
+                "optional": false,
+                "type": "Identifier",
+                "typeAnnotation": null,
+              },
+              "implements": [],
+              "superClass": null,
+              "superTypeParameters": null,
+              "type": "ClassDeclaration",
+              "typeParameters": null,
+            },
+          ],
+          "type": "Program",
+        }
+      `);
+      expectEspreeAlignment(testCase);
+    });
 
-    // Private property definitions are not supported
-    expect(() => parse(`class C { #private }`)).toThrow(
-      new SyntaxError('Private properties are not supported (1:10)'),
-    );
+    test('Babel', () => {
+      expectBabelAlignment(testCase);
+    });
+  });
+
+  describe('Member Expression', () => {
+    const testCase: AlignmentCase = {
+      code: `
+        class Foo {
+          #private;
+          constructor() {
+            foo.#private;
+          }
+        }
+      `,
+      espree: {expectToFail: false},
+      babel: {expectToFail: false},
+    };
+
+    test('ESTree', () => {
+      expect(parseForSnapshot(testCase.code)).toMatchInlineSnapshot(`
+        {
+          "body": [
+            {
+              "body": {
+                "body": [
+                  {
+                    "computed": false,
+                    "declare": false,
+                    "key": {
+                      "name": "private",
+                      "type": "PrivateIdentifier",
+                    },
+                    "optional": false,
+                    "static": false,
+                    "type": "PropertyDefinition",
+                    "typeAnnotation": null,
+                    "value": null,
+                    "variance": null,
+                  },
+                  {
+                    "computed": false,
+                    "key": {
+                      "name": "constructor",
+                      "optional": false,
+                      "type": "Identifier",
+                      "typeAnnotation": null,
+                    },
+                    "kind": "constructor",
+                    "static": false,
+                    "type": "MethodDefinition",
+                    "value": {
+                      "async": false,
+                      "body": {
+                        "body": [
+                          {
+                            "directive": null,
+                            "expression": {
+                              "computed": false,
+                              "object": {
+                                "name": "foo",
+                                "optional": false,
+                                "type": "Identifier",
+                                "typeAnnotation": null,
+                              },
+                              "optional": false,
+                              "property": {
+                                "name": "private",
+                                "type": "PrivateIdentifier",
+                              },
+                              "type": "MemberExpression",
+                            },
+                            "type": "ExpressionStatement",
+                          },
+                        ],
+                        "type": "BlockStatement",
+                      },
+                      "expression": false,
+                      "generator": false,
+                      "id": null,
+                      "params": [],
+                      "predicate": null,
+                      "returnType": null,
+                      "type": "FunctionExpression",
+                      "typeParameters": null,
+                    },
+                  },
+                ],
+                "type": "ClassBody",
+              },
+              "decorators": [],
+              "id": {
+                "name": "Foo",
+                "optional": false,
+                "type": "Identifier",
+                "typeAnnotation": null,
+              },
+              "implements": [],
+              "superClass": null,
+              "superTypeParameters": null,
+              "type": "ClassDeclaration",
+              "typeParameters": null,
+            },
+          ],
+          "type": "Program",
+        }
+      `);
+      expectEspreeAlignment(testCase);
+    });
+
+    test('Babel', () => {
+      expectBabelAlignment(testCase);
+    });
+  });
+
+  describe('Brand Check', () => {
+    const testCase: AlignmentCase = {
+      code: `
+        class Foo {
+          #private;
+          constructor() {
+            #private in foo;
+          }
+        }
+      `,
+      espree: {expectToFail: false},
+      babel: {
+        // the version of babel we test against does not support private brand checks
+        expectToFail: 'babel-exception',
+        expectedExceptionMessage: 'Unexpected token (5:12)',
+      },
+    };
+
+    test('ESTree', () => {
+      expect(parseForSnapshot(testCase.code)).toMatchInlineSnapshot(`
+        {
+          "body": [
+            {
+              "body": {
+                "body": [
+                  {
+                    "computed": false,
+                    "declare": false,
+                    "key": {
+                      "name": "private",
+                      "type": "PrivateIdentifier",
+                    },
+                    "optional": false,
+                    "static": false,
+                    "type": "PropertyDefinition",
+                    "typeAnnotation": null,
+                    "value": null,
+                    "variance": null,
+                  },
+                  {
+                    "computed": false,
+                    "key": {
+                      "name": "constructor",
+                      "optional": false,
+                      "type": "Identifier",
+                      "typeAnnotation": null,
+                    },
+                    "kind": "constructor",
+                    "static": false,
+                    "type": "MethodDefinition",
+                    "value": {
+                      "async": false,
+                      "body": {
+                        "body": [
+                          {
+                            "directive": null,
+                            "expression": {
+                              "left": {
+                                "name": "private",
+                                "type": "PrivateIdentifier",
+                              },
+                              "operator": "in",
+                              "right": {
+                                "name": "foo",
+                                "optional": false,
+                                "type": "Identifier",
+                                "typeAnnotation": null,
+                              },
+                              "type": "BinaryExpression",
+                            },
+                            "type": "ExpressionStatement",
+                          },
+                        ],
+                        "type": "BlockStatement",
+                      },
+                      "expression": false,
+                      "generator": false,
+                      "id": null,
+                      "params": [],
+                      "predicate": null,
+                      "returnType": null,
+                      "type": "FunctionExpression",
+                      "typeParameters": null,
+                    },
+                  },
+                ],
+                "type": "ClassBody",
+              },
+              "decorators": [],
+              "id": {
+                "name": "Foo",
+                "optional": false,
+                "type": "Identifier",
+                "typeAnnotation": null,
+              },
+              "implements": [],
+              "superClass": null,
+              "superTypeParameters": null,
+              "type": "ClassDeclaration",
+              "typeParameters": null,
+            },
+          ],
+          "type": "Program",
+        }
+      `);
+      expectEspreeAlignment(testCase);
+    });
+
+    test('Babel', () => {
+      expectBabelAlignment(testCase);
+    });
   });
 });

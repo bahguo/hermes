@@ -33,7 +33,7 @@ class ArrayImpl : public JSObject {
   using size_type = uint32_t;
   /// StorageType is the underlying storage that JSArray uses to put the values
   /// into.
-  using StorageType = BigStorage;
+  using StorageType = SegmentedArraySmall;
 
   /// Resize the internal storage. The ".length" property is not affected. It
   /// does \b NOT check for read-only properties.
@@ -67,7 +67,7 @@ class ArrayImpl : public JSObject {
       ArrayImpl *self,
       Runtime &runtime,
       size_type index,
-      HermesValue value) {
+      SmallHermesValue value) {
     // The array must be extendable (and by implication is not frozen or sealed)
     // because we don't know whether the element being set is empty or not.
     assert(!self->flags_.noExtend && "this array cannot be extended");
@@ -76,7 +76,7 @@ class ArrayImpl : public JSObject {
         index >= self->beginIndex_ && index < self->endIndex_ &&
         "array index out of range");
     self->getIndexedStorage(runtime)->set(
-        index - self->beginIndex_, value, &runtime.getHeap());
+        runtime, index - self->beginIndex_, value);
   }
 
   /// Set the element at index \p index to empty. This does not affect the
@@ -101,15 +101,15 @@ class ArrayImpl : public JSObject {
 
   /// Return the value at index \p index, or \c empty if the index is not
   /// contained in the storage.
-  const HermesValue at(Runtime &runtime, size_type index) const {
+  const SmallHermesValue at(Runtime &runtime, size_type index) const {
     return index >= beginIndex_ && index < endIndex_
-        ? getIndexedStorage(runtime)->at(index - beginIndex_)
-        : HermesValue::encodeEmptyValue();
+        ? getIndexedStorage(runtime)->at(runtime, index - beginIndex_)
+        : SmallHermesValue::encodeEmptyValue();
   }
 
   /// Return the value at index \p index.
   Handle<> handleAt(Runtime &runtime, size_type index) const {
-    return runtime.makeHandle(at(runtime, index));
+    return runtime.makeHandle(at(runtime, index).unboxToHV(runtime));
   }
 
   /// Get a pointer to the indexed storage for this array. The returned value
@@ -120,7 +120,7 @@ class ArrayImpl : public JSObject {
 
   /// Set the indexed storage of this array to be \p p. The pointer is allowed
   /// to be null.
-  void setIndexedStorage(PointerBase &base, StorageType *p, GC *gc) {
+  void setIndexedStorage(PointerBase &base, StorageType *p, GC &gc) {
     indexedStorage_.set(base, p, gc);
   }
 
@@ -151,9 +151,11 @@ class ArrayImpl : public JSObject {
   ArrayImpl(Runtime &runtime, JSObject *parent, HiddenClass *clazz)
       : ArrayImpl(runtime, parent, clazz, GCPointerBase::YesBarriers()) {}
 
+#ifdef HERMES_MEMORY_INSTRUMENTATION
   /// Adds the special indexed element edges from this array to its backing
   /// storage.
-  static void _snapshotAddEdgesImpl(GCCell *cell, GC *gc, HeapSnapshot &snap);
+  static void _snapshotAddEdgesImpl(GCCell *cell, GC &gc, HeapSnapshot &snap);
+#endif
 
   /// Check whether property with index \p index exists in indexed storage and
   /// \return true if it does.
@@ -177,8 +179,10 @@ class ArrayImpl : public JSObject {
   /// Obtain an element from the "indexed storage" of this object. The storage
   /// itself is implementation dependent.
   /// \return the value of the element or "empty" if there is no such element.
-  static HermesValue
-  _getOwnIndexedImpl(JSObject *self, Runtime &runtime, uint32_t index);
+  static HermesValue _getOwnIndexedImpl(
+      PseudoHandle<JSObject> self,
+      Runtime &runtime,
+      uint32_t index);
 
   /// Set an element in the "indexed storage" of this object. Depending on the
   /// semantics of the "indexed storage" the storage capacity may need to be
@@ -209,8 +213,8 @@ class ArrayImpl : public JSObject {
       ObjectVTable::CheckAllOwnIndexedMode mode);
 
   /// Return the value at index \p index, which must be valid.
-  const HermesValue unsafeAt(Runtime &runtime, size_type index) const {
-    return getIndexedStorage(runtime)->at(index - beginIndex_);
+  const SmallHermesValue unsafeAt(Runtime &runtime, size_type index) const {
+    return getIndexedStorage(runtime)->at(runtime, index - beginIndex_);
   }
 
  private:
@@ -294,8 +298,19 @@ class JSArray final : public ArrayImpl {
 
   /// Create an instance of Array, with [[Prototype]] initialized with
   /// \p prototypeHandle, with capacity for \p capacity elements and actual size
-  /// \p length.
-  static CallResult<Handle<JSArray>> create(
+  /// \p length. Does not allocate the return object's property storage array.
+  static CallResult<Handle<JSArray>> createNoAllocPropStorage(
+      Runtime &runtime,
+      Handle<JSObject> prototypeHandle,
+      Handle<HiddenClass> classHandle,
+      size_type capacity = 0,
+      size_type length = 0);
+
+  /// Create an instance of Array, with [[Prototype]] initialized with
+  /// \p prototypeHandle, with capacity for \p capacity elements and actual size
+  /// \p length. It also allocates the return object's property storage array
+  /// to hold all properties in \p classHandle.
+  static CallResult<Handle<JSArray>> createAndAllocPropStorage(
       Runtime &runtime,
       Handle<JSObject> prototypeHandle,
       Handle<HiddenClass> classHandle,
@@ -307,7 +322,7 @@ class JSArray final : public ArrayImpl {
       Handle<JSObject> prototypeHandle,
       size_type capacity,
       size_type length) {
-    return create(
+    return createNoAllocPropStorage(
         runtime,
         prototypeHandle,
         *prototypeHandle == runtime.arrayPrototype.getObject()
@@ -356,7 +371,7 @@ class JSArray final : public ArrayImpl {
   /// A helper to update the named '.length' property.
   static void
   putLength(JSArray *self, Runtime &runtime, SmallHermesValue newLength) {
-    setDirectSlotValue<lengthPropIndex()>(self, newLength, &runtime.getHeap());
+    setDirectSlotValue<lengthPropIndex()>(self, newLength, runtime.getHeap());
   }
 
   /// Update the JavaScript '.length' property, which also resizes the array.
@@ -414,7 +429,7 @@ class JSArrayIterator : public JSObject {
       Handle<JSObject> iteratedObject,
       IterationKind iterationKind)
       : JSObject(runtime, *parent, *clazz),
-        iteratedObject_(runtime, *iteratedObject, &runtime.getHeap()),
+        iteratedObject_(runtime, *iteratedObject, runtime.getHeap()),
         iterationKind_(iterationKind) {}
 
  private:

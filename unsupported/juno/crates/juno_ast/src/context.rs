@@ -7,18 +7,28 @@
 
 //! Garbage-collected Storage structures for AST nodes.
 
-use crate::{Node, Path, SourceManager, Visitor};
-use juno_support::atom_table::{Atom, AtomTable};
+use std::cell::Cell;
+use std::cell::UnsafeCell;
+use std::hash::Hash;
+use std::hash::Hasher;
+use std::ops::Deref;
+use std::pin::Pin;
+use std::ptr::NonNull;
+use std::sync::atomic::AtomicU32;
+use std::sync::atomic::Ordering;
+
+use juno_support::atom_table::Atom;
+use juno_support::atom_table::AtomTable;
+use juno_support::atom_table::AtomU16;
+use juno_support::Deque;
+use juno_support::HeapSize;
 use libc::c_void;
 use memoffset::offset_of;
-use std::hash::{Hash, Hasher};
-use std::ops::Deref;
-use std::{
-    cell::{Cell, UnsafeCell},
-    pin::Pin,
-    ptr::NonNull,
-    sync::atomic::{AtomicU32, Ordering},
-};
+
+use crate::Node;
+use crate::Path;
+use crate::SourceManager;
+use crate::Visitor;
 
 /// ID which indicates a `StorageEntry` is free.
 const FREE_ENTRY: u32 = 0;
@@ -67,6 +77,46 @@ impl<'ctx> StorageEntry<'ctx> {
     }
 }
 
+/// A single entry in the NodeList storage.
+/// These are also immutable from the user's perspective, like `Node`s,
+/// but they are temporarily mutated here during construction only, in order to append elements.
+#[derive(Debug)]
+pub(crate) struct NodeListElement<'ctx> {
+    /// ID of the context to which this entry belongs.
+    /// Top bit is used as a mark bit, and flips meaning every time a GC happens.
+    /// If this field is `0`, then this entry is free.
+    ctx_id_markbit: Cell<u32>,
+
+    /// Actual node stored in this entry.
+    /// Must not be null, because empty lists are represented as null pointers in the [`NodeList`].
+    pub inner: *const Node<'ctx>,
+
+    /// Pointer to the next element in the NodeList.
+    /// Stored in a `Cell` to allow for simple appends.
+    pub next: Cell<*const NodeListElement<'ctx>>,
+}
+
+impl<'ctx> NodeListElement<'ctx> {
+    #[inline]
+    fn set_markbit(&self, bit: bool) {
+        let id = self.ctx_id_markbit.get();
+        if bit {
+            self.ctx_id_markbit.set(id | 1 << 31);
+        } else {
+            self.ctx_id_markbit.set(id & !(1 << 31));
+        }
+    }
+
+    #[inline]
+    fn markbit(&self) -> bool {
+        (self.ctx_id_markbit.get() >> 31) != 0
+    }
+
+    fn is_free(&self) -> bool {
+        self.ctx_id_markbit.get() == FREE_ENTRY
+    }
+}
+
 /// Structure pointed to by `Context` and `NodeRc` to facilitate panicking if there are
 /// outstanding `NodeRc` when the `Context` is dropped.
 #[derive(Debug)]
@@ -91,10 +141,17 @@ pub struct Context<'ast> {
     /// List of all the nodes stored in this context.
     /// Each element is a "chunk" of nodes.
     /// None of the chunks are ever resized after allocation.
-    nodes: UnsafeCell<Vec<Vec<StorageEntry<'ast>>>>,
+    nodes: UnsafeCell<Deque<StorageEntry<'ast>>>,
 
-    /// First element of the free list if there is one.
-    free: UnsafeCell<Vec<NonNull<StorageEntry<'ast>>>>,
+    /// Free list for AST nodes.
+    free_nodes: UnsafeCell<Vec<NonNull<StorageEntry<'ast>>>>,
+
+    /// Every `NodeListElement` allocated in this context.
+    /// These store the links in the linked lists.
+    list_elements: UnsafeCell<Deque<NodeListElement<'ast>>>,
+
+    /// Free list for `NodeListElement`s.
+    free_list_elements: UnsafeCell<Vec<NonNull<NodeListElement<'ast>>>>,
 
     /// `NodeRc` count stored in a `Box` to ensure that `NodeRc`s can also point to it
     /// and decrement the count on drop.
@@ -102,15 +159,11 @@ pub struct Context<'ast> {
     /// technically unsafe.
     noderc_count: Pin<Box<NodeRcCounter>>,
 
-    /// Capacity at which to allocate the next chunk.
-    /// Doubles every chunk until reaching [`MAX_CHUNK_CAPACITY`].
-    next_chunk_capacity: Cell<usize>,
-
     /// All identifiers are kept here.
-    atom_tab: AtomTable,
+    pub atom_table: AtomTable,
 
     /// Source manager of this context.
-    source_mgr: SourceManager,
+    pub source_mgr: SourceManager,
 
     /// `true` if `1` indicates an entry is marked, `false` if `0` indicates an entry is marked.
     /// Flipped every time GC occurs.
@@ -123,9 +176,6 @@ pub struct Context<'ast> {
     pub warn_undefined: bool,
 }
 
-const MIN_CHUNK_CAPACITY: usize = 1 << 10;
-const MAX_CHUNK_CAPACITY: usize = MIN_CHUNK_CAPACITY * (1 << 10);
-
 impl Default for Context<'_> {
     fn default() -> Self {
         Self::new()
@@ -137,34 +187,37 @@ impl<'ast> Context<'ast> {
     pub fn new() -> Self {
         static NEXT_ID: AtomicU32 = AtomicU32::new(FREE_ENTRY + 1);
         let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
-        let result = Self {
+        Self {
             id,
             nodes: Default::default(),
-            free: Default::default(),
+            free_nodes: Default::default(),
+            list_elements: Default::default(),
+            free_list_elements: Default::default(),
             noderc_count: Pin::new(Box::new(NodeRcCounter {
                 ctx_id: id,
                 count: Cell::new(0),
             })),
-            atom_tab: Default::default(),
+            atom_table: Default::default(),
             source_mgr: Default::default(),
-            next_chunk_capacity: Cell::new(MIN_CHUNK_CAPACITY),
             markbit_marked: true,
             strict_mode: false,
             warn_undefined: false,
-        };
-        result.new_chunk();
-        result
+        }
+    }
+
+    /// Acquire a [`GCLock`] on this `Context`.
+    /// This is just a more ergonomic way to call `GCLock::new`.
+    pub fn lock<'ctx>(&'ctx mut self) -> GCLock<'ast, 'ctx> {
+        GCLock::new(self)
     }
 
     /// Allocate a new `Node` in this `Context`.
     pub(crate) fn alloc<'s>(&'s self, n: Node<'_>) -> &'s Node<'s> {
-        let free = unsafe { &mut *self.free.get() };
-        let nodes: &mut Vec<Vec<StorageEntry>> = unsafe { &mut *self.nodes.get() };
-        // Transmutation is safe here, because `Node`s can only be allocated through
-        // this path and only one GCLock can be made available at a time per thread.
-        let node: Node<'ast> = unsafe { std::mem::transmute(n) };
-        let entry = if let Some(mut entry) = free.pop() {
-            let entry = unsafe { entry.as_mut() };
+        let free = unsafe { &mut *self.free_nodes.get() };
+        let nodes: &mut Deque<StorageEntry<'ast>> = unsafe { &mut *self.nodes.get() };
+        let node = unsafe { std::mem::transmute(n) };
+        let entry: &StorageEntry<'ast> = if let Some(mut entry) = free.pop() {
+            let entry: &mut StorageEntry<'ast> = unsafe { entry.as_mut() };
             debug_assert!(
                 entry.ctx_id_markbit.get() == FREE_ENTRY,
                 "Incorrect context ID"
@@ -175,50 +228,91 @@ impl<'ast> Context<'ast> {
             entry.inner = node;
             entry
         } else {
-            let chunk = nodes.last().unwrap();
-            if chunk.len() >= chunk.capacity() {
-                self.new_chunk();
-            }
-            let chunk = nodes.last_mut().unwrap();
-            let entry = StorageEntry {
+            let entry: &StorageEntry = nodes.push(StorageEntry {
                 ctx_id_markbit: Cell::new(self.id),
                 count: Cell::new(0),
                 inner: node,
-            };
+            });
             entry.set_markbit(!self.markbit_marked);
-            chunk.push(entry);
-            chunk.last().unwrap()
+            entry
         };
-        &entry.inner
+        // Transmute here to handle the fact that Cell<> is invariant over its type,
+        // meaning the lifetime doesn't automatically narrow from `'ast` to `'s`.
+        unsafe { std::mem::transmute(&entry.inner) }
     }
 
-    /// Allocate a new chunk in the node storage.
-    fn new_chunk(&self) {
-        let nodes = unsafe { &mut *self.nodes.get() };
-        let capacity = self.next_chunk_capacity.get();
-        nodes.push(Vec::with_capacity(capacity));
-
-        // Double the capacity if there's room.
-        if capacity < MAX_CHUNK_CAPACITY {
-            self.next_chunk_capacity.set(capacity * 2);
-        }
+    /// Allocate a list element in the context with the provided previous element if it exists.
+    /// `prev` will be updated to point to `node` as its next element.
+    pub(crate) fn append_list_element<'a>(
+        &'a self,
+        prev: Option<&'a NodeListElement<'a>>,
+        node: &'a Node<'a>,
+    ) -> &'a NodeListElement<'a> {
+        let elements: &mut Deque<NodeListElement<'ast>> = unsafe { &mut *self.list_elements.get() };
+        let free = unsafe { &mut *self.free_list_elements.get() };
+        // Transmutation is safe here, because `Node`s can only be allocated through
+        // this path and only one GCLock can be made available at a time per thread.
+        let node: &'ast Node<'ast> = unsafe { std::mem::transmute(node) };
+        let prev: Option<&'ast NodeListElement<'ast>> = unsafe { std::mem::transmute(prev) };
+        let entry = if let Some(mut entry) = free.pop() {
+            let entry: &mut NodeListElement<'ast> = unsafe { entry.as_mut() };
+            debug_assert!(
+                entry.ctx_id_markbit.get() == FREE_ENTRY,
+                "Incorrect context ID"
+            );
+            entry.ctx_id_markbit.set(self.id);
+            entry.set_markbit(!self.markbit_marked);
+            entry.inner = node;
+            entry.next.set(std::ptr::null());
+            if let Some(prev) = prev {
+                prev.next.set(entry as *const _);
+            }
+            entry
+        } else {
+            let entry = elements.push(NodeListElement {
+                ctx_id_markbit: Cell::new(self.id),
+                inner: node,
+                next: Cell::new(std::ptr::null()),
+            });
+            entry.set_markbit(!self.markbit_marked);
+            if let Some(prev) = prev {
+                prev.next.set(entry as *const _);
+            }
+            entry
+        };
+        debug_assert!(!entry.is_free(), "Entry must not be free");
+        // Transmute here to handle the fact that Cell<> is invariant over its type,
+        // meaning the lifetime doesn't automatically narrow from `'ast` to `'s`.
+        unsafe { std::mem::transmute(entry) }
     }
 
     /// Return the atom table.
     pub fn atom_table(&self) -> &AtomTable {
-        &self.atom_tab
+        &self.atom_table
     }
 
     /// Add a string to the identifier table.
     #[inline]
     pub fn atom<V: Into<String> + AsRef<str>>(&self, value: V) -> Atom {
-        self.atom_tab.atom(value)
+        self.atom_table.atom(value)
+    }
+
+    /// Add a string to the identifier table.
+    #[inline]
+    pub fn atom_u16<V: Into<Vec<u16>> + AsRef<[u16]>>(&self, value: V) -> AtomU16 {
+        self.atom_table.atom_u16(value)
     }
 
     /// Obtain the contents of an atom from the atom table.
     #[inline]
     pub fn str(&self, index: Atom) -> &str {
-        self.atom_tab.str(index)
+        self.atom_table.str(index)
+    }
+
+    /// Obtain the contents of an atom from the atom table.
+    #[inline]
+    pub fn str_u16(&self, index: AtomU16) -> &[u16] {
+        self.atom_table.str_u16(index)
     }
 
     /// Return an immutable reference to SourceManager
@@ -243,77 +337,145 @@ impl<'ast> Context<'ast> {
 
     pub fn gc(&mut self) {
         let nodes = unsafe { &mut *self.nodes.get() };
-        let free = unsafe { &mut *self.free.get() };
+        let free_nodes = unsafe { &mut *self.free_nodes.get() };
 
-        // Begin by collecting all the roots: entries with non-zero refcount.
-        let mut roots: Vec<&StorageEntry> = vec![];
-        for chunk in nodes.iter() {
-            for entry in chunk.iter() {
+        let list_elements = unsafe { &mut *self.list_elements.get() };
+        let free_list_elements = unsafe { &mut *self.free_list_elements.get() };
+
+        {
+            // Begin by collecting all the roots: entries with non-zero refcount.
+            let mut roots: Vec<&StorageEntry> = vec![];
+            for entry in nodes.iter() {
                 if entry.is_free() {
                     continue;
                 }
                 debug_assert!(
                     entry.markbit() != self.markbit_marked,
-                    "Entry marked before start of GC: {:?}\nentry.markbit()={}\nmarkbit_marked={}",
+                    "Entry marked before start of GC: \
+                        {:?}\nentry.markbit()={}\nmarkbit_marked={}",
                     &entry,
                     entry.markbit(),
                     self.markbit_marked,
                 );
                 if entry.count.get() > 0 {
-                    roots.push(entry);
+                    // Transmuting the lifetime here because we have to store the roots from
+                    // across accesses to `nodes`, meaning we must translate
+                    // from `'ast` to the lifetime of this scope.
+                    roots.push(unsafe { std::mem::transmute(entry) });
+                }
+            }
+
+            struct Marker {
+                markbit_marked: bool,
+            }
+
+            impl<'gc> Visitor<'gc> for Marker {
+                fn call(
+                    &mut self,
+                    gc: &'gc GCLock,
+                    node: &'gc Node<'gc>,
+                    _path: Option<Path<'gc>>,
+                ) {
+                    let entry = unsafe { StorageEntry::from_node(node) };
+                    if entry.markbit() == self.markbit_marked {
+                        // Stop visiting early if we've already marked this part,
+                        // because we must have also marked all the children.
+                        return;
+                    }
+                    entry.set_markbit(self.markbit_marked);
+                    node.mark_lists(gc, |elem| {
+                        elem.set_markbit(self.markbit_marked);
+                    });
+                    node.visit_children(gc, self);
+                }
+            }
+
+            // Use a visitor to mark every node reachable from roots.
+            let mut marker = Marker {
+                markbit_marked: self.markbit_marked,
+            };
+            {
+                let gc: GCLock = GCLock::new(self);
+                for root in roots {
+                    root.inner.visit(&gc, &mut marker, None);
                 }
             }
         }
 
-        struct Marker {
-            markbit_marked: bool,
+        for entry in nodes.iter_mut() {
+            if entry.is_free() {
+                // Skip free entries.
+                continue;
+            }
+            if entry.count.get() > 0 {
+                // Keep referenced entries alive.
+                continue;
+            }
+            if entry.markbit() == self.markbit_marked {
+                // Keep marked entries alive.
+                continue;
+            }
+            // Passed all checks, this entry is free.
+            entry.ctx_id_markbit.set(FREE_ENTRY);
+            free_nodes.push(unsafe { NonNull::new_unchecked(entry as *mut StorageEntry) });
         }
 
-        impl<'gc> Visitor<'gc> for Marker {
-            fn call(&mut self, gc: &'gc GCLock, node: &'gc Node<'gc>, _path: Option<Path<'gc>>) {
-                let entry = unsafe { StorageEntry::from_node(node) };
-                if entry.markbit() == self.markbit_marked {
-                    // Stop visiting early if we've already marked this part,
-                    // because we must have also marked all the children.
-                    return;
-                }
-                entry.set_markbit(self.markbit_marked);
-                node.visit_children(gc, self);
+        for element in list_elements.iter_mut() {
+            if element.is_free() {
+                // Skip free entries.
+                continue;
             }
-        }
-
-        // Use a visitor to mark every node reachable from roots.
-        let mut marker = Marker {
-            markbit_marked: self.markbit_marked,
-        };
-        {
-            let gc = GCLock::new(self);
-            for root in &roots {
-                root.inner.visit(&gc, &mut marker, None);
+            if element.markbit() == self.markbit_marked {
+                // Keep marked entries alive.
+                continue;
             }
-        }
-
-        for chunk in nodes.iter_mut() {
-            for entry in chunk.iter_mut() {
-                if entry.is_free() {
-                    // Skip free entries.
-                    continue;
-                }
-                if entry.count.get() > 0 {
-                    // Keep referenced entries alive.
-                    continue;
-                }
-                if entry.markbit() == self.markbit_marked {
-                    // Keep marked entries alive.
-                    continue;
-                }
-                // Passed all checks, this entry is free.
-                entry.ctx_id_markbit.set(FREE_ENTRY);
-                free.push(unsafe { NonNull::new_unchecked(entry as *mut StorageEntry) });
-            }
+            // Passed all checks, this element is free.
+            element.ctx_id_markbit.set(FREE_ENTRY);
+            free_list_elements
+                .push(unsafe { NonNull::new_unchecked(element as *mut NodeListElement) });
         }
 
         self.markbit_marked = !self.markbit_marked;
+    }
+
+    /// Returns the number of node slots which have been allocated.
+    /// Includes nodes currently in use as well as nodes in the free list.
+    pub fn num_nodes(&self) -> usize {
+        let nodes = unsafe { &*self.nodes.get() };
+        nodes.len()
+    }
+
+    /// Returns the approximate size of just the AST storages in bytes.
+    /// Includes the allocated nodes, lists, as well as free lists for both.
+    pub fn storage_size(&self) -> usize {
+        let nodes = unsafe { &*self.nodes.get() };
+        let free_nodes = unsafe { &*self.free_nodes.get() };
+        let list_elements = unsafe { &*self.list_elements.get() };
+        let free_list_elements = unsafe { &*self.free_list_elements.get() };
+        let mut result = 0;
+        result += nodes.heap_size();
+        result += free_nodes.heap_size();
+        result += list_elements.heap_size();
+        result += free_list_elements.heap_size();
+        result
+    }
+}
+
+impl HeapSize for Context<'_> {
+    fn heap_size(&self) -> usize {
+        let nodes = unsafe { &*self.nodes.get() };
+        let free_nodes = unsafe { &*self.free_nodes.get() };
+        let list_elements = unsafe { &*self.list_elements.get() };
+        let free_list_elements = unsafe { &*self.free_list_elements.get() };
+        let mut result = 0;
+        result += nodes.heap_size();
+        result += free_nodes.heap_size();
+        result += list_elements.heap_size();
+        result += free_list_elements.heap_size();
+        result += std::mem::size_of::<NodeRcCounter>();
+        result += self.atom_table.heap_size();
+        result += self.source_mgr.heap_size();
+        result
     }
 }
 
@@ -330,14 +492,12 @@ impl Drop for Context<'_> {
             {
                 // In debug mode, provide more information on which node was leaked.
                 let nodes = unsafe { &*self.nodes.get() };
-                for chunk in nodes {
-                    for entry in chunk {
-                        assert!(
-                            entry.count.get() == 0,
-                            "NodeRc must not outlive Context: {:#?}\n",
-                            &entry.inner
-                        );
-                    }
+                for entry in nodes.iter() {
+                    assert!(
+                        entry.count.get() == 0,
+                        "NodeRc must not outlive Context: {:#?}\n",
+                        &entry.inner
+                    );
                 }
             }
             // In release mode, just panic immediately.
@@ -385,8 +545,19 @@ impl<'ast, 'ctx> GCLock<'ast, 'ctx> {
 
     /// Allocate a node in the `ctx`.
     #[inline]
-    pub(crate) fn alloc(&self, n: Node) -> &Node {
+    pub(crate) fn alloc<'s>(&'s self, n: Node<'s>) -> &'s Node<'s> {
         self.ctx.alloc(n)
+    }
+
+    /// Append `node` to the `prev` element if provided, else create the element as the first
+    /// element in the `NodeList`.
+    #[inline]
+    pub(crate) fn append_list_element<'s>(
+        &'s self,
+        prev: Option<&'s NodeListElement<'s>>,
+        n: &'s Node<'s>,
+    ) -> &'s NodeListElement<'s> {
+        self.ctx.append_list_element(prev, n)
     }
 
     /// Return a reference to the owning Context.
@@ -400,10 +571,22 @@ impl<'ast, 'ctx> GCLock<'ast, 'ctx> {
         self.ctx.atom(value)
     }
 
+    /// Add a string to the identifier table.
+    #[inline]
+    pub fn atom_u16<V: Into<Vec<u16>> + AsRef<[u16]>>(&self, value: V) -> AtomU16 {
+        self.ctx.atom_u16(value)
+    }
+
     /// Obtain the contents of an atom from the atom table.
     #[inline]
     pub fn str(&self, index: Atom) -> &str {
         self.ctx.str(index)
+    }
+
+    /// Obtain the contents of an atom from the atom table.
+    #[inline]
+    pub fn str_u16(&self, index: AtomU16) -> &[u16] {
+        self.ctx.str_u16(index)
     }
 
     /// Return an immutable reference to SourceManager.

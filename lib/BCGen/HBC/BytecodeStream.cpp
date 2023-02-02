@@ -28,6 +28,8 @@ void BytecodeSerializer::serialize(BytecodeModule &BM, const SHA1 &sourceHash) {
       BM.getStringTableSize(),
       overflowStringEntryCount_,
       BM.getStringStorageSize(),
+      static_cast<uint32_t>(BM.getBigIntTable().size()),
+      static_cast<uint32_t>(BM.getBigIntStorage().size()),
       static_cast<uint32_t>(BM.getRegExpTable().size()),
       static_cast<uint32_t>(BM.getRegExpStorage().size()),
       BM.getArrayBufferSize(),
@@ -92,7 +94,7 @@ void BytecodeSerializer::serializeDebugInfo(BytecodeModule &BM) {
   debugInfoOffset_ = loc_;
 
   if (options_.stripDebugInfoSection) {
-    const DebugInfoHeader empty = {0, 0, 0, 0, 0};
+    const DebugInfoHeader empty = {0, 0, 0, 0, 0, 0, 0};
     writeBinary(empty);
     return;
   }
@@ -103,12 +105,16 @@ void BytecodeSerializer::serializeDebugInfo(BytecodeModule &BM) {
   const DebugInfo::DebugFileRegionList &files = info.viewFiles();
   const StreamVector<uint8_t> &data = info.viewData();
   uint32_t lexOffset = info.lexicalDataOffset();
+  uint32_t tCalleeOffset = info.textifiedCalleeOffset();
+  uint32_t stOffset = info.stringTableOffset();
 
   DebugInfoHeader header{
       (uint32_t)filenameTable.size(),
       (uint32_t)filenameStorage.size(),
       (uint32_t)files.size(),
       lexOffset,
+      tCalleeOffset,
+      stOffset,
       (uint32_t)data.size()};
   writeBinary(header);
   writeBinaryArray(filenameTable);
@@ -184,7 +190,8 @@ void BytecodeSerializer::serializeFunctionsBytecode(BytecodeModule &BM) {
       if (isLayout_) {
         // Deduplicate the bytecode during layout phase.
         DedupKey key = entry->getOpcodeArray();
-        auto pair = bcMap.insert(std::make_pair(key, loc_));
+        auto pair =
+            bcMap.insert(std::make_pair(key, static_cast<uint32_t>(loc_)));
         if (!pair.second) {
           reuse = true;
           entry->setOffset(pair.first->second);
@@ -302,6 +309,16 @@ void BytecodeSerializer::visitObjectValueBuffer() {
   pad(BYTECODE_ALIGNMENT);
   auto objectKeyValBufferPair = bytecodeModule_->getObjectBuffer();
   writeBinaryArray(objectKeyValBufferPair.second);
+}
+
+void BytecodeSerializer::visitBigIntTable() {
+  pad(BYTECODE_ALIGNMENT);
+  writeBinaryArray(bytecodeModule_->getBigIntTable());
+}
+
+void BytecodeSerializer::visitBigIntStorage() {
+  pad(BYTECODE_ALIGNMENT);
+  writeBinaryArray(bytecodeModule_->getBigIntStorage());
 }
 
 void BytecodeSerializer::visitRegExpTable() {

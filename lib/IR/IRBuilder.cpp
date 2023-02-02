@@ -14,16 +14,13 @@
 
 using namespace hermes;
 
-using llvh::cast;
-using llvh::dyn_cast;
-using llvh::isa;
-
 BasicBlock *IRBuilder::createBasicBlock(Function *Parent) {
   assert(Parent && "Invalid insertion point");
   return new BasicBlock(Parent);
 }
 
 Function *IRBuilder::createFunction(
+    ScopeDesc *scopeDesc,
     Identifier OriginalName,
     Function::DefinitionKind definitionKind,
     bool strictMode,
@@ -39,6 +36,7 @@ Function *IRBuilder::createFunction(
   }
   return new Function(
       M,
+      scopeDesc,
       OriginalName,
       definitionKind,
       strictMode,
@@ -49,6 +47,7 @@ Function *IRBuilder::createFunction(
 }
 
 GeneratorFunction *IRBuilder::createGeneratorFunction(
+    ScopeDesc *scopeDesc,
     Identifier OriginalName,
     Function::DefinitionKind definitionKind,
     bool strictMode,
@@ -62,6 +61,7 @@ GeneratorFunction *IRBuilder::createGeneratorFunction(
   }
   return new GeneratorFunction(
       M,
+      scopeDesc,
       OriginalName,
       definitionKind,
       strictMode,
@@ -72,6 +72,7 @@ GeneratorFunction *IRBuilder::createGeneratorFunction(
 }
 
 GeneratorInnerFunction *IRBuilder::createGeneratorInnerFunction(
+    ScopeDesc *scopeDesc,
     Identifier OriginalName,
     Function::DefinitionKind definitionKind,
     bool strictMode,
@@ -84,6 +85,7 @@ GeneratorInnerFunction *IRBuilder::createGeneratorInnerFunction(
   }
   return new GeneratorInnerFunction(
       M,
+      scopeDesc,
       OriginalName,
       definitionKind,
       strictMode,
@@ -92,19 +94,15 @@ GeneratorInnerFunction *IRBuilder::createGeneratorInnerFunction(
       insertBefore);
 }
 
-ExternalScope *IRBuilder::createExternalScope(
-    Function *function,
-    int32_t depth) {
-  return new ExternalScope(function, depth);
-}
-
 Function *IRBuilder::createTopLevelFunction(
+    ScopeDesc *scopeDesc,
     bool strictMode,
     SourceVisibility sourceVisibility,
     SMRange sourceRange) {
   // Notice that this synthesized name is not a legal javascript name and
   // can't collide with functions in the processed program.
   return createFunction(
+      scopeDesc,
       "global",
       Function::DefinitionKind::ES5Function,
       strictMode,
@@ -114,7 +112,8 @@ Function *IRBuilder::createTopLevelFunction(
 }
 
 Function *IRBuilder::createFunction(
-    StringRef OriginalName,
+    ScopeDesc *scopeDesc,
+    llvh::StringRef OriginalName,
     Function::DefinitionKind definitionKind,
     bool strictMode,
     SourceVisibility sourceVisibility,
@@ -124,6 +123,7 @@ Function *IRBuilder::createFunction(
   Identifier OrigIden =
       OriginalName.empty() ? Identifier{} : createIdentifier(OriginalName);
   return createFunction(
+      scopeDesc,
       OrigIden,
       definitionKind,
       strictMode,
@@ -134,6 +134,7 @@ Function *IRBuilder::createFunction(
 }
 
 AsyncFunction *IRBuilder::createAsyncFunction(
+    ScopeDesc *scopeDesc,
     Identifier OriginalName,
     Function::DefinitionKind definitionKind,
     bool strictMode,
@@ -147,6 +148,7 @@ AsyncFunction *IRBuilder::createAsyncFunction(
   }
   return new AsyncFunction(
       M,
+      scopeDesc,
       OriginalName,
       definitionKind,
       strictMode,
@@ -162,7 +164,7 @@ GlobalObjectProperty *IRBuilder::createGlobalObjectProperty(
   return M->addGlobalProperty(name, declared);
 }
 GlobalObjectProperty *IRBuilder::createGlobalObjectProperty(
-    StringRef name,
+    llvh::StringRef name,
     bool declared) {
   return createGlobalObjectProperty(
       M->getContext().getIdentifier(name), declared);
@@ -172,21 +174,21 @@ Parameter *IRBuilder::createParameter(Function *Parent, Identifier Name) {
   return new Parameter(Parent, Name);
 }
 
-Parameter *IRBuilder::createParameter(Function *Parent, StringRef Name) {
+Parameter *IRBuilder::createParameter(Function *Parent, llvh::StringRef Name) {
   return createParameter(Parent, createIdentifier(Name));
 }
 
 Variable *IRBuilder::createVariable(
-    VariableScope *Parent,
+    ScopeDesc *Parent,
     Variable::DeclKind declKind,
     Identifier Name) {
   return new Variable(Parent, declKind, Name);
 }
 
 Variable *IRBuilder::createVariable(
-    VariableScope *Parent,
+    ScopeDesc *Parent,
     Variable::DeclKind declKind,
-    StringRef Name) {
+    llvh::StringRef Name) {
   return createVariable(Parent, declKind, createIdentifier(Name));
 }
 
@@ -207,7 +209,11 @@ LiteralNumber *IRBuilder::getLiteralNaN() {
   return M->getLiteralNumber(std::numeric_limits<double>::quiet_NaN());
 }
 
-LiteralString *IRBuilder::getLiteralString(StringRef value) {
+LiteralBigInt *IRBuilder::getLiteralBigInt(UniqueString *value) {
+  return M->getLiteralBigInt(value);
+}
+
+LiteralString *IRBuilder::getLiteralString(llvh::StringRef value) {
   Identifier Iden = createIdentifier(value);
   return getLiteralString(Iden);
 }
@@ -240,7 +246,7 @@ EmptySentinel *IRBuilder::getEmptySentinel() {
   return M->getEmptySentinel();
 }
 
-Identifier IRBuilder::createIdentifier(StringRef str) {
+Identifier IRBuilder::createIdentifier(llvh::StringRef str) {
   return M->getContext().getIdentifier(str);
 }
 
@@ -300,7 +306,7 @@ TryEndInst *IRBuilder::createTryEndInst() {
   return I;
 }
 
-AllocStackInst *IRBuilder::createAllocStackInst(StringRef varName) {
+AllocStackInst *IRBuilder::createAllocStackInst(llvh::StringRef varName) {
   Identifier Iden = createIdentifier(varName);
   return createAllocStackInst(Iden);
 }
@@ -317,6 +323,12 @@ AsNumberInst *IRBuilder::createAsNumberInst(Value *val) {
   return ANI;
 }
 
+AsNumericInst *IRBuilder::createAsNumericInst(Value *val) {
+  auto *ANI = new AsNumericInst(val);
+  insert(ANI);
+  return ANI;
+}
+
 AsInt32Inst *IRBuilder::createAsInt32Inst(Value *val) {
   auto *AII = new AsInt32Inst(val);
   insert(AII);
@@ -329,14 +341,24 @@ AddEmptyStringInst *IRBuilder::createAddEmptyStringInst(Value *val) {
   return I;
 }
 
-CreateFunctionInst *IRBuilder::createCreateFunctionInst(Function *code) {
-  auto CFI = new CreateFunctionInst(code);
+CreateScopeInst *IRBuilder::createCreateScopeInst(ScopeDesc *scopeDesc) {
+  auto CII = new CreateScopeInst(scopeDesc);
+  insert(CII);
+  return CII;
+}
+
+CreateFunctionInst *IRBuilder::createCreateFunctionInst(
+    Function *code,
+    ScopeCreationInst *environment) {
+  auto CFI = new CreateFunctionInst(code, environment);
   insert(CFI);
   return CFI;
 }
 
-LoadFrameInst *IRBuilder::createLoadFrameInst(Variable *ptr) {
-  auto LI = new LoadFrameInst(ptr);
+LoadFrameInst *IRBuilder::createLoadFrameInst(
+    Variable *ptr,
+    ScopeCreationInst *scope) {
+  auto LI = new LoadFrameInst(ptr, scope);
   insert(LI);
   return LI;
 }
@@ -349,8 +371,9 @@ LoadStackInst *IRBuilder::createLoadStackInst(AllocStackInst *ptr) {
 
 StoreFrameInst *IRBuilder::createStoreFrameInst(
     Value *storedValue,
-    Variable *ptr) {
-  auto SI = new StoreFrameInst(storedValue, ptr);
+    Variable *ptr,
+    ScopeCreationInst *scope) {
+  auto SI = new StoreFrameInst(storedValue, ptr, scope);
   insert(SI);
   return SI;
 }
@@ -364,19 +387,22 @@ StoreStackInst *IRBuilder::createStoreStackInst(
 }
 
 CallInst *IRBuilder::createCallInst(
+    LiteralString *textifiedCallee,
     Value *callee,
     Value *thisValue,
     ArrayRef<Value *> args) {
-  auto CI = new CallInst(ValueKind::CallInstKind, callee, thisValue, args);
+  auto CI = new CallInst(
+      ValueKind::CallInstKind, textifiedCallee, callee, thisValue, args);
   insert(CI);
   return CI;
 }
 
 HBCCallNInst *IRBuilder::createHBCCallNInst(
+    LiteralString *textifiedCallee,
     Value *callee,
     Value *thisValue,
     ArrayRef<Value *> args) {
-  auto CI = new HBCCallNInst(callee, thisValue, args);
+  auto CI = new HBCCallNInst(textifiedCallee, callee, thisValue, args);
   insert(CI);
   return CI;
 }
@@ -484,27 +510,27 @@ StoreGetterSetterInst *IRBuilder::createStoreGetterSetterInst(
 
 DeletePropertyInst *IRBuilder::createDeletePropertyInst(
     Value *object,
-    StringRef property) {
+    llvh::StringRef property) {
   Identifier Iden = createIdentifier(property);
   return createDeletePropertyInst(object, Iden);
 }
 
 LoadPropertyInst *IRBuilder::createLoadPropertyInst(
     Value *object,
-    StringRef property) {
+    llvh::StringRef property) {
   Identifier Iden = createIdentifier(property);
   return createLoadPropertyInst(object, Iden);
 }
 
 TryLoadGlobalPropertyInst *IRBuilder::createTryLoadGlobalPropertyInst(
-    StringRef property) {
+    llvh::StringRef property) {
   return createTryLoadGlobalPropertyInst(createIdentifier(property));
 }
 
 StorePropertyInst *IRBuilder::createStorePropertyInst(
     Value *storedValue,
     Value *object,
-    StringRef property) {
+    llvh::StringRef property) {
   Identifier Iden = createIdentifier(property);
   return createStorePropertyInst(storedValue, object, Iden);
 }
@@ -718,8 +744,10 @@ SaveAndYieldInst *IRBuilder::createSaveAndYieldInst(
   return I;
 }
 
-CreateGeneratorInst *IRBuilder::createCreateGeneratorInst(Function *innerFn) {
-  auto *I = new CreateGeneratorInst(innerFn);
+CreateGeneratorInst *IRBuilder::createCreateGeneratorInst(
+    Function *innerFn,
+    ScopeCreationInst *environment) {
+  auto *I = new CreateGeneratorInst(innerFn, environment);
   insert(I);
   return I;
 }
@@ -737,8 +765,9 @@ ResumeGeneratorInst *IRBuilder::createResumeGeneratorInst(Value *isReturn) {
 }
 
 HBCResolveEnvironment *IRBuilder::createHBCResolveEnvironment(
-    VariableScope *scope) {
-  auto RSC = new HBCResolveEnvironment(scope);
+    ScopeDesc *originScopeDesc,
+    ScopeDesc *targetScopeDesc) {
+  auto RSC = new HBCResolveEnvironment(originScopeDesc, targetScopeDesc);
   insert(RSC);
   return RSC;
 }
@@ -791,8 +820,9 @@ HBCLoadParamInst *IRBuilder::createHBCLoadParamInst(LiteralNumber *value) {
   return inst;
 }
 
-HBCCreateEnvironmentInst *IRBuilder::createHBCCreateEnvironmentInst() {
-  auto inst = new HBCCreateEnvironmentInst();
+HBCCreateEnvironmentInst *IRBuilder::createHBCCreateEnvironmentInst(
+    ScopeDesc *scopeDesc) {
+  auto inst = new HBCCreateEnvironmentInst(scopeDesc);
   insert(inst);
   return inst;
 }
@@ -879,10 +909,12 @@ CallIntrinsicInst *IRBuilder::createCallIntrinsicInst(
 #endif
 
 HBCCallDirectInst *IRBuilder::createHBCCallDirectInst(
+    LiteralString *textifiedCallee,
     Function *callee,
     Value *thisValue,
     ArrayRef<Value *> arguments) {
-  auto *inst = new HBCCallDirectInst(callee, thisValue, arguments);
+  auto *inst =
+      new HBCCallDirectInst(textifiedCallee, callee, thisValue, arguments);
   insert(inst);
   return inst;
 }
@@ -991,6 +1023,7 @@ void IRBuilder::insert(Instruction *Inst) {
   Inst->setStatementIndex(statement);
 
   Inst->setLocation(Location);
+  Inst->setSourceLevelScope(CurrentSourceLevelScope);
 
   return justInsert(Inst);
 }
@@ -1067,6 +1100,7 @@ Instruction *IRBuilder::cloneInst(
       llvm_unreachable("invalid kind");
   }
 
+  inst->setSourceLevelScope(CurrentSourceLevelScope);
   justInsert(inst);
   return inst;
 }

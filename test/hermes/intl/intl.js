@@ -90,7 +90,10 @@ testServiceGetterTypes(Intl.NumberFormat, 'format');
 testServiceMethodTypes(Intl.NumberFormat, 'formatToParts');
 testServiceMethodTypes(Intl.NumberFormat, 'resolvedOptions');
 assert(typeof Intl.NumberFormat(12345.67).format() === 'string');
-testParts(Intl.NumberFormat(12345.67).formatToParts());
+// TODO: Apple Intl currently does not implement NumberFormat.formatToParts.
+if(Intl.NumberFormat.prototype.formatToParts){
+  testParts(Intl.NumberFormat(12345.67).formatToParts());
+}
 
 // Verify the shared logic around style.
 
@@ -121,3 +124,7 @@ assert(typeof new Number().toLocaleString() === 'string');
 assert(typeof 'a'.localeCompare('b') === 'number');
 assert(typeof 'A'.toLocaleLowerCase() === 'string');
 assert(typeof 'a'.toLocaleUpperCase() === 'string');
+
+// Validate that locale normalization can handle ill-formed input.
+try { Intl.Collator({length: 0xffffffffffffffff}); }
+catch (e) { assert(e.message === "Incorrect object type") }

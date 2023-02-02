@@ -74,6 +74,8 @@ std::unique_ptr<Buffer> SimpleBytecodeBuilder::generateBytecodeBuffer() {
       0,
       0,
       0,
+      0,
+      0,
       debugOffset,
       options};
   // Write BytecodeFileHeader to the buffer.
@@ -105,7 +107,7 @@ std::unique_ptr<Buffer> SimpleBytecodeBuilder::generateBytecodeBuffer() {
   // Pad by 4 bytes.
   bytecode.resize(llvh::alignTo(bytecode.size(), 4));
   // Write an empty debug info header.
-  DebugInfoHeader debugInfoHeader{0, 0, 0, 0, 0};
+  DebugInfoHeader debugInfoHeader{0, 0, 0, 0, 0, 0, 0};
   appendStructToBytecode(bytecode, debugInfoHeader);
   // Add the bytecode hash.
   appendStructToBytecode(

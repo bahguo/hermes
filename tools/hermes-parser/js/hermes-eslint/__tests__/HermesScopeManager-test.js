@@ -10,80 +10,11 @@
 
 'use strict';
 
-import type {DefinitionTypeType, ScopeTypeType} from '../src';
+import type {ScopeManager} from '../src/scope-manager/ScopeManager';
 
 import {parseForESLint} from '../src';
 import {DefinitionType, ScopeType} from '../src';
-
-/**
- * Utility to check that scope manager produces correct scopes and variables.
- *
- * Scopes are passed as an array of objects, starting with the module scope,
- * where each object has a scope type and array of variables, Each variable is
- * an object with a name, optional reference count, and optional definition type.
- */
-function verifyHasScopes(
-  code: string,
-  expectedScopes: $ReadOnlyArray<{
-    type: ScopeTypeType,
-    variables: $ReadOnlyArray<{
-      name: string,
-      type: ?DefinitionTypeType,
-      referenceCount: ?number,
-    }>,
-  }>,
-) {
-  const {scopeManager} = parseForESLint(code);
-
-  // report as an array so that it's easier to debug the tests
-  // otherwise you get a cryptic failure that just says "expected 1 but received 2"
-  expect(scopeManager.scopes.map(s => s.type)).toEqual([
-    // Global scope (at index 0 of actual scopes) is not passed as an expected scope
-    'global',
-    ...expectedScopes.map(s => s.type),
-  ]);
-
-  for (let i = 0; i < expectedScopes.length; i++) {
-    const actualScope = scopeManager.scopes[i + 1];
-    const expectedScope = expectedScopes[i];
-
-    expect(actualScope.type).toEqual(expectedScope.type);
-    // report as an object so that it's easier to debug the tests
-    expect({
-      type: actualScope.type,
-      variables: actualScope.variables.map(v => v.name),
-    }).toEqual({
-      type: actualScope.type,
-      variables: expectedScope.variables.map(v => v.name),
-    });
-
-    for (let j = 0; j < expectedScope.variables.length; j++) {
-      const expectedVariable = expectedScope.variables[j];
-      const actualVariable = actualScope.variables[j];
-
-      expect(actualVariable.name).toEqual(expectedVariable.name);
-
-      if (expectedVariable.referenceCount != null) {
-        const cnt = expectedVariable.referenceCount;
-        // report as an object so that it's easier to debug the tests
-        expect({
-          type: expectedVariable.type,
-          name: actualVariable.name,
-          refCount: actualVariable.references.length,
-        }).toEqual({
-          type: expectedVariable.type,
-          name: actualVariable.name,
-          refCount: cnt,
-        });
-      }
-
-      if (expectedVariable.type != null) {
-        expect(actualVariable.defs).toHaveLength(1);
-        expect(actualVariable.defs[0].type).toEqual(expectedVariable.type);
-      }
-    }
-  }
-}
+import {verifyHasScopes} from '../__test_utils__/verifyHasScopes';
 
 describe('Source type option', () => {
   test('script', () => {
@@ -114,8 +45,12 @@ describe('Source type option', () => {
 });
 
 describe('Type and value references', () => {
-  function verifyValueAndTypeReferences(code, name, definitionType) {
-    it(code, () => {
+  function verifyValueAndTypeReferences(
+    code: string,
+    name: string,
+    definitionType: 'ClassName' | 'Enum',
+  ) {
+    test(code, () => {
       const {scopeManager} = parseForESLint(code);
 
       // Verify that scope contains a single variable
@@ -158,7 +93,7 @@ describe('Type and value references', () => {
 });
 
 describe('Type definitions', () => {
-  function verifyTypeDefinition(scopeManager) {
+  function verifyTypeDefinition(scopeManager: ScopeManager) {
     // Verify there is a module scope, variable, and reference
     expect(scopeManager.scopes).toHaveLength(2);
 
@@ -183,7 +118,7 @@ describe('Type definitions', () => {
     expect(variable.defs[0].type).toEqual(DefinitionType.Type);
   }
 
-  test('TypeAlias', () => {
+  describe('TypeAlias', () => {
     const {scopeManager} = parseForESLint(`
       type T = number;
       (1: T);
@@ -191,7 +126,7 @@ describe('Type definitions', () => {
     verifyTypeDefinition(scopeManager);
   });
 
-  test('OpaqueType', () => {
+  describe('OpaqueType', () => {
     const {scopeManager} = parseForESLint(`
       opaque type T = number;
       (1: T);
@@ -199,7 +134,7 @@ describe('Type definitions', () => {
     verifyTypeDefinition(scopeManager);
   });
 
-  test('InterfaceDeclaration', () => {
+  describe('InterfaceDeclaration', () => {
     const {scopeManager} = parseForESLint(`
       interface T {}
       (1: T);
@@ -280,7 +215,10 @@ describe('QualifiedTypeIdentifier', () => {
 });
 
 describe('Identifiers not mistakenly treated as references', () => {
-  function verifyHasReferences(code, references) {
+  function verifyHasReferences(
+    code: string,
+    references: Array<{count: number, name: string}>,
+  ) {
     const {scopeManager} = parseForESLint(code);
 
     // Module scope should contain variables with the given reference counts
@@ -302,7 +240,7 @@ describe('Identifiers not mistakenly treated as references', () => {
     }
   }
 
-  test('Enum body', () => {
+  describe('Enum body', () => {
     verifyHasReferences(
       `
         import Foo from 'Foo';
@@ -317,7 +255,7 @@ describe('Identifiers not mistakenly treated as references', () => {
     );
   });
 
-  test('QualifiedTypeIdentifier', () => {
+  describe('QualifiedTypeIdentifier', () => {
     verifyHasReferences(
       `
         import * as Foo from 'Foo';
@@ -334,7 +272,7 @@ describe('Identifiers not mistakenly treated as references', () => {
     );
   });
 
-  test('ObjectTypeProperty', () => {
+  describe('ObjectTypeProperty', () => {
     verifyHasReferences(
       `
         import Foo from 'Foo';
@@ -348,7 +286,7 @@ describe('Identifiers not mistakenly treated as references', () => {
     );
   });
 
-  test('ObjectTypeIndexer', () => {
+  describe('ObjectTypeIndexer', () => {
     verifyHasReferences(
       `
         import Foo from 'Foo';
@@ -362,7 +300,7 @@ describe('Identifiers not mistakenly treated as references', () => {
     );
   });
 
-  test('ObjectTypeInternalSlot', () => {
+  describe('ObjectTypeInternalSlot', () => {
     verifyHasReferences(
       `
         import Foo from 'Foo';
@@ -376,7 +314,7 @@ describe('Identifiers not mistakenly treated as references', () => {
     );
   });
 
-  test('FunctionTypeParam', () => {
+  describe('FunctionTypeParam', () => {
     verifyHasReferences(
       `
         import Foo from 'Foo';
@@ -390,7 +328,7 @@ describe('Identifiers not mistakenly treated as references', () => {
     );
   });
 
-  test('MemberExpression', () => {
+  describe('MemberExpression', () => {
     verifyHasReferences(
       `
         import Foo from 'Foo';
@@ -404,7 +342,7 @@ describe('Identifiers not mistakenly treated as references', () => {
     );
   });
 
-  test('OptionalMemberExpression', () => {
+  describe('OptionalMemberExpression', () => {
     verifyHasReferences(
       `
         import Foo from 'Foo';
@@ -418,7 +356,7 @@ describe('Identifiers not mistakenly treated as references', () => {
     );
   });
 
-  test('CallExpression', () => {
+  describe('CallExpression', () => {
     verifyHasReferences(
       `
         import Foo from 'Foo';
@@ -436,7 +374,7 @@ describe('Identifiers not mistakenly treated as references', () => {
     );
   });
 
-  test('OptionalCallExpression', () => {
+  describe('OptionalCallExpression', () => {
     verifyHasReferences(
       `
         import Foo from 'Foo';
@@ -454,7 +392,7 @@ describe('Identifiers not mistakenly treated as references', () => {
     );
   });
 
-  test('ClassProperty', () => {
+  describe('PropertyDefinition', () => {
     verifyHasReferences(
       `
         import Foo from 'Foo';
@@ -505,7 +443,7 @@ describe('Type parameters', () => {
     expect(scopeManager.scopes[1].type).toEqual(ScopeType.Module);
   });
 
-  test('TypeAlias', () => {
+  describe('TypeAlias', () => {
     // Type alias contains type parameter in Type scope
     verifyHasScopes(`type Foo<T> = T;`, [
       {
@@ -531,7 +469,7 @@ describe('Type parameters', () => {
     ]);
   });
 
-  test('OpaqueType', () => {
+  describe('OpaqueType', () => {
     // Opaque type contains type parameter in Type scope
     verifyHasScopes(`opaque type Foo<T> = T;`, [
       {
@@ -557,7 +495,7 @@ describe('Type parameters', () => {
     ]);
   });
 
-  test('InterfaceDeclaration', () => {
+  describe('InterfaceDeclaration', () => {
     // Interface declaration contains type parameter in Type scope
     verifyHasScopes(`interface Foo<T> { prop: T }`, [
       {
@@ -583,7 +521,7 @@ describe('Type parameters', () => {
     ]);
   });
 
-  test('FunctionTypeAnnotation', () => {
+  describe('FunctionTypeAnnotation', () => {
     // FunctionTypeAnnotation contains type parameter in Type scope
     verifyHasScopes(`(1: <T>(T) => void);`, [
       {
@@ -603,7 +541,7 @@ describe('Type parameters', () => {
     ]);
   });
 
-  test('DeclareClass', () => {
+  describe('DeclareClass', () => {
     // DeclareClass contains type parameter in Type scope
     verifyHasScopes(`declare class C<T> { prop: T }`, [
       {
@@ -629,7 +567,7 @@ describe('Type parameters', () => {
     ]);
   });
 
-  test('FunctionDeclaration', () => {
+  describe('FunctionDeclaration', () => {
     // Function contains type parameter in Function scope alongside value parameter
     verifyHasScopes(
       `
@@ -672,7 +610,7 @@ describe('Type parameters', () => {
     );
   });
 
-  test('FunctionExpression', () => {
+  describe('FunctionExpression', () => {
     verifyHasScopes(
       `
         (function foo<T>(x) {
@@ -718,7 +656,7 @@ describe('Type parameters', () => {
     );
   });
 
-  test('Class', () => {
+  describe('Class', () => {
     // Class contains type parameter in Class scope
     verifyHasScopes(
       `
@@ -758,7 +696,7 @@ describe('Type parameters', () => {
 });
 
 describe('Flow type nodes in Patterns', () => {
-  test('Identifier', () => {
+  describe('Identifier', () => {
     verifyHasScopes(
       `
         type T = string;
@@ -796,7 +734,7 @@ describe('Flow type nodes in Patterns', () => {
     );
   });
 
-  test('ArrayPattern', () => {
+  describe('ArrayPattern', () => {
     verifyHasScopes(
       `
         type T = string;
@@ -834,7 +772,7 @@ describe('Flow type nodes in Patterns', () => {
     );
   });
 
-  test('ObjectPattern', () => {
+  describe('ObjectPattern', () => {
     verifyHasScopes(
       `
         type T = string;
@@ -872,7 +810,7 @@ describe('Flow type nodes in Patterns', () => {
     );
   });
 
-  test('RestElement', () => {
+  describe('RestElement', () => {
     verifyHasScopes(
       `
         type T = string;
@@ -904,7 +842,7 @@ describe('Flow type nodes in Patterns', () => {
     );
   });
 
-  test('Nested patterns', () => {
+  describe('Nested patterns', () => {
     verifyHasScopes(
       `
         type T = string;
@@ -943,7 +881,7 @@ describe('Flow type nodes in Patterns', () => {
 });
 
 describe('Declare statements', () => {
-  test('DeclareTypeAlias', () => {
+  describe('DeclareTypeAlias', () => {
     verifyHasScopes(
       `
         declare type T = number;
@@ -964,7 +902,7 @@ describe('Declare statements', () => {
     );
   });
 
-  test('DeclareOpaqueType', () => {
+  describe('DeclareOpaqueType', () => {
     verifyHasScopes(
       `
         declare opaque type T: number;
@@ -985,7 +923,7 @@ describe('Declare statements', () => {
     );
   });
 
-  test('DeclareInterface', () => {
+  describe('DeclareInterface', () => {
     verifyHasScopes(
       `
         declare interface I {};
@@ -1006,7 +944,7 @@ describe('Declare statements', () => {
     );
   });
 
-  test('DeclareVariable', () => {
+  describe('DeclareVariable', () => {
     verifyHasScopes(`declare var Foo: typeof Foo;`, [
       {
         type: ScopeType.Module,
@@ -1021,7 +959,7 @@ describe('Declare statements', () => {
     ]);
   });
 
-  test('DeclareFunction', () => {
+  describe('DeclareFunction', () => {
     verifyHasScopes(
       `
         declare function Foo(): void;
@@ -1042,7 +980,7 @@ describe('Declare statements', () => {
     );
   });
 
-  test('DeclareClass', () => {
+  describe('DeclareClass', () => {
     verifyHasScopes(
       `
         declare class C {}
@@ -1063,7 +1001,7 @@ describe('Declare statements', () => {
     );
   });
 
-  test('DeclareModuleExports', () => {
+  describe('DeclareModuleExports', () => {
     verifyHasScopes(
       `
         import type {Foo} from 'foo';
@@ -1084,7 +1022,7 @@ describe('Declare statements', () => {
     );
   });
 
-  test('DeclareModule', () => {
+  describe('DeclareModule', () => {
     verifyHasScopes(
       `
         declare module Foo {
@@ -1152,7 +1090,7 @@ describe('Declare statements', () => {
     expect(references[1].resolved).toBe(null);
   });
 
-  test('DeclareModule DeclareModuleExports', () => {
+  describe('DeclareModule DeclareModuleExports', () => {
     verifyHasScopes(
       `
         import {module, exports} from 'Foo';
@@ -1191,7 +1129,7 @@ describe('Declare statements', () => {
     );
   });
 
-  test('DeclareModule DeclareExportDeclaration', () => {
+  describe('DeclareModule DeclareExportDeclaration', () => {
     // Verify that all declare export nodes introduce a definition, with a single
     // additional reference in the declare module body.
     verifyHasScopes(
@@ -1254,7 +1192,7 @@ describe('Declare statements', () => {
 });
 
 describe('Flow specific properties visited on non-Flow nodes', () => {
-  test('Function', () => {
+  describe('Function', () => {
     // Return type is visited, but predicate is NOT visited
     verifyHasScopes(
       `
@@ -1297,7 +1235,7 @@ describe('Flow specific properties visited on non-Flow nodes', () => {
     );
   });
 
-  test('Class', () => {
+  describe('Class', () => {
     // Supertype parameters and implements are visited
     verifyHasScopes(
       `
@@ -1351,8 +1289,8 @@ describe('Flow specific properties visited on non-Flow nodes', () => {
   });
 });
 
-describe('ClassProperty', () => {
-  it('ClassProperty', () => {
+describe('PropertyDefinition', () => {
+  describe('PropertyDefinition', () => {
     verifyHasScopes(
       `
         import Foo from 'Foo';
@@ -1408,7 +1346,7 @@ describe('ClassProperty', () => {
 });
 
 describe('FunctionExpression', () => {
-  test('Function name not referenced in return type', () => {
+  describe('Function name not referenced in return type', () => {
     verifyHasScopes(`(function foo(): foo {});`, [
       {
         type: ScopeType.Module,
@@ -1501,7 +1439,7 @@ describe('FunctionExpression', () => {
 });
 
 describe('This type annotation', () => {
-  test('Is not treated as a parameter', () => {
+  describe('Is not treated as a parameter', () => {
     verifyHasScopes(
       `
         function foo(this: string, param: number) {
@@ -1538,7 +1476,7 @@ describe('This type annotation', () => {
     );
   });
 
-  test('Type annotation is still visited', () => {
+  describe('Type annotation is still visited', () => {
     verifyHasScopes(
       `
         type T = string;
@@ -1573,11 +1511,140 @@ describe('This type annotation', () => {
       ],
     );
   });
+
+  describe('this annotation can reference generics', () => {
+    describe('function decl', () => {
+      verifyHasScopes(
+        `
+          function foo<This>(this: This) {}
+        `,
+        [
+          {
+            type: ScopeType.Module,
+            variables: [
+              {
+                name: 'foo',
+                type: DefinitionType.FunctionName,
+                referenceCount: 0,
+              },
+            ],
+          },
+          {
+            type: ScopeType.Function,
+            variables: [
+              {
+                name: 'arguments',
+                type: null,
+                referenceCount: 0,
+              },
+              {
+                name: 'This',
+                type: DefinitionType.TypeParameter,
+                referenceCount: 1,
+              },
+            ],
+          },
+        ],
+      );
+    });
+    describe('function expr', () => {
+      verifyHasScopes(
+        `
+          const foo = function <This>(this: This) {};
+        `,
+        [
+          {
+            type: ScopeType.Module,
+            variables: [
+              {
+                name: 'foo',
+                type: DefinitionType.Variable,
+                referenceCount: 1,
+              },
+            ],
+          },
+          {
+            type: ScopeType.Function,
+            variables: [
+              {
+                name: 'arguments',
+                type: null,
+                referenceCount: 0,
+              },
+              {
+                name: 'This',
+                type: DefinitionType.TypeParameter,
+                referenceCount: 1,
+              },
+            ],
+          },
+        ],
+      );
+    });
+    describe('function type1', () => {
+      verifyHasScopes(
+        `
+          type foo = <This>(this: This) => void;
+        `,
+        [
+          {
+            type: ScopeType.Module,
+            variables: [
+              {
+                name: 'foo',
+                type: DefinitionType.Type,
+                referenceCount: 0,
+              },
+            ],
+          },
+          {
+            type: ScopeType.Type,
+            variables: [
+              {
+                name: 'This',
+                type: DefinitionType.TypeParameter,
+                referenceCount: 1,
+              },
+            ],
+          },
+        ],
+      );
+    });
+    describe('function type2', () => {
+      verifyHasScopes(
+        `
+          type foo<This> = (this: This) => void;
+        `,
+        [
+          {
+            type: ScopeType.Module,
+            variables: [
+              {
+                name: 'foo',
+                type: DefinitionType.Type,
+                referenceCount: 0,
+              },
+            ],
+          },
+          {
+            type: ScopeType.Type,
+            variables: [
+              {
+                name: 'This',
+                type: DefinitionType.TypeParameter,
+                referenceCount: 1,
+              },
+            ],
+          },
+        ],
+      );
+    });
+  });
 });
 
 describe('Imports', () => {
   describe('default', () => {
-    it('import type', () => {
+    describe('import type', () => {
       verifyHasScopes(
         `
           import type RefValue from 'foo';
@@ -1615,7 +1682,7 @@ describe('Imports', () => {
       );
     });
 
-    it('import typeof', () => {
+    describe('import typeof', () => {
       verifyHasScopes(
         `
           import typeof RefValue from 'foo';
@@ -1653,7 +1720,7 @@ describe('Imports', () => {
       );
     });
 
-    it('import value', () => {
+    describe('import value', () => {
       verifyHasScopes(
         `
           import RefValue from 'foo';
@@ -1694,7 +1761,7 @@ describe('Imports', () => {
 
   describe('named', () => {
     describe('top-level', () => {
-      it('import type', () => {
+      describe('import type', () => {
         verifyHasScopes(
           `
             import type {RefValue} from 'foo';
@@ -1732,7 +1799,7 @@ describe('Imports', () => {
         );
       });
 
-      it('import typeof', () => {
+      describe('import typeof', () => {
         verifyHasScopes(
           `
             import typeof {RefValue} from 'foo';
@@ -1770,7 +1837,7 @@ describe('Imports', () => {
         );
       });
 
-      it('import value', () => {
+      describe('import value', () => {
         verifyHasScopes(
           `
             import {RefValue} from 'foo';
@@ -1810,7 +1877,7 @@ describe('Imports', () => {
     });
 
     describe('inline', () => {
-      it('import type', () => {
+      describe('import type', () => {
         verifyHasScopes(
           `
             import {type RefValue} from 'foo';
@@ -1848,7 +1915,7 @@ describe('Imports', () => {
         );
       });
 
-      it('import typeof', () => {
+      describe('import typeof', () => {
         verifyHasScopes(
           `
             import {typeof RefValue} from 'foo';
@@ -1888,7 +1955,7 @@ describe('Imports', () => {
     });
   });
 
-  it('namespace', () => {
+  describe('namespace', () => {
     verifyHasScopes(
       `
         import * as RefValue from 'foo';

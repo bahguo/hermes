@@ -531,19 +531,19 @@ TEST_F(ObjectModelTest, SimpleDeleteTest) {
 TEST_F(ObjectModelTest, EnvironmentSmokeTest) {
   auto nullParent = runtime.makeHandle<Environment>(nullptr);
   auto parentEnv = runtime.makeHandle<Environment>(
-      *Environment::create(runtime, nullParent, 2));
+      Environment::create(runtime, nullParent, 2));
 
   ASSERT_EQ(nullptr, parentEnv->getParentEnvironment(runtime));
   ASSERT_TRUE(parentEnv->slot(0).isUndefined());
   ASSERT_TRUE(parentEnv->slot(1).isUndefined());
 
   parentEnv->slot(0).setNonPtr(
-      HermesValue::encodeBoolValue(true), &runtime.getHeap());
+      HermesValue::encodeBoolValue(true), runtime.getHeap());
   ASSERT_TRUE(parentEnv->slot(0).getBool());
 
   // Create a child environment.
   auto env = runtime.makeHandle<Environment>(
-      *Environment::create(runtime, parentEnv, 2));
+      Environment::create(runtime, parentEnv, 2));
 
   ASSERT_EQ(parentEnv.get(), env->getParentEnvironment(runtime));
   ASSERT_TRUE(env->slot(0).isUndefined());

@@ -11,12 +11,11 @@ set(APITestsSources
   HeapSnapshotAPITest.cpp
   SynthTraceTest.cpp
   SynthTraceParserTest.cpp
+  SynthTraceSerializationTest.cpp
+  TimerStatsTest.cpp
   )
 set(APISegmentTestCompileSources
   SegmentTestCompile.cpp
-  )
-set(SamplingProfilerSources
-  SamplingProfilerPosixHermesAPITest.cpp
   )
 
 set(HERMES_LINK_COMPONENTS LLVHSupport)
@@ -33,12 +32,7 @@ set(LLVM_ENABLE_RTTI ON)
 
 add_hermes_unittest(APITests ${APITestsSources})
 
-# TODO(T111467508): The synth trace serialization tests are currently disabled
-# because of build issues. We should find a way to re-enable them.
-target_link_libraries(APITests hermesapi compileJS SegmentTestCompile traceInterpreter)
+target_link_libraries(APITests hermesapi compileJS SegmentTestCompile traceInterpreter timerStats)
 
 add_hermes_unittest(APILeanTests APILeanTest.cpp)
 target_link_libraries(APILeanTests hermesapiLean)
-
-add_hermes_unittest(SamplingProfilerTests ${SamplingProfilerSources})
-target_link_libraries(SamplingProfilerTests hermesapiLean hermesVMRuntimeLean)

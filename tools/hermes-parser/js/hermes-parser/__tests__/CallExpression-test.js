@@ -10,67 +10,81 @@
 
 'use strict';
 
+import type {AlignmentCase} from '../__test_utils__/alignment-utils';
+
+import {
+  expectBabelAlignment,
+  expectEspreeAlignment,
+} from '../__test_utils__/alignment-utils';
 import {parseForSnapshot} from '../__test_utils__/parse';
 
 describe('CallExpression', () => {
-  const source = `
-    one();
-    two()();
-    three.four();
-  `;
+  const testCase: AlignmentCase = {
+    code: `
+      one();
+      two()();
+      three.four();
+    `,
+    espree: {expectToFail: false},
+    babel: {expectToFail: false},
+  };
 
   test('ESTree', () => {
-    expect(parseForSnapshot(source)).toMatchInlineSnapshot(`
-      Object {
-        "body": Array [
-          Object {
+    expect(parseForSnapshot(testCase.code)).toMatchInlineSnapshot(`
+      {
+        "body": [
+          {
             "directive": null,
-            "expression": Object {
-              "arguments": Array [],
-              "callee": Object {
+            "expression": {
+              "arguments": [],
+              "callee": {
                 "name": "one",
                 "optional": false,
                 "type": "Identifier",
                 "typeAnnotation": null,
               },
+              "optional": false,
               "type": "CallExpression",
               "typeArguments": null,
             },
             "type": "ExpressionStatement",
           },
-          Object {
+          {
             "directive": null,
-            "expression": Object {
-              "arguments": Array [],
-              "callee": Object {
-                "arguments": Array [],
-                "callee": Object {
+            "expression": {
+              "arguments": [],
+              "callee": {
+                "arguments": [],
+                "callee": {
                   "name": "two",
                   "optional": false,
                   "type": "Identifier",
                   "typeAnnotation": null,
                 },
+                "optional": false,
                 "type": "CallExpression",
                 "typeArguments": null,
               },
+              "optional": false,
               "type": "CallExpression",
               "typeArguments": null,
             },
             "type": "ExpressionStatement",
           },
-          Object {
+          {
             "directive": null,
-            "expression": Object {
-              "arguments": Array [],
-              "callee": Object {
+            "expression": {
+              "arguments": [],
+              "callee": {
                 "computed": false,
-                "object": Object {
+                "object": {
                   "name": "three",
                   "optional": false,
                   "type": "Identifier",
                   "typeAnnotation": null,
                 },
-                "property": Object {
+                "optional": false,
+                "property": {
                   "name": "four",
                   "optional": false,
                   "type": "Identifier",
@@ -78,6 +92,7 @@ describe('CallExpression', () => {
                 },
                 "type": "MemberExpression",
               },
+              "optional": false,
               "type": "CallExpression",
               "typeArguments": null,
             },
@@ -87,6 +102,11 @@ describe('CallExpression', () => {
         "type": "Program",
       }
     `);
+    expectEspreeAlignment(testCase);
+  });
+
+  test('Babel', () => {
+    expectBabelAlignment(testCase);
   });
 });
 
@@ -94,143 +114,116 @@ describe('CallExpression', () => {
 // short-circuit the optional chain
 describe('OptionalCallExpression', () => {
   describe('Without parentheses', () => {
-    const source = `
-      one?.fn();
-      one?.two.fn();
-      one.two?.fn();
-      one.two?.three.fn();
-      one.two?.three?.fn();
+    const testCase: AlignmentCase = {
+      code: `
+        one?.fn();
+        one?.two.fn();
+        one.two?.fn();
+        one.two?.three.fn();
+        one.two?.three?.fn();
 
-      one?.();
-      one?.()();
-      one?.()?.();
+        one?.();
+        one?.()();
+        one?.()?.();
 
-      one?.().two;
-    `;
+        one?.().two;
+      `,
+      espree: {expectToFail: false},
+      babel: {expectToFail: false},
+    };
 
     test('ESTree', () => {
-      expect(parseForSnapshot(source)).toMatchInlineSnapshot(`
-        Object {
-          "body": Array [
-            Object {
+      expect(parseForSnapshot(testCase.code)).toMatchInlineSnapshot(`
+        {
+          "body": [
+            {
               "directive": null,
-              "expression": Object {
-                "arguments": Array [],
-                "callee": Object {
-                  "computed": false,
-                  "object": Object {
-                    "name": "one",
-                    "optional": false,
-                    "type": "Identifier",
-                    "typeAnnotation": null,
-                  },
-                  "optional": true,
-                  "property": Object {
-                    "name": "fn",
-                    "optional": false,
-                    "type": "Identifier",
-                    "typeAnnotation": null,
-                  },
-                  "type": "OptionalMemberExpression",
-                },
-                "optional": false,
-                "type": "OptionalCallExpression",
-                "typeArguments": null,
-              },
-              "type": "ExpressionStatement",
-            },
-            Object {
-              "directive": null,
-              "expression": Object {
-                "arguments": Array [],
-                "callee": Object {
-                  "computed": false,
-                  "object": Object {
+              "expression": {
+                "expression": {
+                  "arguments": [],
+                  "callee": {
                     "computed": false,
-                    "object": Object {
+                    "object": {
                       "name": "one",
                       "optional": false,
                       "type": "Identifier",
                       "typeAnnotation": null,
                     },
                     "optional": true,
-                    "property": Object {
-                      "name": "two",
-                      "optional": false,
-                      "type": "Identifier",
-                      "typeAnnotation": null,
-                    },
-                    "type": "OptionalMemberExpression",
-                  },
-                  "optional": false,
-                  "property": Object {
-                    "name": "fn",
-                    "optional": false,
-                    "type": "Identifier",
-                    "typeAnnotation": null,
-                  },
-                  "type": "OptionalMemberExpression",
-                },
-                "optional": false,
-                "type": "OptionalCallExpression",
-                "typeArguments": null,
-              },
-              "type": "ExpressionStatement",
-            },
-            Object {
-              "directive": null,
-              "expression": Object {
-                "arguments": Array [],
-                "callee": Object {
-                  "computed": false,
-                  "object": Object {
-                    "computed": false,
-                    "object": Object {
-                      "name": "one",
-                      "optional": false,
-                      "type": "Identifier",
-                      "typeAnnotation": null,
-                    },
-                    "property": Object {
-                      "name": "two",
+                    "property": {
+                      "name": "fn",
                       "optional": false,
                       "type": "Identifier",
                       "typeAnnotation": null,
                     },
                     "type": "MemberExpression",
                   },
-                  "optional": true,
-                  "property": Object {
-                    "name": "fn",
-                    "optional": false,
-                    "type": "Identifier",
-                    "typeAnnotation": null,
-                  },
-                  "type": "OptionalMemberExpression",
+                  "optional": false,
+                  "type": "CallExpression",
+                  "typeArguments": null,
                 },
-                "optional": false,
-                "type": "OptionalCallExpression",
-                "typeArguments": null,
+                "type": "ChainExpression",
               },
               "type": "ExpressionStatement",
             },
-            Object {
+            {
               "directive": null,
-              "expression": Object {
-                "arguments": Array [],
-                "callee": Object {
-                  "computed": false,
-                  "object": Object {
+              "expression": {
+                "expression": {
+                  "arguments": [],
+                  "callee": {
                     "computed": false,
-                    "object": Object {
+                    "object": {
                       "computed": false,
-                      "object": Object {
+                      "object": {
                         "name": "one",
                         "optional": false,
                         "type": "Identifier",
                         "typeAnnotation": null,
                       },
-                      "property": Object {
+                      "optional": true,
+                      "property": {
+                        "name": "two",
+                        "optional": false,
+                        "type": "Identifier",
+                        "typeAnnotation": null,
+                      },
+                      "type": "MemberExpression",
+                    },
+                    "optional": false,
+                    "property": {
+                      "name": "fn",
+                      "optional": false,
+                      "type": "Identifier",
+                      "typeAnnotation": null,
+                    },
+                    "type": "MemberExpression",
+                  },
+                  "optional": false,
+                  "type": "CallExpression",
+                  "typeArguments": null,
+                },
+                "type": "ChainExpression",
+              },
+              "type": "ExpressionStatement",
+            },
+            {
+              "directive": null,
+              "expression": {
+                "expression": {
+                  "arguments": [],
+                  "callee": {
+                    "computed": false,
+                    "object": {
+                      "computed": false,
+                      "object": {
+                        "name": "one",
+                        "optional": false,
+                        "type": "Identifier",
+                        "typeAnnotation": null,
+                      },
+                      "optional": false,
+                      "property": {
                         "name": "two",
                         "optional": false,
                         "type": "Identifier",
@@ -239,47 +232,103 @@ describe('OptionalCallExpression', () => {
                       "type": "MemberExpression",
                     },
                     "optional": true,
-                    "property": Object {
-                      "name": "three",
+                    "property": {
+                      "name": "fn",
                       "optional": false,
                       "type": "Identifier",
                       "typeAnnotation": null,
                     },
-                    "type": "OptionalMemberExpression",
+                    "type": "MemberExpression",
                   },
                   "optional": false,
-                  "property": Object {
-                    "name": "fn",
-                    "optional": false,
-                    "type": "Identifier",
-                    "typeAnnotation": null,
-                  },
-                  "type": "OptionalMemberExpression",
+                  "type": "CallExpression",
+                  "typeArguments": null,
                 },
-                "optional": false,
-                "type": "OptionalCallExpression",
-                "typeArguments": null,
+                "type": "ChainExpression",
               },
               "type": "ExpressionStatement",
             },
-            Object {
+            {
               "directive": null,
-              "expression": Object {
-                "arguments": Array [],
-                "callee": Object {
-                  "computed": false,
-                  "object": Object {
+              "expression": {
+                "expression": {
+                  "arguments": [],
+                  "callee": {
                     "computed": false,
-                    "object": Object {
+                    "object": {
                       "computed": false,
-                      "object": Object {
-                        "name": "one",
+                      "object": {
+                        "computed": false,
+                        "object": {
+                          "name": "one",
+                          "optional": false,
+                          "type": "Identifier",
+                          "typeAnnotation": null,
+                        },
+                        "optional": false,
+                        "property": {
+                          "name": "two",
+                          "optional": false,
+                          "type": "Identifier",
+                          "typeAnnotation": null,
+                        },
+                        "type": "MemberExpression",
+                      },
+                      "optional": true,
+                      "property": {
+                        "name": "three",
                         "optional": false,
                         "type": "Identifier",
                         "typeAnnotation": null,
                       },
-                      "property": Object {
-                        "name": "two",
+                      "type": "MemberExpression",
+                    },
+                    "optional": false,
+                    "property": {
+                      "name": "fn",
+                      "optional": false,
+                      "type": "Identifier",
+                      "typeAnnotation": null,
+                    },
+                    "type": "MemberExpression",
+                  },
+                  "optional": false,
+                  "type": "CallExpression",
+                  "typeArguments": null,
+                },
+                "type": "ChainExpression",
+              },
+              "type": "ExpressionStatement",
+            },
+            {
+              "directive": null,
+              "expression": {
+                "expression": {
+                  "arguments": [],
+                  "callee": {
+                    "computed": false,
+                    "object": {
+                      "computed": false,
+                      "object": {
+                        "computed": false,
+                        "object": {
+                          "name": "one",
+                          "optional": false,
+                          "type": "Identifier",
+                          "typeAnnotation": null,
+                        },
+                        "optional": false,
+                        "property": {
+                          "name": "two",
+                          "optional": false,
+                          "type": "Identifier",
+                          "typeAnnotation": null,
+                        },
+                        "type": "MemberExpression",
+                      },
+                      "optional": true,
+                      "property": {
+                        "name": "three",
                         "optional": false,
                         "type": "Identifier",
                         "typeAnnotation": null,
@@ -287,113 +336,118 @@ describe('OptionalCallExpression', () => {
                       "type": "MemberExpression",
                     },
                     "optional": true,
-                    "property": Object {
-                      "name": "three",
+                    "property": {
+                      "name": "fn",
                       "optional": false,
                       "type": "Identifier",
                       "typeAnnotation": null,
                     },
-                    "type": "OptionalMemberExpression",
+                    "type": "MemberExpression",
                   },
-                  "optional": true,
-                  "property": Object {
-                    "name": "fn",
-                    "optional": false,
-                    "type": "Identifier",
-                    "typeAnnotation": null,
-                  },
-                  "type": "OptionalMemberExpression",
-                },
-                "optional": false,
-                "type": "OptionalCallExpression",
-                "typeArguments": null,
-              },
-              "type": "ExpressionStatement",
-            },
-            Object {
-              "directive": null,
-              "expression": Object {
-                "arguments": Array [],
-                "callee": Object {
-                  "name": "one",
                   "optional": false,
-                  "type": "Identifier",
-                  "typeAnnotation": null,
+                  "type": "CallExpression",
+                  "typeArguments": null,
                 },
-                "optional": true,
-                "type": "OptionalCallExpression",
-                "typeArguments": null,
+                "type": "ChainExpression",
               },
               "type": "ExpressionStatement",
             },
-            Object {
+            {
               "directive": null,
-              "expression": Object {
-                "arguments": Array [],
-                "callee": Object {
-                  "arguments": Array [],
-                  "callee": Object {
+              "expression": {
+                "expression": {
+                  "arguments": [],
+                  "callee": {
                     "name": "one",
                     "optional": false,
                     "type": "Identifier",
                     "typeAnnotation": null,
                   },
                   "optional": true,
-                  "type": "OptionalCallExpression",
+                  "type": "CallExpression",
                   "typeArguments": null,
                 },
-                "optional": false,
-                "type": "OptionalCallExpression",
-                "typeArguments": null,
+                "type": "ChainExpression",
               },
               "type": "ExpressionStatement",
             },
-            Object {
+            {
               "directive": null,
-              "expression": Object {
-                "arguments": Array [],
-                "callee": Object {
-                  "arguments": Array [],
-                  "callee": Object {
-                    "name": "one",
-                    "optional": false,
-                    "type": "Identifier",
-                    "typeAnnotation": null,
+              "expression": {
+                "expression": {
+                  "arguments": [],
+                  "callee": {
+                    "arguments": [],
+                    "callee": {
+                      "name": "one",
+                      "optional": false,
+                      "type": "Identifier",
+                      "typeAnnotation": null,
+                    },
+                    "optional": true,
+                    "type": "CallExpression",
+                    "typeArguments": null,
                   },
-                  "optional": true,
-                  "type": "OptionalCallExpression",
-                  "typeArguments": null,
-                },
-                "optional": true,
-                "type": "OptionalCallExpression",
-                "typeArguments": null,
-              },
-              "type": "ExpressionStatement",
-            },
-            Object {
-              "directive": null,
-              "expression": Object {
-                "computed": false,
-                "object": Object {
-                  "arguments": Array [],
-                  "callee": Object {
-                    "name": "one",
-                    "optional": false,
-                    "type": "Identifier",
-                    "typeAnnotation": null,
-                  },
-                  "optional": true,
-                  "type": "OptionalCallExpression",
-                  "typeArguments": null,
-                },
-                "optional": false,
-                "property": Object {
-                  "name": "two",
                   "optional": false,
-                  "type": "Identifier",
-                  "typeAnnotation": null,
+                  "type": "CallExpression",
+                  "typeArguments": null,
                 },
-                "type": "OptionalMemberExpression",
+                "type": "ChainExpression",
+              },
+              "type": "ExpressionStatement",
+            },
+            {
+              "directive": null,
+              "expression": {
+                "expression": {
+                  "arguments": [],
+                  "callee": {
+                    "arguments": [],
+                    "callee": {
+                      "name": "one",
+                      "optional": false,
+                      "type": "Identifier",
+                      "typeAnnotation": null,
+                    },
+                    "optional": true,
+                    "type": "CallExpression",
+                    "typeArguments": null,
+                  },
+                  "optional": true,
+                  "type": "CallExpression",
+                  "typeArguments": null,
+                },
+                "type": "ChainExpression",
+              },
+              "type": "ExpressionStatement",
+            },
+            {
+              "directive": null,
+              "expression": {
+                "expression": {
+                  "computed": false,
+                  "object": {
+                    "arguments": [],
+                    "callee": {
+                      "name": "one",
+                      "optional": false,
+                      "type": "Identifier",
+                      "typeAnnotation": null,
+                    },
+                    "optional": true,
+                    "type": "CallExpression",
+                    "typeArguments": null,
+                  },
+                  "optional": false,
+                  "property": {
+                    "name": "two",
+                    "optional": false,
+                    "type": "Identifier",
+                    "typeAnnotation": null,
+                  },
+                  "type": "MemberExpression",
+                },
+                "type": "ChainExpression",
               },
               "type": "ExpressionStatement",
             },
@@ -401,147 +455,85 @@ describe('OptionalCallExpression', () => {
           "type": "Program",
         }
       `);
+      expectEspreeAlignment(testCase);
+    });
+
+    test('Babel', () => {
+      expectBabelAlignment(testCase);
     });
   });
 
   // This is a special case to test because of the way parentheses
   // short-circuit the optional chain
   describe('With parentheses', () => {
-    const source = `
-      (one?.fn());
-      (one?.two).fn();
-      (one.two?.fn());
-      (one.two?.three).fn();
-      (one.two?.three?.fn());
+    const testCase: AlignmentCase = {
+      code: `
+        (one?.fn());
+        (one?.two).fn();
+        (one.two?.fn());
+        (one.two?.three).fn();
+        (one.two?.three?.fn());
 
-      (one?.());
-      (one?.())();
-      (one?.())?.();
+        (one?.());
+        (one?.())();
 
-      (one?.()).two;
-    `;
+        (one?.()).two;
+      `,
+      espree: {expectToFail: false},
+      babel: {expectToFail: false},
+    };
 
     test('ESTree', () => {
-      expect(parseForSnapshot(source)).toMatchInlineSnapshot(`
-        Object {
-          "body": Array [
-            Object {
+      expect(parseForSnapshot(testCase.code)).toMatchInlineSnapshot(`
+        {
+          "body": [
+            {
               "directive": null,
-              "expression": Object {
-                "arguments": Array [],
-                "callee": Object {
-                  "computed": false,
-                  "object": Object {
-                    "name": "one",
-                    "optional": false,
-                    "type": "Identifier",
-                    "typeAnnotation": null,
-                  },
-                  "optional": true,
-                  "property": Object {
-                    "name": "fn",
-                    "optional": false,
-                    "type": "Identifier",
-                    "typeAnnotation": null,
-                  },
-                  "type": "OptionalMemberExpression",
-                },
-                "optional": false,
-                "type": "OptionalCallExpression",
-                "typeArguments": null,
-              },
-              "type": "ExpressionStatement",
-            },
-            Object {
-              "directive": null,
-              "expression": Object {
-                "arguments": Array [],
-                "callee": Object {
-                  "computed": false,
-                  "object": Object {
+              "expression": {
+                "expression": {
+                  "arguments": [],
+                  "callee": {
                     "computed": false,
-                    "object": Object {
+                    "object": {
                       "name": "one",
                       "optional": false,
                       "type": "Identifier",
                       "typeAnnotation": null,
                     },
                     "optional": true,
-                    "property": Object {
-                      "name": "two",
-                      "optional": false,
-                      "type": "Identifier",
-                      "typeAnnotation": null,
-                    },
-                    "type": "OptionalMemberExpression",
-                  },
-                  "property": Object {
-                    "name": "fn",
-                    "optional": false,
-                    "type": "Identifier",
-                    "typeAnnotation": null,
-                  },
-                  "type": "MemberExpression",
-                },
-                "type": "CallExpression",
-                "typeArguments": null,
-              },
-              "type": "ExpressionStatement",
-            },
-            Object {
-              "directive": null,
-              "expression": Object {
-                "arguments": Array [],
-                "callee": Object {
-                  "computed": false,
-                  "object": Object {
-                    "computed": false,
-                    "object": Object {
-                      "name": "one",
-                      "optional": false,
-                      "type": "Identifier",
-                      "typeAnnotation": null,
-                    },
-                    "property": Object {
-                      "name": "two",
+                    "property": {
+                      "name": "fn",
                       "optional": false,
                       "type": "Identifier",
                       "typeAnnotation": null,
                     },
                     "type": "MemberExpression",
                   },
-                  "optional": true,
-                  "property": Object {
-                    "name": "fn",
-                    "optional": false,
-                    "type": "Identifier",
-                    "typeAnnotation": null,
-                  },
-                  "type": "OptionalMemberExpression",
+                  "optional": false,
+                  "type": "CallExpression",
+                  "typeArguments": null,
                 },
-                "optional": false,
-                "type": "OptionalCallExpression",
-                "typeArguments": null,
+                "type": "ChainExpression",
               },
               "type": "ExpressionStatement",
             },
-            Object {
+            {
               "directive": null,
-              "expression": Object {
-                "arguments": Array [],
-                "callee": Object {
+              "expression": {
+                "arguments": [],
+                "callee": {
                   "computed": false,
-                  "object": Object {
-                    "computed": false,
-                    "object": Object {
+                  "object": {
+                    "expression": {
                       "computed": false,
-                      "object": Object {
+                      "object": {
                         "name": "one",
                         "optional": false,
                         "type": "Identifier",
                         "typeAnnotation": null,
                       },
-                      "property": Object {
+                      "optional": true,
+                      "property": {
                         "name": "two",
                         "optional": false,
                         "type": "Identifier",
@@ -549,16 +541,10 @@ describe('OptionalCallExpression', () => {
                       },
                       "type": "MemberExpression",
                     },
-                    "optional": true,
-                    "property": Object {
-                      "name": "three",
-                      "optional": false,
-                      "type": "Identifier",
-                      "typeAnnotation": null,
-                    },
-                    "type": "OptionalMemberExpression",
+                    "type": "ChainExpression",
                   },
-                  "property": Object {
+                  "optional": false,
+                  "property": {
                     "name": "fn",
                     "optional": false,
                     "type": "Identifier",
@@ -566,28 +552,29 @@ describe('OptionalCallExpression', () => {
                   },
                   "type": "MemberExpression",
                 },
+                "optional": false,
                 "type": "CallExpression",
                 "typeArguments": null,
               },
               "type": "ExpressionStatement",
             },
-            Object {
+            {
               "directive": null,
-              "expression": Object {
-                "arguments": Array [],
-                "callee": Object {
-                  "computed": false,
-                  "object": Object {
+              "expression": {
+                "expression": {
+                  "arguments": [],
+                  "callee": {
                     "computed": false,
-                    "object": Object {
+                    "object": {
                       "computed": false,
-                      "object": Object {
+                      "object": {
                         "name": "one",
                         "optional": false,
                         "type": "Identifier",
                         "typeAnnotation": null,
                       },
-                      "property": Object {
+                      "optional": false,
+                      "property": {
                         "name": "two",
                         "optional": false,
                         "type": "Identifier",
@@ -596,105 +583,191 @@ describe('OptionalCallExpression', () => {
                       "type": "MemberExpression",
                     },
                     "optional": true,
-                    "property": Object {
-                      "name": "three",
+                    "property": {
+                      "name": "fn",
                       "optional": false,
                       "type": "Identifier",
                       "typeAnnotation": null,
                     },
-                    "type": "OptionalMemberExpression",
+                    "type": "MemberExpression",
                   },
-                  "optional": true,
-                  "property": Object {
+                  "optional": false,
+                  "type": "CallExpression",
+                  "typeArguments": null,
+                },
+                "type": "ChainExpression",
+              },
+              "type": "ExpressionStatement",
+            },
+            {
+              "directive": null,
+              "expression": {
+                "arguments": [],
+                "callee": {
+                  "computed": false,
+                  "object": {
+                    "expression": {
+                      "computed": false,
+                      "object": {
+                        "computed": false,
+                        "object": {
+                          "name": "one",
+                          "optional": false,
+                          "type": "Identifier",
+                          "typeAnnotation": null,
+                        },
+                        "optional": false,
+                        "property": {
+                          "name": "two",
+                          "optional": false,
+                          "type": "Identifier",
+                          "typeAnnotation": null,
+                        },
+                        "type": "MemberExpression",
+                      },
+                      "optional": true,
+                      "property": {
+                        "name": "three",
+                        "optional": false,
+                        "type": "Identifier",
+                        "typeAnnotation": null,
+                      },
+                      "type": "MemberExpression",
+                    },
+                    "type": "ChainExpression",
+                  },
+                  "optional": false,
+                  "property": {
                     "name": "fn",
                     "optional": false,
                     "type": "Identifier",
                     "typeAnnotation": null,
                   },
-                  "type": "OptionalMemberExpression",
+                  "type": "MemberExpression",
                 },
                 "optional": false,
-                "type": "OptionalCallExpression",
-                "typeArguments": null,
-              },
-              "type": "ExpressionStatement",
-            },
-            Object {
-              "directive": null,
-              "expression": Object {
-                "arguments": Array [],
-                "callee": Object {
-                  "name": "one",
-                  "optional": false,
-                  "type": "Identifier",
-                  "typeAnnotation": null,
-                },
-                "optional": true,
-                "type": "OptionalCallExpression",
-                "typeArguments": null,
-              },
-              "type": "ExpressionStatement",
-            },
-            Object {
-              "directive": null,
-              "expression": Object {
-                "arguments": Array [],
-                "callee": Object {
-                  "arguments": Array [],
-                  "callee": Object {
-                    "name": "one",
-                    "optional": false,
-                    "type": "Identifier",
-                    "typeAnnotation": null,
-                  },
-                  "optional": true,
-                  "type": "OptionalCallExpression",
-                  "typeArguments": null,
-                },
                 "type": "CallExpression",
                 "typeArguments": null,
               },
               "type": "ExpressionStatement",
             },
-            Object {
+            {
               "directive": null,
-              "expression": Object {
-                "arguments": Array [],
-                "callee": Object {
-                  "arguments": Array [],
-                  "callee": Object {
+              "expression": {
+                "expression": {
+                  "arguments": [],
+                  "callee": {
+                    "computed": false,
+                    "object": {
+                      "computed": false,
+                      "object": {
+                        "computed": false,
+                        "object": {
+                          "name": "one",
+                          "optional": false,
+                          "type": "Identifier",
+                          "typeAnnotation": null,
+                        },
+                        "optional": false,
+                        "property": {
+                          "name": "two",
+                          "optional": false,
+                          "type": "Identifier",
+                          "typeAnnotation": null,
+                        },
+                        "type": "MemberExpression",
+                      },
+                      "optional": true,
+                      "property": {
+                        "name": "three",
+                        "optional": false,
+                        "type": "Identifier",
+                        "typeAnnotation": null,
+                      },
+                      "type": "MemberExpression",
+                    },
+                    "optional": true,
+                    "property": {
+                      "name": "fn",
+                      "optional": false,
+                      "type": "Identifier",
+                      "typeAnnotation": null,
+                    },
+                    "type": "MemberExpression",
+                  },
+                  "optional": false,
+                  "type": "CallExpression",
+                  "typeArguments": null,
+                },
+                "type": "ChainExpression",
+              },
+              "type": "ExpressionStatement",
+            },
+            {
+              "directive": null,
+              "expression": {
+                "expression": {
+                  "arguments": [],
+                  "callee": {
                     "name": "one",
                     "optional": false,
                     "type": "Identifier",
                     "typeAnnotation": null,
                   },
                   "optional": true,
-                  "type": "OptionalCallExpression",
+                  "type": "CallExpression",
                   "typeArguments": null,
                 },
-                "optional": true,
-                "type": "OptionalCallExpression",
+                "type": "ChainExpression",
+              },
+              "type": "ExpressionStatement",
+            },
+            {
+              "directive": null,
+              "expression": {
+                "arguments": [],
+                "callee": {
+                  "expression": {
+                    "arguments": [],
+                    "callee": {
+                      "name": "one",
+                      "optional": false,
+                      "type": "Identifier",
+                      "typeAnnotation": null,
+                    },
+                    "optional": true,
+                    "type": "CallExpression",
+                    "typeArguments": null,
+                  },
+                  "type": "ChainExpression",
+                },
+                "optional": false,
+                "type": "CallExpression",
                 "typeArguments": null,
               },
               "type": "ExpressionStatement",
             },
-            Object {
+            {
               "directive": null,
-              "expression": Object {
+              "expression": {
                 "computed": false,
-                "object": Object {
-                  "arguments": Array [],
-                  "callee": Object {
-                    "name": "one",
-                    "optional": false,
-                    "type": "Identifier",
-                    "typeAnnotation": null,
+                "object": {
+                  "expression": {
+                    "arguments": [],
+                    "callee": {
+                      "name": "one",
+                      "optional": false,
+                      "type": "Identifier",
+                      "typeAnnotation": null,
+                    },
+                    "optional": true,
+                    "type": "CallExpression",
+                    "typeArguments": null,
                   },
-                  "optional": true,
-                  "type": "OptionalCallExpression",
-                  "typeArguments": null,
+                  "type": "ChainExpression",
                 },
-                "property": Object {
+                "optional": false,
+                "property": {
                   "name": "two",
                   "optional": false,
                   "type": "Identifier",
@@ -708,6 +781,91 @@ describe('OptionalCallExpression', () => {
           "type": "Program",
         }
       `);
+      expectEspreeAlignment(testCase);
+    });
+
+    test('Babel', () => {
+      expectBabelAlignment(testCase);
+    });
+  });
+
+  describe('Tricky short-circuiting case', () => {
+    const testCase: AlignmentCase = {
+      code: `
+        (one?.())?.();
+        one?.()?.();
+      `,
+      espree: {
+        // unfortunately the hermes AST doesn't let us differentiate between
+        // these two code cases, so we can't create the proper ESTree AST here :(
+        expectToFail: 'ast-diff',
+      },
+      babel: {expectToFail: false},
+    };
+
+    test('ESTree', () => {
+      expect(parseForSnapshot(testCase.code)).toMatchInlineSnapshot(`
+        {
+          "body": [
+            {
+              "directive": null,
+              "expression": {
+                "expression": {
+                  "arguments": [],
+                  "callee": {
+                    "arguments": [],
+                    "callee": {
+                      "name": "one",
+                      "optional": false,
+                      "type": "Identifier",
+                      "typeAnnotation": null,
+                    },
+                    "optional": true,
+                    "type": "CallExpression",
+                    "typeArguments": null,
+                  },
+                  "optional": true,
+                  "type": "CallExpression",
+                  "typeArguments": null,
+                },
+                "type": "ChainExpression",
+              },
+              "type": "ExpressionStatement",
+            },
+            {
+              "directive": null,
+              "expression": {
+                "expression": {
+                  "arguments": [],
+                  "callee": {
+                    "arguments": [],
+                    "callee": {
+                      "name": "one",
+                      "optional": false,
+                      "type": "Identifier",
+                      "typeAnnotation": null,
+                    },
+                    "optional": true,
+                    "type": "CallExpression",
+                    "typeArguments": null,
+                  },
+                  "optional": true,
+                  "type": "CallExpression",
+                  "typeArguments": null,
+                },
+                "type": "ChainExpression",
+              },
+              "type": "ExpressionStatement",
+            },
+          ],
+          "type": "Program",
+        }
+      `);
+      expectEspreeAlignment(testCase);
+    });
+
+    test('Babel', () => {
+      expectBabelAlignment(testCase);
     });
   });
 });

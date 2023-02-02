@@ -19,7 +19,11 @@
 #include "llvh/Support/TrailingObjects.h"
 
 #include <type_traits>
+#pragma GCC diagnostic push
 
+#ifdef HERMES_COMPILER_SUPPORTS_WSHORTEN_64_TO_32
+#pragma GCC diagnostic ignored "-Wshorten-64-to-32"
+#endif
 namespace hermes {
 namespace vm {
 
@@ -358,7 +362,9 @@ class StringPrimitive : public VariableSizeRuntimeCell {
     lengthAndUniquedFlag_ &= ~LENGTH_FLAG_UNIQUED;
   }
 
-  static std::string _snapshotNameImpl(GCCell *cell, GC *gc);
+#ifdef HERMES_MEMORY_INSTRUMENTATION
+  static std::string _snapshotNameImpl(GCCell *cell, GC &gc);
+#endif
 };
 
 /// A subclass of StringPrimitive which stores a SymbolID.
@@ -602,14 +608,16 @@ class ExternalStringPrimitive final : public SymbolStringPrimitive {
   }
 
   // Finalizer to clean up the malloc'ed string.
-  static void _finalizeImpl(GCCell *cell, GC *gc);
+  static void _finalizeImpl(GCCell *cell, GC &gc);
 
   /// \return the size of the external memory associated with \p cell, which is
   /// assumed to be an ExternalStringPrimitive.
   static size_t _mallocSizeImpl(GCCell *cell);
 
-  static void _snapshotAddEdgesImpl(GCCell *cell, GC *gc, HeapSnapshot &snap);
-  static void _snapshotAddNodesImpl(GCCell *cell, GC *gc, HeapSnapshot &snap);
+#ifdef HERMES_MEMORY_INSTRUMENTATION
+  static void _snapshotAddEdgesImpl(GCCell *cell, GC &gc, HeapSnapshot &snap);
+  static void _snapshotAddNodesImpl(GCCell *cell, GC &gc, HeapSnapshot &snap);
+#endif
 
   /// The backing storage of this string. Note that the string's length is fixed
   /// and must always be equal to StringPrimitive::getStringLength().
@@ -687,7 +695,7 @@ class BufferedStringPrimitive final : public StringPrimitive {
       Handle<ExternalStringPrimitive<T>> concatBuffer)
       : StringPrimitive(length) {
     concatBufferHV_.set(
-        HermesValue::encodeObjectValue(*concatBuffer), &runtime.getHeap());
+        HermesValue::encodeObjectValue(*concatBuffer), runtime.getHeap());
     assert(
         concatBuffer->contents_.size() >= length &&
         "length exceeds size of concatenation buffer");
@@ -743,8 +751,8 @@ class BufferedStringPrimitive final : public StringPrimitive {
     return vmcast<ExternalStringPrimitive<T>>(concatBufferHV_);
   }
 
-  static void _snapshotAddEdgesImpl(GCCell *cell, GC *gc, HeapSnapshot &snap);
-  static void _snapshotAddNodesImpl(GCCell *cell, GC *gc, HeapSnapshot &snap);
+  static void _snapshotAddEdgesImpl(GCCell *cell, GC &gc, HeapSnapshot &snap);
+  static void _snapshotAddNodesImpl(GCCell *cell, GC &gc, HeapSnapshot &snap);
 
   /// Reference to an ExternalStringPrimitive used as a concatenation buffer.
   /// Every concatenation appends to it and allocates a new
@@ -785,13 +793,16 @@ const VTable DynamicStringPrimitive<T, Uniqued>::vt = VTable(
     nullptr,
     nullptr,
     nullptr,
-    nullptr,
-    VTable::HeapSnapshotMetadata{
-        HeapSnapshot::NodeType::String,
-        DynamicStringPrimitive<T, Uniqued>::_snapshotNameImpl,
-        nullptr,
-        nullptr,
-        nullptr});
+    nullptr
+#ifdef HERMES_MEMORY_INSTRUMENTATION
+    ,
+    VTable::HeapSnapshotMetadata {
+      HeapSnapshot::NodeType::String,
+          DynamicStringPrimitive<T, Uniqued>::_snapshotNameImpl, nullptr,
+          nullptr, nullptr
+    }
+#endif
+);
 
 using DynamicUTF16StringPrimitive =
     DynamicStringPrimitive<char16_t, false /* not Uniqued */>;
@@ -809,13 +820,17 @@ const VTable ExternalStringPrimitive<T>::vt = VTable(
     ExternalStringPrimitive<T>::_finalizeImpl,
     nullptr, // markWeak.
     ExternalStringPrimitive<T>::_mallocSizeImpl,
-    nullptr,
-    VTable::HeapSnapshotMetadata{
-        HeapSnapshot::NodeType::String,
-        ExternalStringPrimitive<T>::_snapshotNameImpl,
-        ExternalStringPrimitive<T>::_snapshotAddEdgesImpl,
-        ExternalStringPrimitive<T>::_snapshotAddNodesImpl,
-        nullptr});
+    nullptr
+#ifdef HERMES_MEMORY_INSTRUMENTATION
+    ,
+    VTable::HeapSnapshotMetadata {
+      HeapSnapshot::NodeType::String,
+          ExternalStringPrimitive<T>::_snapshotNameImpl,
+          ExternalStringPrimitive<T>::_snapshotAddEdgesImpl,
+          ExternalStringPrimitive<T>::_snapshotAddNodesImpl, nullptr
+    }
+#endif
+);
 
 using ExternalUTF16StringPrimitive = ExternalStringPrimitive<char16_t>;
 using ExternalASCIIStringPrimitive = ExternalStringPrimitive<char>;
@@ -827,13 +842,17 @@ const VTable BufferedStringPrimitive<T>::vt = VTable(
     nullptr, // finalize.
     nullptr, // markWeak.
     nullptr, // mallocSize
-    nullptr,
-    VTable::HeapSnapshotMetadata{
-        HeapSnapshot::NodeType::String,
-        BufferedStringPrimitive<T>::_snapshotNameImpl,
-        BufferedStringPrimitive<T>::_snapshotAddEdgesImpl,
-        BufferedStringPrimitive<T>::_snapshotAddNodesImpl,
-        nullptr});
+    nullptr
+#ifdef HERMES_MEMORY_INSTRUMENTATION
+    ,
+    VTable::HeapSnapshotMetadata {
+      HeapSnapshot::NodeType::String,
+          BufferedStringPrimitive<T>::_snapshotNameImpl,
+          BufferedStringPrimitive<T>::_snapshotAddEdgesImpl,
+          BufferedStringPrimitive<T>::_snapshotAddNodesImpl, nullptr
+    }
+#endif
+);
 
 using BufferedUTF16StringPrimitive = BufferedStringPrimitive<char16_t>;
 using BufferedASCIIStringPrimitive = BufferedStringPrimitive<char>;
@@ -1072,4 +1091,5 @@ inline bool StringPrimitive::isExternal() const {
 } // namespace vm
 } // namespace hermes
 
+#pragma GCC diagnostic pop
 #endif // HERMES_VM_STRINGPRIMITIVE_H

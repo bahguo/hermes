@@ -10,25 +10,46 @@
 
 'use strict';
 
+import type {AlignmentCase} from '../__test_utils__/alignment-utils';
+
+import {
+  expectBabelAlignment,
+  expectEspreeAlignment,
+} from '../__test_utils__/alignment-utils';
 import {parse, parseForSnapshot} from '../__test_utils__/parse';
 
 describe('IndexedAccessType', () => {
-  describe('ESTree', () => {
-    test('Basic Indexed Access Type', () => {
-      const source = `type T = O[k]`;
-      expect(parseForSnapshot(source)).toMatchInlineSnapshot(`
-        Object {
-          "body": Array [
-            Object {
-              "id": Object {
+  describe('Basic Indexed Access Type', () => {
+    const testCase: AlignmentCase = {
+      code: `
+        type T = O[k]
+      `,
+      espree: {
+        expectToFail: 'espree-exception',
+        expectedExceptionMessage: 'Unexpected token T',
+      },
+      // babel: {expectToFail: false},
+      babel: {
+        // TODO - once we update the babel version we test against - we can enable this
+        expectToFail: 'babel-exception',
+        expectedExceptionMessage: 'Unexpected token, expected "]"',
+      },
+    };
+
+    test('ESTree', () => {
+      expect(parseForSnapshot(testCase.code)).toMatchInlineSnapshot(`
+        {
+          "body": [
+            {
+              "id": {
                 "name": "T",
                 "optional": false,
                 "type": "Identifier",
                 "typeAnnotation": null,
               },
-              "right": Object {
-                "indexType": Object {
-                  "id": Object {
+              "right": {
+                "indexType": {
+                  "id": {
                     "name": "k",
                     "optional": false,
                     "type": "Identifier",
@@ -37,8 +58,8 @@ describe('IndexedAccessType', () => {
                   "type": "GenericTypeAnnotation",
                   "typeParameters": null,
                 },
-                "objectType": Object {
-                  "id": Object {
+                "objectType": {
+                  "id": {
                     "name": "O",
                     "optional": false,
                     "type": "Identifier",
@@ -56,23 +77,60 @@ describe('IndexedAccessType', () => {
           "type": "Program",
         }
       `);
+      expectEspreeAlignment(testCase);
     });
 
-    test('Optional Indexed Access Type', () => {
-      const source = `type T = O?.[k]`;
-      expect(parseForSnapshot(source)).toMatchInlineSnapshot(`
-        Object {
-          "body": Array [
-            Object {
-              "id": Object {
+    test('Babel', () => {
+      expect(parse(testCase.code, {babel: true})).toMatchObject({
+        type: 'File',
+        program: {
+          type: 'Program',
+          body: [
+            {
+              type: 'TypeAlias',
+              right: {
+                type: 'AnyTypeAnnotation',
+              },
+              typeParameters: null,
+            },
+          ],
+        },
+      });
+      expectBabelAlignment(testCase);
+    });
+  });
+
+  describe('Optional Indexed Access Type', () => {
+    const testCase: AlignmentCase = {
+      code: `
+        type T = O?.[k]
+      `,
+      espree: {
+        expectToFail: 'espree-exception',
+        expectedExceptionMessage: 'Unexpected token T',
+      },
+      // babel: {expectToFail: false},
+      babel: {
+        // TODO - once we update the babel version we test against - we can enable this
+        expectToFail: 'babel-exception',
+        expectedExceptionMessage: 'Unexpected token, expected ";"',
+      },
+    };
+
+    test('ESTree', () => {
+      expect(parseForSnapshot(testCase.code)).toMatchInlineSnapshot(`
+        {
+          "body": [
+            {
+              "id": {
                 "name": "T",
                 "optional": false,
                 "type": "Identifier",
                 "typeAnnotation": null,
               },
-              "right": Object {
-                "indexType": Object {
-                  "id": Object {
+              "right": {
+                "indexType": {
+                  "id": {
                     "name": "k",
                     "optional": false,
                     "type": "Identifier",
@@ -81,8 +139,8 @@ describe('IndexedAccessType', () => {
                   "type": "GenericTypeAnnotation",
                   "typeParameters": null,
                 },
-                "objectType": Object {
-                  "id": Object {
+                "objectType": {
+                  "id": {
                     "name": "O",
                     "optional": false,
                     "type": "Identifier",
@@ -101,12 +159,11 @@ describe('IndexedAccessType', () => {
           "type": "Program",
         }
       `);
+      expectEspreeAlignment(testCase);
     });
-  });
 
-  describe('Babel', () => {
-    test('Basic Indexed Access Type', () => {
-      expect(parse(`type T = O[k]`, {babel: true})).toMatchObject({
+    test('Babel', () => {
+      expect(parse(testCase.code, {babel: true})).toMatchObject({
         type: 'File',
         program: {
           type: 'Program',
@@ -121,24 +178,7 @@ describe('IndexedAccessType', () => {
           ],
         },
       });
-    });
-
-    test('Optional Indexed Access Type', () => {
-      expect(parse(`type T = O?.[k]`, {babel: true})).toMatchObject({
-        type: 'File',
-        program: {
-          type: 'Program',
-          body: [
-            {
-              type: 'TypeAlias',
-              right: {
-                type: 'AnyTypeAnnotation',
-              },
-              typeParameters: null,
-            },
-          ],
-        },
-      });
+      expectBabelAlignment(testCase);
     });
   });
 });

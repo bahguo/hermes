@@ -10,6 +10,11 @@
 #include "hermes/VM/BuildMetadata.h"
 #include "hermes/VM/Callable.h"
 
+#pragma GCC diagnostic push
+
+#ifdef HERMES_COMPILER_SUPPORTS_WSHORTEN_64_TO_32
+#pragma GCC diagnostic ignored "-Wshorten-64-to-32"
+#endif
 namespace hermes {
 namespace vm {
 
@@ -199,7 +204,7 @@ ExecutionStatus JSTypedArrayBase::createBuffer(
         "Cannot allocate a data block for the ArrayBuffer");
   }
   JSArrayBuffer::size_type bufferSize = length * selfObj->getByteWidth();
-  if (tmpbuf->createDataBlock(runtime, bufferSize) ==
+  if (JSArrayBuffer::createDataBlock(runtime, tmpbuf, bufferSize) ==
       ExecutionStatus::EXCEPTION) {
     // Failed to allocate, don't modify what it currently points to.
     return ExecutionStatus::EXCEPTION;
@@ -240,8 +245,8 @@ ExecutionStatus JSTypedArrayBase::setToCopyOfTypedArray(
     return ExecutionStatus::RETURNED;
   }
   assert(
-      dst->getBuffer(runtime)->getDataBlock() !=
-          src->getBuffer(runtime)->getDataBlock() &&
+      dst->getBuffer(runtime)->getDataBlock(runtime) !=
+          src->getBuffer(runtime)->getDataBlock(runtime) &&
       "Must call setToCopyOfTypedArray with two TypedArrays with different "
       "backing ArrayBuffers");
   if (dst->getKind() == src->getKind()) {
@@ -252,7 +257,8 @@ ExecutionStatus JSTypedArrayBase::setToCopyOfTypedArray(
     // Else must do type conversions.
     MutableHandle<> storage(runtime);
     for (auto k = srcIndex; k < srcIndex + count; ++k) {
-      storage = JSObject::getOwnIndexed(*src, runtime, k);
+      storage =
+          JSObject::getOwnIndexed(createPseudoHandle(src.get()), runtime, k);
       if (JSObject::setOwnIndexed(dst, runtime, dstIndex++, storage) ==
           ExecutionStatus::EXCEPTION) {
         return ExecutionStatus::EXCEPTION;
@@ -281,6 +287,7 @@ void JSTypedArrayBase::setToCopyOfBytes(
       dstIndex + count <= dst->getLength() &&
       "Cannot write that many elements to dest ");
   JSArrayBuffer::copyDataBlockBytes(
+      runtime,
       dst->getBuffer(runtime),
       dstIndex * dst->getByteWidth() + dst->getByteOffset(),
       src->getBuffer(runtime),
@@ -303,7 +310,7 @@ void JSTypedArrayBase::setBuffer(
   assert(
       self->getByteWidth() == byteWidth &&
       "Cannot set to a buffer of a different byte width");
-  self->buffer_.setNonNull(runtime, buf, &runtime.getHeap());
+  self->buffer_.setNonNull(runtime, buf, runtime.getHeap());
   self->offset_ = offset;
   self->length_ = size / byteWidth;
 }
@@ -424,22 +431,121 @@ JSTypedArray<T, C>::JSTypedArray(
     Handle<HiddenClass> clazz)
     : JSTypedArrayBase(runtime, parent, clazz) {}
 
+template <>
+int64_t JSTypedArray<int64_t, CellKind::BigInt64ArrayKind>::toDestType(
+    const HermesValue &numeric) {
+  assert(numeric.isBigInt() && "expected bigint");
+  auto digits = numeric.getBigInt()->getDigits();
+  return digits.size() == 0 ? 0ll : static_cast<int64_t>(digits[0]);
+}
+
+template <>
+uint64_t JSTypedArray<uint64_t, CellKind::BigUint64ArrayKind>::toDestType(
+    const HermesValue &numeric) {
+  assert(numeric.isBigInt() && "expected bigint");
+  auto digits = numeric.getBigInt()->getDigits();
+  return digits.size() == 0 ? 0ull : static_cast<uint64_t>(digits[0]);
+}
+
+template <typename T>
+struct _getOwnRetEncoder {
+  static HermesValue encodeMayAlloc(Runtime &, T element) {
+    return SafeNumericEncoder<T>::encode(element);
+  }
+};
+
+template <>
+struct _getOwnRetEncoder<int64_t> {
+  static HermesValue encodeMayAlloc(Runtime &runtime, int64_t element) {
+    auto res = BigIntPrimitive::fromSigned(runtime, element);
+    if (LLVM_UNLIKELY(res == ExecutionStatus::EXCEPTION)) {
+      assert(false && "Failed to encode BigInt in _getOwnRetEncoder<int64_t>");
+      runtime.clearThrownValue();
+      return HermesValue::encodeUndefinedValue();
+    }
+    return *res;
+  }
+};
+
+template <>
+struct _getOwnRetEncoder<uint64_t> {
+  static HermesValue encodeMayAlloc(Runtime &runtime, uint64_t element) {
+    auto res = BigIntPrimitive::fromUnsigned(runtime, element);
+    if (LLVM_UNLIKELY(res == ExecutionStatus::EXCEPTION)) {
+      assert(false && "Failed to encode BigInt in _getOwnRetEncoder<uint64_t>");
+      runtime.clearThrownValue();
+      return HermesValue::encodeUndefinedValue();
+    }
+    return *res;
+  }
+};
+
 template <typename T, CellKind C>
 HermesValue JSTypedArray<T, C>::_getOwnIndexedImpl(
-    JSObject *selfObj,
+    PseudoHandle<JSObject> selfObj,
     Runtime &runtime,
     uint32_t index) {
-  auto *self = vmcast<JSTypedArray>(selfObj);
+  NoAllocScope noAllocs{runtime};
+  auto *self = vmcast<JSTypedArray>(selfObj.get());
+
   if (LLVM_UNLIKELY(!self->attached(runtime))) {
+    noAllocs.release();
     // NOTE: This should be a TypeError to be fully spec-compliant, but
     // getOwnIndexed is not allowed to return an exception.
-    return HermesValue::encodeNumberValue(0);
+    return _getOwnRetEncoder<T>::encodeMayAlloc(runtime, 0);
   }
   if (LLVM_LIKELY(index < self->getLength())) {
-    return SafeNumericEncoder<T>::encode(self->at(runtime, index));
+    auto elem = self->at(runtime, index);
+    noAllocs.release();
+    return _getOwnRetEncoder<T>::encodeMayAlloc(runtime, elem);
   }
   return HermesValue::encodeUndefinedValue();
 }
+
+template <CellKind>
+struct _setOwnValueEncoder {
+  static CallResult<HermesValue> encode(Runtime &runtime, Handle<> value) {
+    if (LLVM_UNLIKELY(!value->isNumber())) {
+      auto res = toNumber_RJS(runtime, value);
+      if (LLVM_UNLIKELY(res == ExecutionStatus::EXCEPTION))
+        return ExecutionStatus::EXCEPTION;
+      return *res;
+    }
+    return *value;
+  }
+};
+
+template <>
+struct _setOwnValueEncoder<CellKind::BigInt64ArrayKind> {
+  static CallResult<HermesValue> encode(Runtime &runtime, Handle<> value) {
+    auto res = toBigInt_RJS(runtime, value);
+    if (LLVM_UNLIKELY(res == ExecutionStatus::EXCEPTION)) {
+      return ExecutionStatus::EXCEPTION;
+    }
+    HermesValue prim = *res;
+    if (LLVM_UNLIKELY(!prim.isBigInt())) {
+      return runtime.raiseTypeErrorForValue(
+          "can't convert ", value, " to bigint");
+    }
+    return prim;
+  }
+};
+
+template <>
+struct _setOwnValueEncoder<CellKind::BigUint64ArrayKind> {
+  static CallResult<HermesValue> encode(Runtime &runtime, Handle<> value) {
+    auto res = toBigInt_RJS(runtime, value);
+    if (LLVM_UNLIKELY(res == ExecutionStatus::EXCEPTION)) {
+      return ExecutionStatus::EXCEPTION;
+    }
+    HermesValue prim = *res;
+    if (LLVM_UNLIKELY(!prim.isBigInt())) {
+      return runtime.raiseTypeErrorForValue(
+          "can't convert ", value, " to bigint");
+    }
+    return prim;
+  }
+};
 
 template <typename T, CellKind C>
 CallResult<bool> JSTypedArray<T, C>::_setOwnIndexedImpl(
@@ -448,21 +554,17 @@ CallResult<bool> JSTypedArray<T, C>::_setOwnIndexedImpl(
     uint32_t index,
     Handle<> value) {
   auto typedArrayHandle = Handle<JSTypedArray>::vmcast(selfHandle);
-  double x;
-  if (LLVM_UNLIKELY(!value->isNumber())) {
-    auto res = toNumber_RJS(runtime, value);
-    if (LLVM_UNLIKELY(res == ExecutionStatus::EXCEPTION))
-      return ExecutionStatus::EXCEPTION;
-    x = res->getNumber();
-  } else {
-    x = value->getNumber();
+  CallResult<HermesValue> res = _setOwnValueEncoder<C>::encode(runtime, value);
+  if (LLVM_UNLIKELY(res == ExecutionStatus::EXCEPTION)) {
+    return ExecutionStatus::EXCEPTION;
   }
+  T destValue = JSTypedArray<T, C>::toDestType(*res);
   if (LLVM_UNLIKELY(!typedArrayHandle->attached(runtime))) {
     return runtime.raiseTypeError(
         "Cannot set a value into a detached ArrayBuffer");
   }
   if (LLVM_LIKELY(index < typedArrayHandle->getLength())) {
-    typedArrayHandle->at(runtime, index) = JSTypedArray<T, C>::toDestType(x);
+    typedArrayHandle->at(runtime, index) = destValue;
   }
   return true;
 }

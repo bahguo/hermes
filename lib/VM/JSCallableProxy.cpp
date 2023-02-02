@@ -65,8 +65,8 @@ void JSCallableProxy::setTargetAndHandler(
     Runtime &runtime,
     Handle<JSObject> target,
     Handle<JSObject> handler) {
-  slots_.target.set(runtime, target.get(), &runtime.getHeap());
-  slots_.handler.set(runtime, handler.get(), &runtime.getHeap());
+  slots_.target.set(runtime, target.get(), runtime.getHeap());
+  slots_.handler.set(runtime, handler.get(), runtime.getHeap());
 }
 
 CallResult<bool> JSCallableProxy::isConstructor(Runtime &runtime) {
@@ -136,8 +136,9 @@ JSCallableProxy::_proxyNativeCall(void *, Runtime &runtime, NativeArgs) {
   Handle<JSArray> argArray = *argArrayRes;
   JSArray::setStorageEndIndex(argArray, runtime, callerFrame->getArgCount());
   for (uint32_t i = 0; i < callerFrame->getArgCount(); ++i) {
-    JSArray::unsafeSetExistingElementAt(
-        *argArray, runtime, i, callerFrame.getArgRef(i));
+    const auto shv =
+        SmallHermesValue::encodeHermesValue(callerFrame.getArgRef(i), runtime);
+    JSArray::unsafeSetExistingElementAt(*argArray, runtime, i, shv);
   }
   // 8. Let newObj be ? Call(trap, handler, « target, argArray, newTarget »).
   if (callerFrame->isConstructorCall()) {

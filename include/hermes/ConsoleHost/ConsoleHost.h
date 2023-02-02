@@ -92,7 +92,8 @@ namespace microtask {
 /// until there was no errors (implying queue exhaustiveness).
 /// Note that exceptions are directly printed to stderr.
 inline void performCheckpoint(vm::Runtime &runtime) {
-  if (!runtime.useJobQueue())
+  runtime.clearKeptObjects();
+  if (!runtime.hasMicrotaskQueue())
     return;
 
   while (LLVM_UNLIKELY(runtime.drainJobs() == vm::ExecutionStatus::EXCEPTION)) {
@@ -130,14 +131,6 @@ struct ExecuteOptions {
 
   /// Stop after creating the RuntimeModule.
   bool stopAfterInit{false};
-
-#ifdef HERMESVM_PROFILER_EXTERN
-  /// Patch the symbols so that the external profiler can be used.
-  bool patchProfilerSymbols{false};
-
-  /// Dump the symbols in given file name.
-  std::string profilerSymbolsFile;
-#endif
 
   /// Execution time limit.
   uint32_t timeLimit{0};

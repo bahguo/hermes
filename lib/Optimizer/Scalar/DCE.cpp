@@ -21,7 +21,6 @@
 
 using namespace hermes;
 using llvh::dbgs;
-using llvh::isa;
 
 STATISTIC(NumDCE, "Number of instructions DCE'd");
 STATISTIC(NumFuncDCE, "Number of functions DCE'd");
@@ -44,8 +43,17 @@ static bool performFunctionDCE(Function *F) {
       // If the instruction writes to memory then we can't remove it. Notice
       // that it is okay to delete instructions that only read memory and are
       // unused.
-      if (I->mayWriteMemory() || llvh::isa<TerminatorInst>(I))
+      //
+      // Terminators don't have any uses but are never supposed to be removed
+      // as dead code.
+      //
+      // CreateScopeInst may not have any users, but it is lowered to
+      // HBCCreateEnvironmentInst which should always be emitted and DCE'd if
+      // appropriate.
+      if (I->mayWriteMemory() || llvh::isa<TerminatorInst>(I) ||
+          llvh::isa<CreateScopeInst>(I)) {
         continue;
+      }
 
       // If some other instruction is using the result of this instruction then
       // we can't delete it.
@@ -128,8 +136,8 @@ bool DCE::runOnModule(Module *M) {
   return changed | localChanged;
 }
 
-Pass *hermes::createDCE() {
-  return new DCE();
+std::unique_ptr<Pass> hermes::createDCE() {
+  return std::make_unique<DCE>();
 }
 
 #undef DEBUG_TYPE

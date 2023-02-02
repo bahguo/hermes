@@ -9,6 +9,7 @@
 /// \file
 /// ES5.1 15.8 Populate the Math object.
 //===----------------------------------------------------------------------===//
+
 #include "JSLibInternal.h"
 
 #include "hermes/VM/JSLib/RuntimeCommonStorage.h"
@@ -16,7 +17,9 @@
 #include "hermes/VM/SingleObject.h"
 #include "hermes/VM/StringPrimitive.h"
 
+#ifndef _USE_MATH_DEFINES
 #define _USE_MATH_DEFINES
+#endif
 #include <float.h>
 #include <math.h>
 #include <random>
@@ -24,7 +27,11 @@
 #include "hermes/Support/OSCompat.h"
 
 #include "llvh/Support/MathExtras.h"
+#pragma GCC diagnostic push
 
+#ifdef HERMES_COMPILER_SUPPORTS_WSHORTEN_64_TO_32
+#pragma GCC diagnostic ignored "-Wshorten-64-to-32"
+#endif
 namespace hermes {
 namespace vm {
 
@@ -204,22 +211,9 @@ CallResult<HermesValue> mathRandom(void *, Runtime &runtime, NativeArgs) {
   RuntimeCommonStorage *storage = runtime.getCommonStorage();
   if (!storage->randomEngineSeeded_) {
     std::minstd_rand::result_type seed;
-    if (storage->env) {
-      if (storage->env->mathRandomSeed == 0) {
-        return runtime.raiseTypeError(
-            "Replay of Math.random() without a traced seed set");
-      }
-      seed = storage->env->mathRandomSeed;
-    } else {
-      seed = std::random_device()();
-    }
+    seed = std::random_device()();
     storage->randomEngine_.seed(seed);
     storage->randomEngineSeeded_ = true;
-    if (LLVM_UNLIKELY(storage->shouldTrace)) {
-      // Math.random() is a source of unpredictable behavior in JS, which needs
-      // to be mocked for synthetic benchmarks.
-      storage->tracedEnv.mathRandomSeed = seed;
-    }
   }
   std::uniform_real_distribution<> dist(0.0, 1.0);
   return HermesValue::encodeDoubleValue(dist(storage->randomEngine_));

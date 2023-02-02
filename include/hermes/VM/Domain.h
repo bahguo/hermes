@@ -120,7 +120,7 @@ class Domain final : public GCCell {
       Handle<Domain> self,
       Runtime &runtime,
       RuntimeModule *runtimeModule) {
-    self->runtimeModules_.push_back(runtimeModule, &runtime.getHeap());
+    self->runtimeModules_.push_back(runtimeModule, runtime.getHeap());
   }
 
   /// Import the CommonJS module table from the given \p runtimeModule,
@@ -201,7 +201,7 @@ class Domain final : public GCCell {
     cjsModules_.getNonNull(runtime)->set(
         cjsModuleOffset + CachedExportsOffset,
         cachedExports,
-        &runtime.getHeap());
+        runtime.getHeap());
   }
 
   /// Set the module object for the given cjsModuleOffset.
@@ -209,7 +209,7 @@ class Domain final : public GCCell {
     cjsModules_.getNonNull(runtime)->set(
         cjsModuleOffset + ModuleOffset,
         module.getHermesValue(),
-        &runtime.getHeap());
+        runtime.getHeap());
   }
 
   /// \return the throwing require function with require.context bound to a
@@ -221,20 +221,16 @@ class Domain final : public GCCell {
   ~Domain();
 
   /// Free all non-GC managed resources associated with the object.
-  static void _finalizeImpl(GCCell *cell, GC *gc);
-
-  /// Mark all the weak references for an object.
-  static void _markWeakImpl(GCCell *cell, WeakRefAcceptor &acceptor);
+  static void _finalizeImpl(GCCell *cell, GC &gc);
 
   /// \return the amount of non-GC memory being used by the given \p cell.
   static size_t _mallocSizeImpl(GCCell *cell);
 
+#ifdef HERMES_MEMORY_INSTRUMENTATION
   /// Heap snapshot callbacks.
-  static void _snapshotAddEdgesImpl(GCCell *cell, GC *gc, HeapSnapshot &snap);
-  static void _snapshotAddNodesImpl(GCCell *cell, GC *gc, HeapSnapshot &snap);
-
-  /// Mark the WeakRefs in associated RuntimeModules which point to this Domain.
-  void markWeakRefs(WeakRefAcceptor &acceptor);
+  static void _snapshotAddEdgesImpl(GCCell *cell, GC &gc, HeapSnapshot &snap);
+  static void _snapshotAddNodesImpl(GCCell *cell, GC &gc, HeapSnapshot &snap);
+#endif
 };
 
 /// The context used as the "this" value for require() calls, to allow the

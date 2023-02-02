@@ -7,10 +7,15 @@
 
 #include "JSLibInternal.h"
 
+#include "hermes/VM/BigIntPrimitive.h"
 #include "hermes/VM/JSDataView.h"
 #include "hermes/VM/JSTypedArray.h"
 #include "hermes/VM/StringPrimitive.h"
+#pragma GCC diagnostic push
 
+#ifdef HERMES_COMPILER_SUPPORTS_WSHORTEN_64_TO_32
+#pragma GCC diagnostic ignored "-Wshorten-64-to-32"
+#endif
 namespace hermes {
 namespace vm {
 
@@ -53,6 +58,23 @@ dataViewPrototypeByteOffset(void *, Runtime &runtime, NativeArgs args) {
 // ES6 24.2.4.5 - 22.2.4.20 && ES 2018 24.3.1.1
 namespace {
 template <typename T>
+CallResult<HermesValue> dataViewPrototypeGetEncoder(Runtime &, T value) {
+  return SafeNumericEncoder<T>::encode(value);
+}
+
+CallResult<HermesValue> dataViewPrototypeGetEncoder(
+    Runtime &runtime,
+    int64_t value) {
+  return BigIntPrimitive::fromSigned(runtime, value);
+}
+
+CallResult<HermesValue> dataViewPrototypeGetEncoder(
+    Runtime &runtime,
+    uint64_t value) {
+  return BigIntPrimitive::fromUnsigned(runtime, value);
+}
+
+template <typename T>
 CallResult<HermesValue>
 dataViewPrototypeGet(void *, Runtime &runtime, NativeArgs args) {
   auto self = args.dyncastThis<JSDataView>();
@@ -75,8 +97,13 @@ dataViewPrototypeGet(void *, Runtime &runtime, NativeArgs args) {
         "DataView.prototype.get<Type>(): Cannot "
         "read that many bytes");
   }
-  return SafeNumericEncoder<T>::encode(
-      self->get<T>(runtime, byteOffset, littleEndian));
+  return dataViewPrototypeGetEncoder(
+      runtime, self->get<T>(runtime, byteOffset, littleEndian));
+}
+
+template <CellKind C>
+constexpr bool isBigIntCellKind() {
+  return C == CellKind::BigInt64ArrayKind || C == CellKind::BigUint64ArrayKind;
 }
 
 template <typename T, CellKind C>
@@ -93,7 +120,11 @@ dataViewPrototypeSet(void *, Runtime &runtime, NativeArgs args) {
   }
   auto byteOffset = res->getNumberAs<uint64_t>();
   auto littleEndian = toBoolean(args.getArg(2));
-  res = toNumber_RJS(runtime, args.getArgHandle(1));
+  if constexpr (isBigIntCellKind<C>()) {
+    res = toBigInt_RJS(runtime, args.getArgHandle(1));
+  } else {
+    res = toNumber_RJS(runtime, args.getArgHandle(1));
+  }
   if (res == ExecutionStatus::EXCEPTION) {
     return ExecutionStatus::EXCEPTION;
   }
@@ -101,7 +132,7 @@ dataViewPrototypeSet(void *, Runtime &runtime, NativeArgs args) {
     return runtime.raiseTypeError(
         "DataView.prototype.set<Type> called on a detached ArrayBuffer");
   }
-  T value = JSTypedArray<T, C>::toDestType(res->getNumber());
+  T value = JSTypedArray<T, C>::toDestType(*res);
   if (byteOffset + sizeof(T) > self->byteLength()) {
     return runtime.raiseRangeError(
         "DataView.prototype.set<Type>(): Cannot "

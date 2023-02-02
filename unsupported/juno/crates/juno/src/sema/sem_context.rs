@@ -5,40 +5,16 @@
  * LICENSE file in the root directory of this source tree.
  */
 
-use crate::ast::NodeRc;
-use juno_ast::{node_cast, GCLock, Node};
-use juno_support::atom_table::Atom;
-use juno_support::source_manager::SourceId;
 use std::collections::HashMap;
-use std::fmt::Display;
-use std::num::NonZeroU32;
 
-macro_rules! declare_opaque_id {
-    ($name:ident) => {
-        #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
-        pub struct $name(NonZeroU32);
-        impl $name {
-            #[inline]
-            fn new(v: usize) -> Self {
-                debug_assert!(v < u32::MAX as usize);
-                unsafe { Self::new_unchecked(v) }
-            }
-            #[inline]
-            const unsafe fn new_unchecked(v: usize) -> Self {
-                Self(NonZeroU32::new_unchecked((v + 1) as u32))
-            }
-            fn as_usize(self) -> usize {
-                (self.0.get() - 1) as usize
-            }
-        }
-        impl Display for $name {
-            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                write!(f, "{}", self.as_usize())?;
-                Ok(())
-            }
-        }
-    };
-}
+use juno_ast::node_cast;
+use juno_ast::GCLock;
+use juno_ast::Node;
+use juno_support::atom_table::Atom;
+use juno_support::declare_opaque_id;
+use juno_support::source_manager::SourceId;
+
+use crate::ast::NodeRc;
 
 declare_opaque_id!(DeclId);
 declare_opaque_id!(LexicalScopeId);
@@ -226,6 +202,8 @@ pub struct FunctionInfo {
     pub strict: bool,
     /// All lexical scopes in this function. The first one is the function scope.
     pub scopes: Vec<LexicalScopeId>,
+    /// True if this function is an arrow function.
+    pub arrow: bool,
     /// The implicitly declared "arguments" object. It is declared only if it is used.
     pub arguments_decl: Option<DeclId>,
     /// How many labels have been allocated in this function so far.
@@ -309,12 +287,14 @@ impl SemContext {
         parent_function: Option<FunctionInfoId>,
         parent_scope: Option<LexicalScopeId>,
         strict: bool,
+        arrow: bool,
     ) -> (FunctionInfoId, &FunctionInfo) {
         self.funcs.0.push(FunctionInfo {
             parent_function,
             parent_scope,
             strict,
             scopes: Default::default(),
+            arrow,
             arguments_decl: Default::default(),
             num_labels: 0,
         });
@@ -465,25 +445,47 @@ impl SemContext {
         self.function(func).arguments_decl
     }
     /// Return or create the special arguments declaration in the specified
-    /// function.
+    /// function. If `func` is an arrow function, find the closest ancestor that is not an arrow
+    /// function and use that function's `arguments`.
     /// - `name`: the object doesn't have access to the atom table, so it has
     ///   to be passed in.
     pub(super) fn func_arguments_decl(&mut self, func: FunctionInfoId, name: Atom) -> DeclId {
-        if let Some(d) = self.function(func).arguments_decl {
+        let mut arguments_func = func;
+        while self.function(arguments_func).arrow {
+            match self.function(arguments_func).parent_function {
+                None => break,
+                Some(parent) => arguments_func = parent,
+            };
+        }
+
+        if let Some(d) = self.function(arguments_func).arguments_decl {
             return d;
         }
 
-        let decl = self.new_decl_special(
-            *self
-                .function(func)
-                .scopes
-                .first()
-                .expect("Function must contain a scope"),
-            name,
-            DeclKind::Var,
-            Special::Arguments,
-        );
-        self.function_mut(func).arguments_decl = Some(decl);
+        let decl = if Some(arguments_func) == self.global_function_id() {
+            // `arguments` must simply be treated as a global property in top level contexts.
+            self.new_decl(
+                *self
+                    .function(arguments_func)
+                    .scopes
+                    .first()
+                    .expect("Function must contain a scope"),
+                name,
+                DeclKind::UndeclaredGlobalProperty,
+            )
+        } else {
+            self.new_decl_special(
+                *self
+                    .function(arguments_func)
+                    .scopes
+                    .first()
+                    .expect("Function must contain a scope"),
+                name,
+                DeclKind::Var,
+                Special::Arguments,
+            )
+        };
+        self.function_mut(arguments_func).arguments_decl = Some(decl);
 
         decl
     }

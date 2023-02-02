@@ -10,6 +10,7 @@
 #include "hermes/Support/ErrorHandling.h"
 #include "hermes/Support/SlowAssert.h"
 #include "hermes/VM/CheckHeapWellFormedAcceptor.h"
+#include "hermes/VM/CompressedPointer.h"
 #include "hermes/VM/GC.h"
 #include "hermes/VM/GCBase-inline.h"
 #include "hermes/VM/HiddenClass.h"
@@ -142,7 +143,7 @@ struct MallocGC::MarkingAcceptor final : public RootAndSlotAcceptorDefault,
     if (hv.isPointer()) {
       GCCell *ptr = static_cast<GCCell *>(hv.getPointer());
       accept(ptr);
-      hv.setInGC(hv.updatePointer(ptr), &gc);
+      hv.setInGC(hv.updatePointer(ptr), gc);
     } else if (hv.isSymbol()) {
       acceptSym(hv.getSymbol());
     }
@@ -152,7 +153,7 @@ struct MallocGC::MarkingAcceptor final : public RootAndSlotAcceptorDefault,
     if (hv.isPointer()) {
       GCCell *ptr = static_cast<GCCell *>(hv.getPointer(pointerBase_));
       accept(ptr);
-      hv.setInGC(hv.updatePointer(ptr, pointerBase_), &gc);
+      hv.setInGC(hv.updatePointer(ptr, pointerBase_), gc);
     } else if (hv.isSymbol()) {
       acceptSym(hv.getSymbol());
     }
@@ -247,7 +248,7 @@ void MallocGC::collectBeforeAlloc(std::string cause, uint32_t size) {
 
 #ifdef HERMES_SLOW_DEBUG
 void MallocGC::checkWellFormed() {
-  GCCycle cycle{this};
+  GCCycle cycle{*this};
   CheckHeapWellFormedAcceptor acceptor(*this);
   DroppingAcceptor<CheckHeapWellFormedAcceptor> nameAcceptor{acceptor};
   markRoots(nameAcceptor, true);
@@ -263,7 +264,7 @@ void MallocGC::clearUnmarkedPropertyMaps() {
   for (CellHeader *header : pointers_)
     if (!header->isMarked())
       if (auto hc = dyn_vmcast<HiddenClass>(header->data()))
-        hc->clearPropertyMap(this);
+        hc->clearPropertyMap(*this);
 }
 #endif
 
@@ -283,7 +284,7 @@ void MallocGC::collect(std::string cause, bool /*canEffectiveOOM*/) {
 
   // Begin the collection phases.
   {
-    GCCycle cycle{this, "GC Full collection"};
+    GCCycle cycle{*this, "GC Full collection"};
     MarkingAcceptor acceptor(*this);
     DroppingAcceptor<MarkingAcceptor> nameAcceptor{acceptor};
     markRoots(nameAcceptor, true);
@@ -315,7 +316,7 @@ void MallocGC::collect(std::string cause, bool /*canEffectiveOOM*/) {
       const auto freedSize = cell->getAllocatedSize();
       // Run the finalizer if it exists and the cell is actually dead.
       if (!header->isMarked()) {
-        cell->getVT()->finalizeIfExists(cell, this);
+        cell->getVT()->finalizeIfExists(cell, *this);
 #ifndef NDEBUG
         // Update statistics.
         if (cell->getVT()->finalize_) {
@@ -411,7 +412,7 @@ void MallocGC::drainMarkStack(MarkingAcceptor &acceptor) {
 
 void MallocGC::completeWeakMapMarking(MarkingAcceptor &acceptor) {
   gcheapsize_t weakMapAllocBytes = GCBase::completeWeakMapMarking(
-      this,
+      *this,
       acceptor,
       acceptor.reachableWeakMaps_,
       /*objIsMarked*/
@@ -422,9 +423,8 @@ void MallocGC::completeWeakMapMarking(MarkingAcceptor &acceptor) {
         if (valHeader->isMarked()) {
 #ifdef HERMESVM_SANITIZE_HANDLES
           valRef.setInGC(
-              HermesValue::encodeObjectValue(
-                  valHeader->getForwardingPointer()->data()),
-              this);
+              valRef.updatePointer(valHeader->getForwardingPointer()->data()),
+              *this);
 #endif
           return false;
         }
@@ -447,7 +447,7 @@ void MallocGC::completeWeakMapMarking(MarkingAcceptor &acceptor) {
 void MallocGC::finalizeAll() {
   for (CellHeader *header : pointers_) {
     GCCell *cell = header->data();
-    cell->getVT()->finalizeIfExists(cell, this);
+    cell->getVT()->finalizeIfExists(cell, *this);
   }
 }
 
@@ -519,48 +519,10 @@ void MallocGC::resetWeakReferences() {
 
 void MallocGC::updateWeakReferences() {
   for (auto &slot : weakSlots_) {
-    switch (slot.state()) {
-      case WeakSlotState::Free:
-        break;
-      case WeakSlotState::Unmarked:
-        freeWeakSlot(&slot);
-        break;
-      case WeakSlotState::Marked:
-        // If it's not a pointer, nothing to do.
-        if (!slot.hasPointer()) {
-          break;
-        }
-        auto *cell = reinterpret_cast<GCCell *>(slot.getPointer());
-        HERMES_SLOW_ASSERT(
-            validPointer(cell) &&
-            "Got a pointer out of a weak reference slot that is not owned by "
-            "the GC");
-        CellHeader *header = CellHeader::from(cell);
-        if (!header->isMarked()) {
-          // This pointer is no longer live, zero it out
-          slot.clearPointer();
-        } else {
-#ifdef HERMESVM_SANITIZE_HANDLES
-          // Update the value to point to the new location
-          GCCell *nextCell = header->getForwardingPointer()->data();
-          HERMES_SLOW_ASSERT(
-              validPointer(cell) &&
-              "Forwarding weak ref must be to a valid cell");
-          slot.setPointer(nextCell);
-#endif
-        }
-        break;
+    if (slot.state() == WeakSlotState::Unmarked) {
+      freeWeakSlot(&slot);
     }
   }
-}
-
-WeakRefSlot *MallocGC::allocWeakSlot(HermesValue init) {
-  weakSlots_.push_back({init});
-  return &weakSlots_.back();
-}
-
-void MallocGC::freeWeakSlot(WeakRefSlot *slot) {
-  slot->free(nullptr);
 }
 
 #ifndef NDEBUG
@@ -575,12 +537,18 @@ bool MallocGC::dbgContains(const void *p) const {
   isValid = isValid || newPointers_.find(header) != newPointers_.end();
   return isValid;
 }
+
+bool MallocGC::needsWriteBarrier(void *loc, GCCell *value) {
+  return false;
+}
 #endif
 
+#ifdef HERMES_MEMORY_INSTRUMENTATION
 void MallocGC::createSnapshot(llvh::raw_ostream &os) {
-  GCCycle cycle{this};
-  GCBase::createSnapshot(this, os);
+  GCCycle cycle{*this};
+  GCBase::createSnapshot(*this, os);
 }
+#endif
 
 void MallocGC::creditExternalMemory(GCCell *, uint32_t size) {
   externalBytes_ += size;

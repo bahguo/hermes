@@ -12,18 +12,21 @@ import type {ESNode, ModuleDeclaration, Statement} from 'hermes-estree';
 import type {MutationContext} from '../MutationContext';
 import type {DetachedNode} from '../../detachedNode';
 
-import {replaceInArray} from './utils/arrayUtils';
+import {astArrayMutationHelpers} from 'hermes-parser';
 import {getStatementParent} from './utils/getStatementParent';
 import {isValidModuleDeclarationParent} from './utils/isValidModuleDeclarationParent';
 import {moveCommentsToNewNode} from '../comments/comments';
 import {InvalidReplacementError} from '../Errors';
 import * as t from '../../generated/node-types';
 
+export type ReplaceStatementWithManyMutationNodes =
+  | ModuleDeclaration
+  | Statement;
 export type ReplaceStatementWithManyMutation = $ReadOnly<{
   type: 'replaceStatementWithMany',
-  target: ModuleDeclaration | Statement,
+  target: ReplaceStatementWithManyMutationNodes,
   nodesToReplaceWith: $ReadOnlyArray<
-    DetachedNode<ModuleDeclaration | Statement>,
+    DetachedNode<ReplaceStatementWithManyMutationNodes>,
   >,
   keepComments: boolean,
 }>;
@@ -75,7 +78,7 @@ export function performReplaceStatementWithManyMutation(
     const parent: interface {
       [string]: $ReadOnlyArray<DetachedNode<Statement | ModuleDeclaration>>,
     } = replacementParent.parent;
-    parent[replacementParent.key] = replaceInArray(
+    parent[replacementParent.key] = astArrayMutationHelpers.replaceInArray(
       parent[replacementParent.key],
       replacementParent.targetIndex,
       mutation.nodesToReplaceWith,

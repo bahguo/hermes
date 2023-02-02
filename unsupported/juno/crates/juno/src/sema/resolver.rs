@@ -5,22 +5,41 @@
  * LICENSE file in the root directory of this source tree.
  */
 
-use super::sem_context::*;
-use crate::ast::{
-    self, builder, node_cast, node_isa, template, GCLock, Identifier, Node, NodeField, NodeList,
-    NodePtr, NodeRc, NodeVariant, Path, TemplateMetadata, UnaryExpressionOperator,
-    VariableDeclarationKind, Visitor,
-};
-use crate::resolve_dependency::{DependencyKind, DependencyResolver};
-use crate::sema::decl_collector::{DeclCollector, ScopeDecls};
-use crate::sema::keywords::Keywords;
-use crate::sema::known_globals::KNOWN_GLOBALS;
+use std::collections::HashMap;
+use std::collections::HashSet;
+use std::rc::Rc;
+
 use juno_support::atom_table::Atom;
-use juno_support::source_manager::{SourceId, SourceRange};
+use juno_support::source_manager::SourceId;
+use juno_support::source_manager::SourceRange;
 use juno_support::ScopedHashMap;
 use smallvec::SmallVec;
-use std::collections::{HashMap, HashSet};
-use std::rc::Rc;
+
+use super::sem_context::*;
+use crate::ast;
+use crate::ast::builder;
+use crate::ast::node_cast;
+use crate::ast::node_isa;
+use crate::ast::template;
+use crate::ast::GCLock;
+use crate::ast::Identifier;
+use crate::ast::Node;
+use crate::ast::NodeField;
+use crate::ast::NodeList;
+use crate::ast::NodePtr;
+use crate::ast::NodeRc;
+use crate::ast::NodeVariant;
+use crate::ast::Path;
+use crate::ast::TemplateMetadata;
+use crate::ast::UnaryExpressionOperator;
+use crate::ast::VariableDeclarationKind;
+use crate::ast::Visitor;
+use crate::resolve_dependency::DependencyKind;
+use crate::resolve_dependency::DependencyResolver;
+use crate::sema::decl_collector::DeclCollector;
+use crate::sema::decl_collector::ScopeDecls;
+use crate::sema::keywords::Keywords;
+use crate::sema::known_globals::KNOWN_GLOBALS;
 
 #[derive(Debug)]
 struct Binding<'gc> {
@@ -185,7 +204,7 @@ impl<'gc> Resolver<'gc, '_> {
     }
 
     /// Return `true` if the `callee` is the `require` function.
-    fn is_require(&mut self, lock: &GCLock, node: &'gc ast::CallExpression) -> bool {
+    fn is_require(&mut self, lock: &'gc GCLock, node: &'gc ast::CallExpression<'gc>) -> bool {
         debug_assert!(
             matches!(self.mode, ResolverMode::Module { .. }),
             "is_require must only be called in module mode"
@@ -219,9 +238,12 @@ impl<'gc> Resolver<'gc, '_> {
         };
 
         // Create the function.
-        let (func_id, _) = self
-            .sem
-            .new_function(parent_func_id, self.current_scope, strict);
+        let (func_id, _) = self.sem.new_function(
+            parent_func_id,
+            self.current_scope,
+            strict,
+            matches!(root, Node::ArrowFunctionExpression(_)),
+        );
 
         // Create the function context.
         self.func_stack.push(FunctionContext {
@@ -249,11 +271,11 @@ impl<'gc> Resolver<'gc, '_> {
     /// `scope_node` - the AST node to associate the scope with.
     fn in_new_scope<R, F: FnOnce(&mut Self) -> R>(
         &mut self,
-        lock: &GCLock,
-        scope_node: &Node,
+        lock: &'gc GCLock,
+        scope_node: &'gc Node<'gc>,
         f: F,
     ) -> R {
-        // New biding table scope.
+        // New binding table scope.
         self.binding_table.push_scope();
         // New lexical scope.
         let prev_scope = self.current_scope;
@@ -289,7 +311,7 @@ impl<'gc> Resolver<'gc, '_> {
     /// Reports an error if the label is already defined.
     fn with_new_label<R, F: FnOnce(&mut Self) -> R>(
         &mut self,
-        lock: &GCLock,
+        lock: &'gc GCLock,
         identifier: Option<&'gc Node<'gc>>,
         statement: &'gc Node<'gc>,
         f: F,
@@ -387,7 +409,7 @@ impl<'gc> Resolver<'gc, '_> {
     fn visit_program(&mut self, lock: &'gc GCLock, node: &'gc Node<'gc>) {
         self.in_new_function(lock, node, |pself| {
             // Search for "use strict".
-            if find_use_strict(&node_cast!(Node::Program, node).body).is_some() {
+            if find_use_strict(lock, &node_cast!(Node::Program, node).body).is_some() {
                 pself
                     .sem
                     .function_mut(pself.function_context().func_id)
@@ -418,12 +440,12 @@ impl<'gc> Resolver<'gc, '_> {
             template::FunctionDeclaration {
                 metadata: Default::default(),
                 id: None,
-                params: vec![],
+                params: NodeList::new(lock),
                 body: builder::BlockStatement::build_template(
                     lock,
                     template::BlockStatement {
                         metadata: Default::default(),
-                        body: vec![],
+                        body: NodeList::new(lock),
                     },
                 ),
                 type_parameters: None,
@@ -444,17 +466,20 @@ impl<'gc> Resolver<'gc, '_> {
                     pself.declare_known_globals(lock, *global.range());
                 }
 
-                pself.in_new_scope(lock, node, |pself| {
-                    // Search for "use strict".
-                    if find_use_strict(&node_cast!(Node::Module, node).body).is_some() {
-                        pself
-                            .sem
-                            .function_mut(pself.function_context().func_id)
-                            .strict = true;
-                    }
+                // Create the module scope as a function.
+                pself.in_new_function(lock, node, |pself| {
+                    pself.in_new_scope(lock, node, |pself| {
+                        // Search for "use strict".
+                        if find_use_strict(lock, &node_cast!(Node::Module, node).body).is_some() {
+                            pself
+                                .sem
+                                .function_mut(pself.function_context().func_id)
+                                .strict = true;
+                        }
 
-                    pself.process_collected_declarations(lock, node);
-                    node.visit_children(lock, pself);
+                        pself.process_collected_declarations(lock, node);
+                        node.visit_children(lock, pself);
+                    })
                 });
             })
         });
@@ -507,7 +532,7 @@ impl<'gc> Resolver<'gc, '_> {
             let body = node.function_like_body();
             // Search for "use strict".
             let use_strict = match body {
-                Node::BlockStatement(b) => find_use_strict(&b.body),
+                Node::BlockStatement(b) => find_use_strict(lock, &b.body),
                 _ => None,
             };
             // Set the strictness if we have to.
@@ -601,7 +626,7 @@ impl<'gc> Resolver<'gc, '_> {
                 // Visit the parameters before we have hoisted the body declarations.
                 {
                     pself.validating_formal_params = true;
-                    for &param in node.function_like_params() {
+                    for param in node.function_like_params() {
                         param.visit(lock, pself, Some(Path::new(node, NodeField::param)));
                     }
                     pself.validating_formal_params = false;
@@ -625,6 +650,43 @@ impl<'gc> Resolver<'gc, '_> {
                     Unresolver::new(pself, depth).run(lock, node);
                 }
             });
+        });
+    }
+
+    fn visit_for_in_of(&mut self, lock: &'gc GCLock, node: &'gc Node<'gc>, left: &'gc Node<'gc>) {
+        self.with_new_label(lock, None, node, |pself| {
+            // Ensure the initializer is valid.
+            if let Node::VariableDeclaration(vd) = left {
+                let declarator =
+                    node_cast!(Node::VariableDeclarator, vd.declarations.head().unwrap());
+                if let Some(init) = declarator.init {
+                    if init.is_pattern() {
+                        lock.sm().error(
+                            *init.range(),
+                            "destructuring declaration cannot be initialized in for-in/for-of loop",
+                        );
+                    } else if !(matches!(node, Node::ForInStatement(_))
+                        && !pself.function_strict_mode()
+                        && vd.kind == ast::VariableDeclarationKind::Var)
+                    {
+                        lock.sm().error(
+                            *init.range(),
+                            "for-in/for-of variable declaration may not be initialized",
+                        );
+                    }
+                }
+            } else {
+                pself.validate_assignment_target(lock, left);
+            }
+            // Only create a lexical scope if there are declarations in it.
+            if let Some(decls) = pself.function_context().decls.scope_decls_for_node(node) {
+                pself.in_new_scope(lock, node, |pself| {
+                    pself.process_declarations(lock, decls.as_slice());
+                    node.visit_children(lock, pself);
+                });
+            } else {
+                node.visit_children(lock, pself);
+            }
         });
     }
 
@@ -657,7 +719,13 @@ impl<'gc> Resolver<'gc, '_> {
         }
     }
 
-    fn visit_identifier(&mut self, lock: &GCLock, ident: &'gc Identifier, node: &Node, path: Path) {
+    fn visit_identifier(
+        &mut self,
+        lock: &'gc GCLock,
+        ident: &'gc Identifier<'gc>,
+        node: &'gc Node<'gc>,
+        path: Path<'gc>,
+    ) {
         match path.parent {
             // { identifier: ... }
             Node::Property(ast::Property {
@@ -693,11 +761,7 @@ impl<'gc> Resolver<'gc, '_> {
         if let Node::FunctionDeclaration(_)
         | Node::FunctionExpression(_)
         | Node::ArrowFunctionExpression(_)
-        | Node::CatchClause(_)
-        | Node::ForStatement(_)
-        | Node::ForInStatement(_)
-        | Node::ForOfStatement(_)
-        | Node::Program(_) = path.parent
+        | Node::CatchClause(_) = path.parent
         {
             return node.visit_children(lock, self);
         }
@@ -718,9 +782,9 @@ impl<'gc> Resolver<'gc, '_> {
     /// If the identifier is unresolvable, returns `None`.
     fn check_identifier_resolved(
         &mut self,
-        lock: &GCLock,
-        ident: &'gc Identifier,
-        node: &Node,
+        lock: &'gc GCLock,
+        ident: &'gc Identifier<'gc>,
+        node: &'gc Node<'gc>,
     ) -> Option<DeclId> {
         let ptr = NodeRc::from_node(lock, node);
         if let Some(Resolution::Decl(decl)) = self.sem.ident_decl(&ptr) {
@@ -739,15 +803,15 @@ impl<'gc> Resolver<'gc, '_> {
 
     fn resolve_identifier(
         &mut self,
-        lock: &GCLock,
-        ident: &'gc Identifier,
-        node: &Node,
+        lock: &'gc GCLock,
+        ident: &'gc Identifier<'gc>,
+        node: &'gc Node<'gc>,
         in_typeof: bool,
     ) {
         let decl = self.check_identifier_resolved(lock, ident, node);
 
-        // Is this "arguments"?
-        if ident.name == self.kw.ident_arguments {
+        // Is this "arguments" in a function?
+        if ident.name == self.kw.ident_arguments && !self.function_context().func_id.is_global() {
             if decl.is_none() || !self.decl_in_cur_function(decl.unwrap()) {
                 let args_decl = self
                     .sem
@@ -794,7 +858,7 @@ impl<'gc> Resolver<'gc, '_> {
 
     /// Declare all declarations optionally associated with `scope_node` by
     /// [`DeclCollector`] in the current scope.
-    fn process_collected_declarations(&mut self, lock: &GCLock, scope_node: &Node) {
+    fn process_collected_declarations(&mut self, lock: &'gc GCLock, scope_node: &'gc Node<'gc>) {
         if let Some(scope_decls) = self
             .function_context()
             .decls
@@ -806,7 +870,7 @@ impl<'gc> Resolver<'gc, '_> {
 
     /// Declare all declarations from `scope_decls` in the current scope by
     /// calling [`Self::validate_and_declare_identifier()`].
-    fn process_declarations(&mut self, lock: &GCLock, scope_decls: &[&'gc Node<'gc>]) {
+    fn process_declarations(&mut self, lock: &'gc GCLock, scope_decls: &[&'gc Node<'gc>]) {
         for &decl in scope_decls {
             let mut idents = SmallVec::<[&Node; 4]>::new();
             let decl_kind = self.extract_idents_from_decl(lock, decl, &mut idents);
@@ -826,7 +890,7 @@ impl<'gc> Resolver<'gc, '_> {
     ///     declarations.
     fn validate_and_declare_identifier(
         &mut self,
-        lock: &GCLock,
+        lock: &'gc GCLock,
         decl_kind: DeclKind,
         id_node: &'gc Node<'gc>,
     ) {
@@ -837,6 +901,18 @@ impl<'gc> Resolver<'gc, '_> {
         }
 
         let mut prev_binding = self.binding_table.value(ident.name);
+
+        // Redeclaration of `arguments` in non-strict mode is allowed at the function level,
+        // so we don't need to declare a new variable.
+        // We do need to check that this isn't the global function, because `arguments` is a valid
+        // variable name in the global function in non-strict mode.
+        if !self.function_strict_mode()
+            && ident.name == self.kw.ident_arguments
+            && decl_kind.is_var_like()
+            && !self.function_context().func_id.is_global()
+        {
+            return;
+        }
 
         let mut decl_id = None;
 
@@ -944,7 +1020,7 @@ impl<'gc> Resolver<'gc, '_> {
     /// Return true if valid, otherwise generate an error and return false.
     fn validate_declaration_name(
         &self,
-        lock: &GCLock,
+        lock: &'gc GCLock,
         decl_kind: DeclKind,
         ident: &Identifier,
     ) -> bool {
@@ -986,18 +1062,52 @@ impl<'gc> Resolver<'gc, '_> {
         true
     }
 
+    /// Ensure that the specified node is a valid target for an assignment, in
+    /// other words it is an l-value, a Pattern (checked recursively) or an Empty
+    /// (used by elision).
+    fn validate_assignment_target(&self, lock: &GCLock, node: &Node) {
+        match node {
+            Node::Empty(_) => {}
+            Node::AssignmentPattern(ast::AssignmentPattern { left, .. }) => {
+                self.validate_assignment_target(lock, left)
+            }
+            Node::ArrayPattern(ast::ArrayPattern { elements, .. }) => {
+                for element in elements.iter() {
+                    self.validate_assignment_target(lock, element)
+                }
+            }
+            Node::Property(ast::Property { value, .. }) => {
+                self.validate_assignment_target(lock, value)
+            }
+            Node::ObjectPattern(ast::ObjectPattern { properties, .. }) => {
+                for property in properties.iter() {
+                    self.validate_assignment_target(lock, property)
+                }
+            }
+            Node::RestElement(ast::RestElement { argument, .. }) => {
+                self.validate_assignment_target(lock, argument)
+            }
+            _ => {
+                if !self.is_lvalue(node) {
+                    lock.sm()
+                        .error(*node.range(), "invalid assignment left-hand side");
+                }
+            }
+        };
+    }
+
     /// Extract the list of declared identifiers in a declaration node and return
     /// the declaration kind of the node. Function declarations are always returned
     /// as DeclKind::ScopedFunction, so they can be distinguished.
     fn extract_idents_from_decl<A: smallvec::Array<Item = &'gc Node<'gc>>>(
         &self,
-        lock: &GCLock,
+        lock: &'gc GCLock,
         decl: &'gc Node<'gc>,
         idents: &mut SmallVec<A>,
     ) -> DeclKind {
         match decl {
             Node::VariableDeclaration(n) => {
-                for &declarator in &n.declarations {
+                for declarator in n.declarations {
                     Self::extract_declared_idents_from_id(
                         lock,
                         Some(node_cast!(Node::VariableDeclarator, declarator).id),
@@ -1005,21 +1115,35 @@ impl<'gc> Resolver<'gc, '_> {
                     );
                 }
                 match n.kind {
-                    VariableDeclarationKind::Var => DeclKind::Var,
+                    VariableDeclarationKind::Var => {
+                        if self.binding_table.current_scope_depth()
+                            == self.global_binding_scope_depth.unwrap()
+                        {
+                            DeclKind::GlobalProperty
+                        } else {
+                            DeclKind::Var
+                        }
+                    }
                     VariableDeclarationKind::Let => DeclKind::Let,
                     VariableDeclarationKind::Const => DeclKind::Const,
                 }
             }
             Node::FunctionDeclaration(n) => {
                 Self::extract_declared_idents_from_id(lock, n.id, idents);
-                DeclKind::ScopedFunction
+                if self.binding_table.current_scope_depth()
+                    == self.global_binding_scope_depth.unwrap()
+                {
+                    DeclKind::GlobalProperty
+                } else {
+                    DeclKind::ScopedFunction
+                }
             }
             Node::ClassDeclaration(n) => {
                 Self::extract_declared_idents_from_id(lock, n.id, idents);
                 DeclKind::Class
             }
             Node::ImportDeclaration(n) => {
-                for &spec in &n.specifiers {
+                for spec in n.specifiers {
                     match spec {
                         Node::ImportSpecifier(nn) => {
                             Self::extract_declared_idents_from_id(lock, Some(nn.local), idents);
@@ -1054,7 +1178,7 @@ impl<'gc> Resolver<'gc, '_> {
     /// Normally that is just a single identifier, but it can be more in case of
     /// destructuring.
     fn extract_declared_idents_from_id<A: smallvec::Array<Item = &'gc Node<'gc>>>(
-        lock: &GCLock,
+        lock: &'gc GCLock,
         node_opt: Option<&'gc Node<'gc>>,
         idents: &mut SmallVec<A>,
     ) {
@@ -1073,7 +1197,7 @@ impl<'gc> Resolver<'gc, '_> {
                 Self::extract_declared_idents_from_id(lock, Some(n.left), idents);
             }
             Node::ArrayPattern(n) => {
-                for &elem in &n.elements {
+                for elem in n.elements {
                     Self::extract_declared_idents_from_id(lock, Some(elem), idents);
                 }
             }
@@ -1081,7 +1205,7 @@ impl<'gc> Resolver<'gc, '_> {
                 Self::extract_declared_idents_from_id(lock, Some(n.argument), idents);
             }
             Node::ObjectPattern(n) => {
-                for &prop in &n.properties {
+                for prop in n.properties {
                     match prop {
                         Node::Property(nn) => {
                             Self::extract_declared_idents_from_id(lock, Some(nn.value), idents);
@@ -1128,6 +1252,22 @@ impl<'gc> Resolver<'gc, '_> {
         }
     }
 
+    /// Return true if the `node` is an LValue: a member expression or an identifier which is a
+    /// valid LValue.
+    fn is_lvalue(&self, node: &Node) -> bool {
+        match node {
+            Node::MemberExpression(_) => true,
+
+            Node::Identifier(id) if id.name == self.kw.ident_arguments => {
+                !self.function_strict_mode()
+            }
+            Node::Identifier(id) if id.name == self.kw.ident_eval => !self.function_strict_mode(),
+            Node::Identifier(_) => true,
+
+            _ => false,
+        }
+    }
+
     fn promote_scoped_func_decls(&mut self, lock: &'gc GCLock, func_node: &'gc Node<'gc>) {
         debug_assert!(func_node.is_function_like());
         if self.function_context().decls.scoped_func_decls().is_empty() {
@@ -1155,8 +1295,24 @@ impl<'gc> Visitor<'gc> for Resolver<'gc, '_> {
             }
 
             Node::FunctionExpression(fe) => self.visit_function_expression(lock, fe, node),
+            Node::ArrowFunctionExpression(_) => self.visit_function_like(lock, node),
 
             Node::Identifier(ident) => self.visit_identifier(lock, ident, node, path.unwrap()),
+
+            Node::AssignmentExpression(asgn) => {
+                self.validate_assignment_target(lock, asgn.left);
+                node.visit_children(lock, self);
+            }
+
+            Node::UpdateExpression(update) => {
+                if !self.is_lvalue(update.argument) {
+                    lock.sm().error(
+                        *update.argument.range(),
+                        "invalid operand in update operation",
+                    );
+                }
+                node.visit_children(lock, self);
+            }
 
             Node::BlockStatement(_) => self.visit_block_statement(lock, node, path.unwrap()),
 
@@ -1174,14 +1330,19 @@ impl<'gc> Visitor<'gc> for Resolver<'gc, '_> {
                         {
                             pself.process_declarations(lock, &decls);
                         }
-                        for case in &switch.cases {
+                        for case in switch.cases {
                             case.visit(lock, pself, Some(Path::new(node, NodeField::cases)));
                         }
                     });
                 });
             }
 
-            Node::ForStatement(_) | Node::ForInStatement(_) | Node::ForOfStatement(_) => {
+            Node::ForInStatement(ast::ForInStatement { left, .. })
+            | Node::ForOfStatement(ast::ForOfStatement { left, .. }) => {
+                self.visit_for_in_of(lock, node, left)
+            }
+
+            Node::ForStatement(_) => {
                 self.with_new_label(lock, None, node, |pself| {
                     // Only create a lexical scope if there are declarations in it.
                     if let Some(decls) = pself.function_context().decls.scope_decls_for_node(node) {
@@ -1257,6 +1418,14 @@ impl<'gc> Visitor<'gc> for Resolver<'gc, '_> {
                 }
             }
 
+            Node::WithStatement(ast::WithStatement { body, .. }) => {
+                node.visit_children(lock, self);
+                // Run the Unresolver to avoid resolving to variables past the depth of the `with`.
+                // Pass `depth + 1` because variables declared in this scope also cannot be trusted.
+                let depth = self.sem.scope(self.current_scope.unwrap()).depth;
+                Unresolver::new(self, depth + 1).run(lock, body);
+            }
+
             Node::CatchClause(ast::CatchClause { param, body, .. }) => {
                 self.in_new_scope(lock, node, |pself| {
                     if let Some(id_node @ Node::Identifier(_)) = param {
@@ -1306,7 +1475,7 @@ impl<'gc> Visitor<'gc> for Resolver<'gc, '_> {
                 } = self.mode
                 {
                     // Resolve `import`.
-                    let target = String::from_utf16_lossy(&value.str);
+                    let target = String::from_utf16_lossy(lock.str_u16(*value));
                     match dependency_resolver.resolve_dependency(
                         lock,
                         self.file_id,
@@ -1357,9 +1526,10 @@ impl<'gc> Visitor<'gc> for Resolver<'gc, '_> {
                 {
                     if self.is_require(lock, call) {
                         // Resolve `require()` call.
-                        if let Node::StringLiteral(ast::StringLiteral { value, .. }) = arguments[0]
+                        if let Some(Node::StringLiteral(ast::StringLiteral { value, .. })) =
+                            arguments.head()
                         {
-                            let target = String::from_utf16_lossy(&value.str);
+                            let target = String::from_utf16_lossy(lock.str_u16(*value));
                             match dependency_resolver.resolve_dependency(
                                 lock,
                                 self.file_id,
@@ -1381,6 +1551,27 @@ impl<'gc> Visitor<'gc> for Resolver<'gc, '_> {
                 }
             }
 
+            Node::YieldExpression(_) => {
+                match self.function_context().node {
+                    Node::Program(_) => {
+                        lock.sm()
+                            .error(*node.range(), "'yield' not in a generator function");
+                    }
+                    Node::FunctionExpression(ast::FunctionExpression {
+                        generator: false, ..
+                    })
+                    | Node::FunctionDeclaration(ast::FunctionDeclaration {
+                        generator: false,
+                        ..
+                    }) => {
+                        lock.sm()
+                            .error(*node.range(), "'yield' not in a generator function");
+                    }
+                    _ => {}
+                }
+                node.visit_children(lock, self);
+            }
+
             _ => {
                 node.visit_children(lock, self);
             }
@@ -1393,7 +1584,7 @@ impl<'gc> Visitor<'gc> for Resolver<'gc, '_> {
 /// string literal).
 /// \return the node containing "use strict" or nullptr.
 #[allow(clippy::ptr_arg)]
-fn find_use_strict<'gc>(body: &NodeList<'gc>) -> Option<&'gc Node<'gc>> {
+fn find_use_strict<'gc>(lock: &'gc GCLock, body: &'gc NodeList<'gc>) -> Option<&'gc Node<'gc>> {
     /// "use strict" encoded as UTF-16.
     static USE_STRICT_UTF16: [u16; 10] = [
         'u' as u16, 's' as u16, 'e' as u16, ' ' as u16, 's' as u16, 't' as u16, 'r' as u16,
@@ -1401,12 +1592,12 @@ fn find_use_strict<'gc>(body: &NodeList<'gc>) -> Option<&'gc Node<'gc>> {
     ];
 
     // Scan until we encounter a non-directive.
-    for &node in body {
+    for node in *body {
         match node {
             Node::ExpressionStatement(ast::ExpressionStatement {
                 directive: Some(d), ..
             }) => {
-                if d.str == USE_STRICT_UTF16 {
+                if lock.str_u16(*d) == USE_STRICT_UTF16 {
                     return Some(node);
                 }
             }
@@ -1587,13 +1778,13 @@ impl<'a, 'gc, 'mode> ScopedFunctionPromoter<'a, 'gc, 'mode> {
     /// Return the declaration kind of the node.
     /// Function declarations are always returned as `ScopedFunction`, so they can be distinguished.
     fn extract_declared_idents<A: smallvec::Array<Item = &'gc Node<'gc>>>(
-        lock: &GCLock,
+        lock: &'gc GCLock,
         node: &'gc Node<'gc>,
         idents: &mut SmallVec<A>,
     ) -> DeclKind {
         match node {
             Node::VariableDeclaration(decl) => {
-                for &declarator in &decl.declarations {
+                for declarator in decl.declarations {
                     Resolver::extract_declared_idents_from_id(
                         lock,
                         Some(node_cast!(Node::VariableDeclarator, declarator).id),
@@ -1615,7 +1806,7 @@ impl<'a, 'gc, 'mode> ScopedFunctionPromoter<'a, 'gc, 'mode> {
                 DeclKind::Class
             }
             Node::ImportDeclaration(decl) => {
-                for &spec in &decl.specifiers {
+                for spec in decl.specifiers {
                     match spec {
                         Node::ImportSpecifier(spec) => {
                             Resolver::extract_declared_idents_from_id(
@@ -1659,7 +1850,8 @@ impl<'gc> Visitor<'gc> for ScopedFunctionPromoter<'_, 'gc, '_> {
             | Node::BlockStatement(_)
             | Node::ForStatement(_)
             | Node::ForInStatement(_)
-            | Node::ForOfStatement(_) => {
+            | Node::ForOfStatement(_)
+            | Node::WithStatement(_) => {
                 self.visit_scope(lock, node);
                 node.visit_children(lock, self);
             }

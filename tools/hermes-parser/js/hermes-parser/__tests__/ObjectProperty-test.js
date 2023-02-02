@@ -10,280 +10,295 @@
 
 'use strict';
 
+import type {AlignmentCase} from '../__test_utils__/alignment-utils';
+
+import {
+  expectBabelAlignment,
+  expectEspreeAlignment,
+} from '../__test_utils__/alignment-utils';
 import {parse, parseForSnapshot} from '../__test_utils__/parse';
 
 describe('Object properties', () => {
-  const source = `
-    ({
-      prop1: 1,
-      prop2: function() {},
-      prop3() {},
-      async prop4() {},
-      get prop5() {},
-      set prop6(x) {},
-    })
-  `;
+  const testCase: AlignmentCase = {
+    code: `
+      ({
+        prop1: 1,
+        prop2: function() {},
+        prop3() {},
+        async prop4() {},
+        get prop5() {},
+        set prop6(x) {},
+      })
+    `,
+    espree: {expectToFail: false},
+    babel: {expectToFail: false},
+  };
 
   test('ESTree', () => {
-    expect(parseForSnapshot(source, {preserveRange: true}))
+    expect(parseForSnapshot(testCase.code, {preserveRange: true}))
       .toMatchInlineSnapshot(`
-      Object {
-        "body": Array [
-          Object {
+      {
+        "body": [
+          {
             "directive": null,
-            "expression": Object {
-              "properties": Array [
-                Object {
+            "expression": {
+              "properties": [
+                {
                   "computed": false,
-                  "key": Object {
+                  "key": {
                     "name": "prop1",
                     "optional": false,
-                    "range": Array [
-                      14,
-                      19,
+                    "range": [
+                      18,
+                      23,
                     ],
                     "type": "Identifier",
                     "typeAnnotation": null,
                   },
                   "kind": "init",
                   "method": false,
-                  "range": Array [
-                    14,
-                    22,
+                  "range": [
+                    18,
+                    26,
                   ],
                   "shorthand": false,
                   "type": "Property",
-                  "value": Object {
+                  "value": {
                     "literalType": "numeric",
-                    "range": Array [
-                      21,
-                      22,
+                    "range": [
+                      25,
+                      26,
                     ],
                     "raw": "1",
                     "type": "Literal",
                     "value": 1,
                   },
                 },
-                Object {
+                {
                   "computed": false,
-                  "key": Object {
+                  "key": {
                     "name": "prop2",
                     "optional": false,
-                    "range": Array [
-                      30,
-                      35,
+                    "range": [
+                      36,
+                      41,
                     ],
                     "type": "Identifier",
                     "typeAnnotation": null,
                   },
                   "kind": "init",
                   "method": false,
-                  "range": Array [
-                    30,
-                    50,
+                  "range": [
+                    36,
+                    56,
                   ],
                   "shorthand": false,
                   "type": "Property",
-                  "value": Object {
+                  "value": {
                     "async": false,
-                    "body": Object {
-                      "body": Array [],
-                      "range": Array [
-                        48,
-                        50,
+                    "body": {
+                      "body": [],
+                      "range": [
+                        54,
+                        56,
                       ],
                       "type": "BlockStatement",
                     },
+                    "expression": false,
                     "generator": false,
                     "id": null,
-                    "params": Array [],
+                    "params": [],
                     "predicate": null,
-                    "range": Array [
-                      35,
-                      50,
+                    "range": [
+                      41,
+                      56,
                     ],
                     "returnType": null,
                     "type": "FunctionExpression",
                     "typeParameters": null,
                   },
                 },
-                Object {
+                {
                   "computed": false,
-                  "key": Object {
+                  "key": {
                     "name": "prop3",
                     "optional": false,
-                    "range": Array [
-                      58,
-                      63,
+                    "range": [
+                      66,
+                      71,
                     ],
                     "type": "Identifier",
                     "typeAnnotation": null,
                   },
                   "kind": "init",
                   "method": true,
-                  "range": Array [
-                    58,
-                    68,
+                  "range": [
+                    66,
+                    76,
                   ],
                   "shorthand": false,
                   "type": "Property",
-                  "value": Object {
+                  "value": {
                     "async": false,
-                    "body": Object {
-                      "body": Array [],
-                      "range": Array [
-                        66,
-                        68,
+                    "body": {
+                      "body": [],
+                      "range": [
+                        74,
+                        76,
                       ],
                       "type": "BlockStatement",
                     },
+                    "expression": false,
                     "generator": false,
                     "id": null,
-                    "params": Array [],
+                    "params": [],
                     "predicate": null,
-                    "range": Array [
-                      63,
-                      68,
+                    "range": [
+                      71,
+                      76,
                     ],
                     "returnType": null,
                     "type": "FunctionExpression",
                     "typeParameters": null,
                   },
                 },
-                Object {
+                {
                   "computed": false,
-                  "key": Object {
+                  "key": {
                     "name": "prop4",
                     "optional": false,
-                    "range": Array [
-                      82,
-                      87,
+                    "range": [
+                      92,
+                      97,
                     ],
                     "type": "Identifier",
                     "typeAnnotation": null,
                   },
                   "kind": "init",
                   "method": true,
-                  "range": Array [
-                    76,
-                    92,
+                  "range": [
+                    86,
+                    102,
                   ],
                   "shorthand": false,
                   "type": "Property",
-                  "value": Object {
+                  "value": {
                     "async": true,
-                    "body": Object {
-                      "body": Array [],
-                      "range": Array [
-                        90,
-                        92,
+                    "body": {
+                      "body": [],
+                      "range": [
+                        100,
+                        102,
                       ],
                       "type": "BlockStatement",
                     },
+                    "expression": false,
                     "generator": false,
                     "id": null,
-                    "params": Array [],
+                    "params": [],
                     "predicate": null,
-                    "range": Array [
-                      87,
-                      92,
+                    "range": [
+                      97,
+                      102,
                     ],
                     "returnType": null,
                     "type": "FunctionExpression",
                     "typeParameters": null,
                   },
                 },
-                Object {
+                {
                   "computed": false,
-                  "key": Object {
+                  "key": {
                     "name": "prop5",
                     "optional": false,
-                    "range": Array [
-                      104,
-                      109,
+                    "range": [
+                      116,
+                      121,
                     ],
                     "type": "Identifier",
                     "typeAnnotation": null,
                   },
                   "kind": "get",
                   "method": false,
-                  "range": Array [
-                    100,
-                    114,
+                  "range": [
+                    112,
+                    126,
                   ],
                   "shorthand": false,
                   "type": "Property",
-                  "value": Object {
+                  "value": {
                     "async": false,
-                    "body": Object {
-                      "body": Array [],
-                      "range": Array [
-                        112,
-                        114,
+                    "body": {
+                      "body": [],
+                      "range": [
+                        124,
+                        126,
                       ],
                       "type": "BlockStatement",
                     },
+                    "expression": false,
                     "generator": false,
                     "id": null,
-                    "params": Array [],
+                    "params": [],
                     "predicate": null,
-                    "range": Array [
-                      109,
-                      114,
+                    "range": [
+                      121,
+                      126,
                     ],
                     "returnType": null,
                     "type": "FunctionExpression",
                     "typeParameters": null,
                   },
                 },
-                Object {
+                {
                   "computed": false,
-                  "key": Object {
+                  "key": {
                     "name": "prop6",
                     "optional": false,
-                    "range": Array [
-                      126,
-                      131,
+                    "range": [
+                      140,
+                      145,
                     ],
                     "type": "Identifier",
                     "typeAnnotation": null,
                   },
                   "kind": "set",
                   "method": false,
-                  "range": Array [
-                    122,
-                    137,
+                  "range": [
+                    136,
+                    151,
                   ],
                   "shorthand": false,
                   "type": "Property",
-                  "value": Object {
+                  "value": {
                     "async": false,
-                    "body": Object {
-                      "body": Array [],
-                      "range": Array [
-                        135,
-                        137,
+                    "body": {
+                      "body": [],
+                      "range": [
+                        149,
+                        151,
                       ],
                       "type": "BlockStatement",
                     },
+                    "expression": false,
                     "generator": false,
                     "id": null,
-                    "params": Array [
-                      Object {
+                    "params": [
+                      {
                         "name": "x",
                         "optional": false,
-                        "range": Array [
-                          132,
-                          133,
+                        "range": [
+                          146,
+                          147,
                         ],
                         "type": "Identifier",
                         "typeAnnotation": null,
                       },
                     ],
                     "predicate": null,
-                    "range": Array [
-                      131,
-                      137,
+                    "range": [
+                      145,
+                      151,
                     ],
                     "returnType": null,
                     "type": "FunctionExpression",
@@ -291,15 +306,15 @@ describe('Object properties', () => {
                   },
                 },
               ],
-              "range": Array [
-                6,
-                144,
+              "range": [
+                8,
+                160,
               ],
               "type": "ObjectExpression",
             },
-            "range": Array [
-              5,
-              145,
+            "range": [
+              7,
+              161,
             ],
             "type": "ExpressionStatement",
           },
@@ -307,10 +322,11 @@ describe('Object properties', () => {
         "type": "Program",
       }
     `);
+    expectEspreeAlignment(testCase);
   });
 
   test('Babel', () => {
-    expect(parse(source, {babel: true})).toMatchObject({
+    expect(parse(testCase.code, {babel: true})).toMatchObject({
       type: 'File',
       program: {
         type: 'Program',
@@ -432,5 +448,6 @@ describe('Object properties', () => {
         ],
       },
     });
+    expectBabelAlignment(testCase);
   });
 });

@@ -23,7 +23,11 @@
 
 #include <cstring>
 #include <random>
+#pragma GCC diagnostic push
 
+#ifdef HERMES_COMPILER_SUPPORTS_WSHORTEN_64_TO_32
+#pragma GCC diagnostic ignored "-Wshorten-64-to-32"
+#endif
 namespace hermes {
 namespace vm {
 
@@ -43,7 +47,9 @@ hermesInternalDetachArrayBuffer(void *, Runtime &runtime, NativeArgs args) {
         "Cannot use detachArrayBuffer on something which "
         "is not an ArrayBuffer foo");
   }
-  buffer->detach(&runtime.getHeap());
+  if (LLVM_UNLIKELY(
+          JSArrayBuffer::detach(runtime, buffer) == ExecutionStatus::EXCEPTION))
+    return ExecutionStatus::EXCEPTION;
   // "void" return
   return HermesValue::encodeUndefinedValue();
 }
@@ -73,8 +79,8 @@ hermesInternalGetEpilogues(void *, Runtime &runtime, NativeArgs args) {
       }
       auto ta = result.getValue();
       std::memcpy(ta->begin(runtime), eps[i].begin(), innerLen);
-      JSArray::unsafeSetExistingElementAt(
-          *outer, runtime, i, ta.getHermesValue());
+      const auto shv = SmallHermesValue::encodeObjectValue(*ta, runtime);
+      JSArray::unsafeSetExistingElementAt(*outer, runtime, i, shv);
     }
   }
   return HermesValue::encodeObjectValue(*outer);
@@ -85,18 +91,123 @@ hermesInternalGetEpilogues(void *, Runtime &runtime, NativeArgs args) {
 CallResult<HermesValue>
 hermesInternalGetWeakSize(void *, Runtime &runtime, NativeArgs args) {
   if (auto M = args.dyncastArg<JSWeakMap>(0)) {
-    return HermesValue::encodeNumberValue(JSWeakMap::debugFreeSlotsAndGetSize(
-        static_cast<PointerBase &>(runtime), &runtime.getHeap(), *M));
+    return HermesValue::encodeNumberValue(
+        JSWeakMap::debugFreeSlotsAndGetSize(runtime, *M));
   }
 
   if (auto S = args.dyncastArg<JSWeakSet>(0)) {
-    return HermesValue::encodeNumberValue(JSWeakSet::debugFreeSlotsAndGetSize(
-        static_cast<PointerBase &>(runtime), &runtime.getHeap(), *S));
+    return HermesValue::encodeNumberValue(
+        JSWeakSet::debugFreeSlotsAndGetSize(runtime, *S));
   }
 
   return runtime.raiseTypeError(
       "getWeakSize can only be called on a WeakMap/WeakSet");
 }
+
+namespace {
+/// Populates the instrumentes stats object using \p addProp as the handler for
+/// adding properties to the object. \p addProp's should be invocable with
+/// (const char *), or (const char *, double). The first prototype is used when
+/// property passthrough is enable (i.e., the \p addProp will figure out what
+/// the property value is), and the second, when new/actual values should be
+/// recorded. Note that any property below added with PASSTHROUGH_PROP is only
+/// populated in passthrough mode (i.e., when replaying calls to
+/// getInstrumentedStats during synth trace replay).
+template <typename AP>
+ExecutionStatus populateInstrumentedStats(Runtime &runtime, AP addProp) {
+  constexpr bool addPropTakesValue =
+      std::is_invocable_v<AP, const char *, double>;
+  constexpr bool addPropGeneratesValue = std::is_invocable_v<AP, const char *>;
+  static_assert(
+      addPropGeneratesValue || addPropTakesValue, "invalid addProp prototype");
+
+  // PASSTHROUGH_PROP is used to populate the instrumented stats objects with
+  // properties that are no longer being returned by hermes, but at one point
+  // where, and thus are kept here for synth trace playback compatibility only.
+#define PASSTHROUGH_PROP(name)                                          \
+  do {                                                                  \
+    if constexpr (addPropGeneratesValue) {                              \
+      if (LLVM_UNLIKELY(addProp(name) == ExecutionStatus::EXCEPTION)) { \
+        return ExecutionStatus::EXCEPTION;                              \
+      }                                                                 \
+    }                                                                   \
+  } while (0)
+
+#define ADD_PROP(name, value)                                                  \
+  do {                                                                         \
+    if constexpr (addPropGeneratesValue) {                                     \
+      PASSTHROUGH_PROP(name);                                                  \
+    } else {                                                                   \
+      if (LLVM_UNLIKELY(addProp(name, value) == ExecutionStatus::EXCEPTION)) { \
+        return ExecutionStatus::EXCEPTION;                                     \
+      }                                                                        \
+    }                                                                          \
+  } while (0)
+
+  auto &heap = runtime.getHeap();
+  GCBase::HeapInfo info;
+  heap.getHeapInfo(info);
+
+  // To ensure synth trace compatibility, properties should not be removed nor
+  // reordered. To "remove" a property use PASSTHROUGH_PROP instead of ADD_PROP.
+  PASSTHROUGH_PROP("js_hostFunctionTime");
+  PASSTHROUGH_PROP("js_hostFunctionCPUTime");
+  PASSTHROUGH_PROP("js_hostFunctionCount");
+  PASSTHROUGH_PROP("js_evaluateJSTime");
+  PASSTHROUGH_PROP("js_evaluateJSCPUTime");
+  PASSTHROUGH_PROP("js_evaluateJSCount");
+  PASSTHROUGH_PROP("js_incomingFunctionTime");
+  PASSTHROUGH_PROP("js_incomingFunctionCPUTime");
+  PASSTHROUGH_PROP("js_incomingFunctionCount");
+  ADD_PROP("js_VMExperiments", runtime.getVMExperimentFlags());
+  PASSTHROUGH_PROP("js_hermesTime");
+  PASSTHROUGH_PROP("js_hermesCPUTime");
+  PASSTHROUGH_PROP("js_hermesThreadMinorFaults");
+  PASSTHROUGH_PROP("js_hermesThreadMajorFaults");
+  ADD_PROP("js_numGCs", heap.getNumGCs());
+  ADD_PROP("js_gcCPUTime", heap.getGCCPUTime());
+  ADD_PROP("js_gcTime", heap.getGCTime());
+  ADD_PROP("js_totalAllocatedBytes", info.totalAllocatedBytes);
+  ADD_PROP("js_allocatedBytes", info.allocatedBytes);
+  ADD_PROP("js_heapSize", info.heapSize);
+  ADD_PROP("js_mallocSizeEstimate", info.mallocSizeEstimate);
+  ADD_PROP("js_vaSize", info.va);
+  ADD_PROP("js_markStackOverflows", info.numMarkStackOverflows);
+  PASSTHROUGH_PROP("js_hermesVolCtxSwitches");
+  PASSTHROUGH_PROP("js_hermesInvolCtxSwitches");
+  PASSTHROUGH_PROP("js_pageSize");
+  PASSTHROUGH_PROP("js_threadAffinityMask");
+  PASSTHROUGH_PROP("js_threadCPU");
+  PASSTHROUGH_PROP("js_bytecodePagesResident");
+  PASSTHROUGH_PROP("js_bytecodePagesResidentRuns");
+  PASSTHROUGH_PROP("js_bytecodePagesAccessed");
+  PASSTHROUGH_PROP("js_bytecodeSize");
+  PASSTHROUGH_PROP("js_bytecodePagesTraceHash");
+  PASSTHROUGH_PROP("js_bytecodeIOTime");
+  PASSTHROUGH_PROP("js_bytecodePagesTraceSample");
+
+#undef PASSTHROUGH_PROP
+#undef ADD_PROP
+
+  return ExecutionStatus::RETURNED;
+}
+
+/// Converts \p val to a HermesValue.
+CallResult<HermesValue> statsTableValueToHermesValue(
+    Runtime &runtime,
+    const MockedEnvironment::StatsTableValue &val) {
+  if (val.isNum()) {
+    return HermesValue::encodeDoubleValue(val.num());
+  }
+
+  auto strRes =
+      StringPrimitive::create(runtime, createASCIIRef(val.str().c_str()));
+  if (LLVM_UNLIKELY(strRes == ExecutionStatus::EXCEPTION)) {
+    return ExecutionStatus::EXCEPTION;
+  }
+  return *strRes;
+}
+} // namespace
 
 /// \return an object containing various instrumented statistics.
 CallResult<HermesValue>
@@ -106,50 +217,10 @@ hermesInternalGetInstrumentedStats(void *, Runtime &runtime, NativeArgs args) {
   // Printing the values would be unstable, so prevent that.
   if (runtime.shouldStabilizeInstructionCount())
     return resultHandle.getHermesValue();
-  MutableHandle<> tmpHandle{runtime};
 
-  namespace P = Predefined;
-/// Adds a property to \c resultHandle. \p KEY provides its name as a \c
-/// Predefined enum value, and its value is rooted in \p VALUE.  If property
-/// definition fails, the exceptional execution status will be propogated to the
-/// outer function.
-#define SET_PROP(KEY, VALUE)                                               \
-  do {                                                                     \
-    GCScopeMarkerRAII marker{gcScope};                                     \
-    double val = VALUE;                                                    \
-    if (statsTable) {                                                      \
-      auto array = runtime.getPredefinedString(KEY)->getStringRef<char>(); \
-      std::string key(array.data(), array.size());                         \
-      if (statsTable->count(key.c_str())) {                                \
-        val = (*statsTable)[StringRef(key.c_str(), key.size())].num();     \
-      }                                                                    \
-    }                                                                      \
-    tmpHandle = HermesValue::encodeDoubleValue(val);                       \
-    auto status = JSObject::defineNewOwnProperty(                          \
-        resultHandle,                                                      \
-        runtime,                                                           \
-        Predefined::getSymbolID(KEY),                                      \
-        PropertyFlags::defaultNewNamedPropertyFlags(),                     \
-        tmpHandle);                                                        \
-    if (LLVM_UNLIKELY(status == ExecutionStatus::EXCEPTION)) {             \
-      return ExecutionStatus::EXCEPTION;                                   \
-    }                                                                      \
-    if (newStatsTable) {                                                   \
-      auto array = runtime.getPredefinedString(KEY)->getStringRef<char>(); \
-      std::string key(array.data(), array.size());                         \
-      newStatsTable->try_emplace(key, val);                                \
-    }                                                                      \
-  } while (false)
-
-  auto &stats = runtime.getRuntimeStats();
   MockedEnvironment::StatsTable *statsTable = nullptr;
   auto *const storage = runtime.getCommonStorage();
   if (storage->env) {
-    // For now, we'll allow replay to exhaust the recorded getInstrumentedStats
-    // calls, and allow further calls to take values from the replay execution.
-    // This allows backwards compatibility with existing traces that do not
-    // record getInstrumentedStats.  In the future, we might wish to disallow
-    // this, and throw an exception.
     if (!storage->env->callsToHermesInternalGetInstrumentedStats.empty()) {
       statsTable =
           &storage->env->callsToHermesInternalGetInstrumentedStats.front();
@@ -161,228 +232,69 @@ hermesInternalGetInstrumentedStats(void *, Runtime &runtime, NativeArgs args) {
     newStatsTable.reset(new MockedEnvironment::StatsTable());
   }
 
-  // Ensure that the timers measuring the current execution are up to date.
-  stats.flushPendingTimers();
-
-  SET_PROP(P::js_hostFunctionTime, stats.hostFunction.wallDuration);
-  SET_PROP(P::js_hostFunctionCPUTime, stats.hostFunction.cpuDuration);
-  SET_PROP(P::js_hostFunctionCount, stats.hostFunction.count);
-
-  SET_PROP(P::js_evaluateJSTime, stats.evaluateJS.wallDuration);
-  SET_PROP(P::js_evaluateJSCPUTime, stats.evaluateJS.cpuDuration);
-  SET_PROP(P::js_evaluateJSCount, stats.evaluateJS.count);
-
-  SET_PROP(P::js_incomingFunctionTime, stats.incomingFunction.wallDuration);
-  SET_PROP(P::js_incomingFunctionCPUTime, stats.incomingFunction.cpuDuration);
-  SET_PROP(P::js_incomingFunctionCount, stats.incomingFunction.count);
-  SET_PROP(P::js_VMExperiments, runtime.getVMExperimentFlags());
-
-  auto makeHermesTime = [](double host, double eval, double incoming) {
-    return eval - host + incoming;
-  };
-
-  SET_PROP(
-      P::js_hermesTime,
-      makeHermesTime(
-          stats.hostFunction.wallDuration,
-          stats.evaluateJS.wallDuration,
-          stats.incomingFunction.wallDuration));
-  SET_PROP(
-      P::js_hermesCPUTime,
-      makeHermesTime(
-          stats.hostFunction.cpuDuration,
-          stats.evaluateJS.cpuDuration,
-          stats.incomingFunction.cpuDuration));
-
-  if (stats.shouldSample) {
-    SET_PROP(
-        P::js_hermesThreadMinorFaults,
-        makeHermesTime(
-            stats.hostFunction.sampled.threadMinorFaults,
-            stats.evaluateJS.sampled.threadMinorFaults,
-            stats.incomingFunction.sampled.threadMinorFaults));
-    SET_PROP(
-        P::js_hermesThreadMajorFaults,
-        makeHermesTime(
-            stats.hostFunction.sampled.threadMajorFaults,
-            stats.evaluateJS.sampled.threadMajorFaults,
-            stats.incomingFunction.sampled.threadMajorFaults));
-  }
-
-  auto &heap = runtime.getHeap();
-  SET_PROP(P::js_numGCs, heap.getNumGCs());
-  SET_PROP(P::js_gcCPUTime, heap.getGCCPUTime());
-  SET_PROP(P::js_gcTime, heap.getGCTime());
-
-#undef SET_PROP
-
-/// Adds a property to \c resultHandle. \p KEY provides its name as a C string,
-/// and its value is rooted in \p VALUE.  If property definition fails, the
-/// exceptional execution status will be propogated to the outer function.
-#define SET_PROP_NEW(KEY, VALUE)                               \
-  do {                                                         \
-    GCScopeMarkerRAII marker{gcScope};                         \
-    auto keySym = symbolForCStr(runtime, KEY);                 \
-    if (LLVM_UNLIKELY(keySym == ExecutionStatus::EXCEPTION)) { \
-      return ExecutionStatus::EXCEPTION;                       \
-    }                                                          \
-    double val = VALUE;                                        \
-    if (statsTable && statsTable->count(KEY)) {                \
-      val = (*statsTable)[KEY].num();                          \
-    }                                                          \
-    tmpHandle = HermesValue::encodeDoubleValue(val);           \
-    auto status = JSObject::defineNewOwnProperty(              \
-        resultHandle,                                          \
-        runtime,                                               \
-        **keySym,                                              \
-        PropertyFlags::defaultNewNamedPropertyFlags(),         \
-        tmpHandle);                                            \
-    if (LLVM_UNLIKELY(status == ExecutionStatus::EXCEPTION)) { \
-      return ExecutionStatus::EXCEPTION;                       \
-    }                                                          \
-    if (newStatsTable) {                                       \
-      newStatsTable->try_emplace(KEY, val);                    \
-    }                                                          \
-  } while (false)
-
-  {
-    GCBase::HeapInfo info;
-    heap.getHeapInfo(info);
-    SET_PROP_NEW("js_totalAllocatedBytes", info.totalAllocatedBytes);
-    SET_PROP_NEW("js_allocatedBytes", info.allocatedBytes);
-    SET_PROP_NEW("js_heapSize", info.heapSize);
-    SET_PROP_NEW("js_mallocSizeEstimate", info.mallocSizeEstimate);
-    SET_PROP_NEW("js_vaSize", info.va);
-    SET_PROP_NEW("js_markStackOverflows", info.numMarkStackOverflows);
-  }
-
-  if (stats.shouldSample) {
-    SET_PROP_NEW(
-        "js_hermesVolCtxSwitches",
-        makeHermesTime(
-            stats.hostFunction.sampled.volCtxSwitches,
-            stats.evaluateJS.sampled.volCtxSwitches,
-            stats.incomingFunction.sampled.volCtxSwitches));
-    SET_PROP_NEW(
-        "js_hermesInvolCtxSwitches",
-        makeHermesTime(
-            stats.hostFunction.sampled.involCtxSwitches,
-            stats.evaluateJS.sampled.involCtxSwitches,
-            stats.incomingFunction.sampled.involCtxSwitches));
-    // Sampled because it doesn't vary much, not because it's expensive to get.
-    SET_PROP_NEW("js_pageSize", oscompat::page_size());
-  }
-
-/// Adds a property to \c resultHandle. \p KEY and \p VALUE provide its name and
-/// value as a C string and ASCIIRef respectively. If property definition fails,
-/// the exceptional execution status will be propogated to the outer function.
-#define SET_PROP_STR(KEY, VALUE)                               \
-  do {                                                         \
-    auto keySym = symbolForCStr(runtime, KEY);                 \
-    if (LLVM_UNLIKELY(keySym == ExecutionStatus::EXCEPTION)) { \
-      return ExecutionStatus::EXCEPTION;                       \
-    }                                                          \
-    ASCIIRef val = VALUE;                                      \
-    std::string valStdStr(val.data(), val.size());             \
-    if (statsTable && statsTable->count(KEY)) {                \
-      valStdStr = (*statsTable)[std::string(KEY)].str();       \
-    }                                                          \
-    val = ASCIIRef(valStdStr.c_str(), valStdStr.size());       \
-    auto valStr = StringPrimitive::create(runtime, val);       \
-    if (LLVM_UNLIKELY(valStr == ExecutionStatus::EXCEPTION)) { \
-      return ExecutionStatus::EXCEPTION;                       \
-    }                                                          \
-    tmpHandle = *valStr;                                       \
-    auto status = JSObject::defineNewOwnProperty(              \
-        resultHandle,                                          \
-        runtime,                                               \
-        **keySym,                                              \
-        PropertyFlags::defaultNewNamedPropertyFlags(),         \
-        tmpHandle);                                            \
-    if (LLVM_UNLIKELY(status == ExecutionStatus::EXCEPTION)) { \
-      return ExecutionStatus::EXCEPTION;                       \
-    }                                                          \
-    if (newStatsTable) {                                       \
-      newStatsTable->try_emplace(KEY, valStdStr);              \
-    }                                                          \
-  } while (false)
-
-  if (runtime.getRuntimeStats().shouldSample) {
-    // Build a string showing the set of cores on which we may run.
-    std::string mask;
-    for (auto b : oscompat::sched_getaffinity())
-      mask += b ? '1' : '0';
-    SET_PROP_STR("js_threadAffinityMask", ASCIIRef(mask.data(), mask.size()));
-    SET_PROP_NEW("js_threadCPU", oscompat::sched_getcpu());
-
-    size_t bytecodePagesResident = 0;
-    size_t bytecodePagesResidentRuns = 0;
-    for (auto &module : runtime.getRuntimeModules()) {
-      auto buf = module.getBytecode()->getRawBuffer();
-      if (buf.size()) {
-        llvh::SmallVector<int, 64> runs;
-        int pages = oscompat::pages_in_ram(buf.data(), buf.size(), &runs);
-        if (pages >= 0) {
-          bytecodePagesResident += pages;
-          bytecodePagesResidentRuns += runs.size();
+  /// Adds \p key with \p val to the resultHandle object. \p newStatsTableVal is
+  /// the value \p key should have in the newStatsTable object (i.e., during
+  /// synth trace recording).
+  auto addToResultHandle =
+      [&](llvh::StringRef key, HermesValue val, auto newStatsTableVal) {
+        Handle<> valHandle = runtime.makeHandle(val);
+        auto keySym = symbolForCStr(runtime, key.data());
+        if (LLVM_UNLIKELY(keySym == ExecutionStatus::EXCEPTION)) {
+          return ExecutionStatus::EXCEPTION;
         }
+
+        auto status = JSObject::defineNewOwnProperty(
+            resultHandle,
+            runtime,
+            **keySym,
+            PropertyFlags::defaultNewNamedPropertyFlags(),
+            valHandle);
+
+        if (LLVM_UNLIKELY(status == ExecutionStatus::EXCEPTION)) {
+          return ExecutionStatus::EXCEPTION;
+        }
+
+        if (newStatsTable) {
+          newStatsTable->try_emplace(key, newStatsTableVal);
+        }
+
+        return ExecutionStatus::RETURNED;
+      };
+
+  ExecutionStatus populateRes;
+  if (!statsTable) {
+    /// Adds a property to resultHandle. \p key provides its name, and \p val,
+    /// its value. Adds {\p key, \p val} to newStatsTable if it is not null.
+    populateRes = populateInstrumentedStats(
+        runtime, [&](llvh::StringRef key, double val) {
+          GCScopeMarkerRAII marker{gcScope};
+
+          return addToResultHandle(
+              key, HermesValue::encodeDoubleValue(val), val);
+        });
+  } else {
+    /// Adds a property named \p key to resultHandle if it is present in
+    /// statsTable. Also copies it to newStatsTable if it is not null. Does
+    /// nothing if \p key is not in statsTable.
+    populateRes = populateInstrumentedStats(runtime, [&](llvh::StringRef key) {
+      auto it = statsTable->find(key);
+      if (it == statsTable->end()) {
+        return ExecutionStatus::RETURNED;
       }
-    }
-    SET_PROP_NEW("js_bytecodePagesResident", bytecodePagesResident);
-    SET_PROP_NEW("js_bytecodePagesResidentRuns", bytecodePagesResidentRuns);
 
-    // Stats for the module with most accesses.
-    uint32_t bytecodePagesAccessed = 0;
-    uint32_t bytecodeSize = 0;
-    JenkinsHash bytecodePagesTraceHash = 0;
-    double bytecodeIOus = 0;
-    // Sample a small number of (position in access order, page id) pairs
-    // encoded as a base64vlq stream.
-    static constexpr unsigned NUM_SAMPLES = 32;
-    std::string sample;
-    for (auto &module : runtime.getRuntimeModules()) {
-      auto tracker = module.getBytecode()->getPageAccessTracker();
-      if (tracker) {
-        auto ids = tracker->getPagesAccessed();
-        if (ids.size() <= bytecodePagesAccessed)
-          continue;
-        bytecodePagesAccessed = ids.size();
-        bytecodeSize = module.getBytecode()->getRawBuffer().size();
-        bytecodePagesTraceHash = 0;
-        for (auto id : ids) {
-          // char16_t is at least 16 bits unsigned, so the quality of this hash
-          // might degrade if accessing bytecode above 2^16 * 4 kB = 256 MB.
-          bytecodePagesTraceHash = updateJenkinsHash(
-              bytecodePagesTraceHash, static_cast<char16_t>(id));
-        }
-        bytecodeIOus = 0;
-        for (auto us : tracker->getMicros()) {
-          bytecodeIOus += us;
-        }
-        sample.clear();
-        llvh::raw_string_ostream str(sample);
-        std::random_device rng;
-        for (unsigned sampleIdx = 0; sampleIdx < NUM_SAMPLES; ++sampleIdx) {
-          int32_t accessOrderPos = rng() % ids.size();
-          base64vlq::encode(str, accessOrderPos);
-          base64vlq::encode(str, ids[accessOrderPos]);
-        }
+      GCScopeMarkerRAII marker{gcScope};
+
+      auto valRes = statsTableValueToHermesValue(runtime, it->getValue());
+      if (LLVM_UNLIKELY(valRes == ExecutionStatus::EXCEPTION)) {
+        return ExecutionStatus::EXCEPTION;
       }
-    }
-    // If we have are replaying a trace, override the value.
-    if (statsTable) {
-      bytecodePagesAccessed = (*statsTable)["js_bytecodePagesAccessed"].num();
-    }
 
-    if (bytecodePagesAccessed) {
-      SET_PROP_NEW("js_bytecodePagesAccessed", bytecodePagesAccessed);
-      SET_PROP_NEW("js_bytecodeSize", bytecodeSize);
-      SET_PROP_NEW("js_bytecodePagesTraceHash", bytecodePagesTraceHash);
-      SET_PROP_NEW("js_bytecodeIOTime", bytecodeIOus / 1e6);
-      SET_PROP_STR(
-          "js_bytecodePagesTraceSample",
-          ASCIIRef(sample.data(), sample.size()));
-    }
+      return addToResultHandle(key, *valRes, it->getValue());
+    });
+  }
+
+  if (LLVM_UNLIKELY(populateRes == ExecutionStatus::EXCEPTION)) {
+    return ExecutionStatus::EXCEPTION;
   }
 
   if (storage->env && statsTable) {
@@ -394,8 +306,6 @@ hermesInternalGetInstrumentedStats(void *, Runtime &runtime, NativeArgs args) {
   }
 
   return resultHandle.getHermesValue();
-
-#undef SET_PROP_NEW
 }
 
 /// \return a static string summarising the presence and resolution type of
@@ -601,7 +511,7 @@ hermesInternalHasPromise(void *, Runtime &runtime, NativeArgs args) {
 
 CallResult<HermesValue>
 hermesInternalUseEngineQueue(void *, Runtime &runtime, NativeArgs args) {
-  return HermesValue::encodeBoolValue(runtime.useJobQueue());
+  return HermesValue::encodeBoolValue(runtime.hasMicrotaskQueue());
 }
 
 /// \code
@@ -652,7 +562,7 @@ static const CodeBlock *getLeafCodeBlock(
     callable = bound->getTarget(runtime);
   }
   if (auto *asFunction = dyn_vmcast<const JSFunction>(callable)) {
-    return asFunction->getCodeBlock();
+    return asFunction->getCodeBlock(runtime);
   }
   return nullptr;
 }
@@ -664,14 +574,18 @@ static CallResult<HermesValue> getCodeBlockFileName(
     const CodeBlock *codeBlock,
     OptValue<hbc::DebugSourceLocation> location) {
   RuntimeModule *runtimeModule = codeBlock->getRuntimeModule();
-  if (location) {
-    auto debugInfo = runtimeModule->getBytecode()->getDebugInfo();
-    return StringPrimitive::createEfficient(
-        runtime, debugInfo->getFilenameByID(location->filenameId));
-  } else {
-    llvh::StringRef sourceURL = runtimeModule->getSourceURL();
-    if (!sourceURL.empty()) {
-      return StringPrimitive::createEfficient(runtime, sourceURL);
+  if (!runtimeModule->getBytecode()->isLazy()) {
+    // Lazy code blocks do not have debug information (and will hermes_fatal if
+    // you try to access it), so only touch it for non-lazy blocks.
+    if (location) {
+      auto debugInfo = runtimeModule->getBytecode()->getDebugInfo();
+      return StringPrimitive::createEfficient(
+          runtime, debugInfo->getFilenameByID(location->filenameId));
+    } else {
+      llvh::StringRef sourceURL = runtimeModule->getSourceURL();
+      if (!sourceURL.empty()) {
+        return StringPrimitive::createEfficient(runtime, sourceURL);
+      }
     }
   }
   return HermesValue::encodeUndefinedValue();
@@ -816,6 +730,101 @@ CallResult<HermesValue> hermesInternalEnablePromiseRejectionTracker(
       .toCallResultHermesValue();
 }
 
+#ifdef HERMES_ENABLE_FUZZILLI
+
+/// Internal "fuzzilli" function used by the Fuzzilli fuzzer
+/// (https://github.com/googleprojectzero/fuzzilli) to sanity-check the engine.
+/// This function is conditionally defined in Hermes internal VM code rather
+/// than in an external fuzzing module so to catch build misconfigurations, e.g.
+/// we want to make sure that the VM is compiled with assertions enabled and
+/// doing this check out of the VM (e.g. in the fuzzing harness) doesn't
+/// guarantee that the VM has asserts on.
+///
+/// This function is defined as follow:
+/// \code
+/// HermesInternal.fuzzilli = function(op, arg) {}
+/// \endcode
+/// The first argument "op", is a string specifying the operation to be
+/// performed. Currently supported values of "op" are "FUZZILLI_CRASH", used to
+/// simulate a crash, and "FUZZILLI_PRINT", used to send data over Fuzzilli's
+/// ata write file decriptor (REPRL_DWFD). The secong argument "arg" can be an
+/// integer specifying the type of crash (if op is "FUZZILLI_CRASH") or a string
+/// which value will be sent to fuzzilli (if op is "FUZZILLI_PRINT")
+CallResult<HermesValue>
+hermesInternalFuzzilli(void *, Runtime &runtime, NativeArgs args) {
+  // REPRL = read-eval-print-reset-loop
+  // This file descriptor is being opened by Fuzzilli
+  constexpr int REPRL_DWFD = 103; // Data write file decriptor
+
+  auto operationRes = toString_RJS(runtime, args.getArgHandle(0));
+  if (LLVM_UNLIKELY(operationRes == ExecutionStatus::EXCEPTION)) {
+    return ExecutionStatus::EXCEPTION;
+  }
+  auto operation = StringPrimitive::createStringView(
+      runtime, runtime.makeHandle(std::move(*operationRes)));
+
+  if (operation.equals(createUTF16Ref(u"FUZZILLI_CRASH"))) {
+    auto crashTypeRes = toIntegerOrInfinity(runtime, args.getArgHandle(1));
+    if (LLVM_UNLIKELY(crashTypeRes == ExecutionStatus::EXCEPTION)) {
+      return ExecutionStatus::EXCEPTION;
+    }
+    switch (crashTypeRes->getNumberAs<int>()) {
+      case 0:
+        *((int *)0x41414141) = 0x1337;
+        break;
+      case 1:
+        assert(0);
+        break;
+      case 2:
+        std::abort();
+        break;
+    }
+  } else if (operation.equals(createUTF16Ref(u"FUZZILLI_PRINT"))) {
+    static FILE *fzliout = fdopen(REPRL_DWFD, "w");
+    if (!fzliout) {
+      fprintf(
+          stderr,
+          "Fuzzer output channel not available, printing to stdout instead\n");
+      fzliout = stdout;
+    }
+
+    auto printRes = toString_RJS(runtime, args.getArgHandle(1));
+    if (LLVM_UNLIKELY(printRes == ExecutionStatus::EXCEPTION)) {
+      return ExecutionStatus::EXCEPTION;
+    }
+    auto print = StringPrimitive::createStringView(
+        runtime, runtime.makeHandle(std::move(*printRes)));
+
+    vm::SmallU16String<32> allocator;
+    std::string outputString;
+    ::hermes::convertUTF16ToUTF8WithReplacements(
+        outputString, print.getUTF16Ref(allocator));
+    fprintf(fzliout, "%s\n", outputString.c_str());
+    fflush(fzliout);
+  }
+
+  return HermesValue::encodeUndefinedValue();
+}
+#endif // HERMES_ENABLE_FUZZILLI
+
+static CallResult<HermesValue>
+hermesInternalIsLazy(void *, Runtime &runtime, NativeArgs args) {
+  auto callable = args.dyncastArg<Callable>(0);
+  if (!callable) {
+    return HermesValue::encodeBoolValue(false);
+  }
+
+  auto codeBlock = getLeafCodeBlock(callable, runtime);
+  if (!codeBlock) {
+    // Native function is never lazy.
+    return HermesValue::encodeBoolValue(false);
+  }
+
+  RuntimeModule *runtimeModule = codeBlock->getRuntimeModule();
+  return HermesValue::encodeBoolValue(
+      runtimeModule && runtimeModule->getBytecode()->isLazy());
+}
+
 Handle<JSObject> createHermesInternalObject(
     Runtime &runtime,
     const JSLibFlags &flags) {
@@ -895,6 +904,10 @@ Handle<JSObject> createHermesInternalObject(
       hermesInternalEnablePromiseRejectionTracker);
   defineInternMethod(P::useEngineQueue, hermesInternalUseEngineQueue);
 
+#ifdef HERMES_ENABLE_FUZZILLI
+  defineInternMethod(P::fuzzilli, hermesInternalFuzzilli);
+#endif
+
   // All functions are known to be safe can be defined above this flag check.
   if (!flags.enableHermesInternal) {
     JSObject::preventExtensions(*intern);
@@ -921,6 +934,7 @@ Handle<JSObject> createHermesInternalObject(
     defineInternMethod(
         P::copyDataProperties, hermesBuiltinCopyDataProperties, 3);
     defineInternMethodAndSymbol("isProxy", hermesInternalIsProxy);
+    defineInternMethodAndSymbol("isLazy", hermesInternalIsLazy);
     defineInternMethod(P::drainJobs, hermesInternalDrainJobs);
   }
 

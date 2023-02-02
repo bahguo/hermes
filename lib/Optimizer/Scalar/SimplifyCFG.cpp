@@ -16,11 +16,8 @@
 
 #include "llvh/ADT/SmallPtrSet.h"
 #include "llvh/ADT/SmallVector.h"
-#include "llvh/Support/Debug.h"
 
 using namespace hermes;
-using llvh::dbgs;
-using llvh::isa;
 
 STATISTIC(NumUnreachableBlock, "Number of unreachable blocks eliminated");
 STATISTIC(NumSB, "Number of static branches simplified");
@@ -397,8 +394,8 @@ bool SimplifyCFG::runOnFunction(hermes::Function *F) {
   return changed;
 }
 
-Pass *hermes::createSimplifyCFG() {
-  return new SimplifyCFG();
+std::unique_ptr<Pass> hermes::createSimplifyCFG() {
+  return std::make_unique<SimplifyCFG>();
 }
 
 #undef DEBUG_TYPE

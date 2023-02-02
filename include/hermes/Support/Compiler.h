@@ -15,6 +15,15 @@
 // This file provides portable definitions of compiler specific macros
 // It is modelled after LLVM's Compiler.h
 
+// Force MSVC to enable empty base class optimization; this is necessary
+// for PointerBase alignment requirements in some cases when using
+// HERMESVM_CONTIGUOUS_HEAP
+#ifdef _MSC_VER
+#define HERMES_EMPTY_BASES __declspec(empty_bases)
+#else
+#define HERMES_EMPTY_BASES
+#endif
+
 // Some compilers will warn about unused variables, unless those variable types
 // have a nontrivial constructor or destructor. This is due to types like
 // std::lock_guard, whose variables are typically instantiated but not used.
@@ -66,6 +75,8 @@ extern "C" {
 #endif
 void AnnotateIgnoreReadsBegin(const char *file, int line);
 void AnnotateIgnoreReadsEnd(const char *file, int line);
+void AnnotateIgnoreWritesBegin(const char *file, int line);
+void AnnotateIgnoreWritesEnd(const char *file, int line);
 void AnnotateBenignRaceSized(
     const char *file,
     int line,
@@ -82,6 +93,12 @@ void AnnotateThreadName(const char *file, int line, const char *name);
 
 /// Resume checking for racy reads.
 #define TsanIgnoreReadsEnd() AnnotateIgnoreReadsEnd(__FILE__, __LINE__)
+
+/// Ignore any races on writes between here and the next TsanIgnoreWritesEnd.
+#define TsanIgnoreWritesBegin() AnnotateIgnoreWritesBegin(__FILE__, __LINE__)
+
+/// Resume checking for racy writes.
+#define TsanIgnoreWritesEnd() AnnotateIgnoreWritesEnd(__FILE__, __LINE__)
 
 /// \def TsanBenignRaceSized(address, size, description)
 /// Tell TSAN to ignore a race that was detected at the given address.

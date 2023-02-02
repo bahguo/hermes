@@ -13,23 +13,19 @@
 #include "hermes/Optimizer/Scalar/SimplifyCFG.h"
 #include "hermes/Optimizer/Scalar/StackPromotion.h"
 #include "hermes/Optimizer/Scalar/TypeInference.h"
-#include "hermes/Optimizer/Wasm/EmitWasmIntrinsics.h"
-#include "hermes/Optimizer/Wasm/WasmSimplify.h"
 
 #include "llvh/Support/Debug.h"
 #include "llvh/Support/raw_ostream.h"
 
 #define DEBUG_TYPE "pipeline"
 
-using namespace hermes;
 using llvh::dbgs;
-using llvh::raw_ostream;
 
 bool hermes::runCustomOptimizationPasses(
     Module &M,
     const std::vector<std::string> &Opts) {
   LLVM_DEBUG(dbgs() << "Optimizing with custom pipeline...\n");
-  PassManager PM;
+  PassManager PM{M.getContext().getCodeGenerationSettings()};
 
   // Add the optimization passes.
   for (auto P : Opts) {
@@ -44,7 +40,7 @@ bool hermes::runCustomOptimizationPasses(
 
 void hermes::runFullOptimizationPasses(Module &M) {
   LLVM_DEBUG(dbgs() << "Running -O3 optimizations...\n");
-  PassManager PM;
+  PassManager PM{M.getContext().getCodeGenerationSettings()};
 
   // Add the optimization passes.
 
@@ -103,7 +99,7 @@ void hermes::runFullOptimizationPasses(Module &M) {
 
 void hermes::runDebugOptimizationPasses(Module &M) {
   LLVM_DEBUG(dbgs() << "Running -Og optimizations...\n");
-  PassManager PM;
+  PassManager PM{M.getContext().getCodeGenerationSettings()};
 
   PM.addInstSimplify();
   PM.addResolveStaticRequire();

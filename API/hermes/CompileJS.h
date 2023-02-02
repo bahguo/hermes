@@ -8,6 +8,7 @@
 #ifndef HERMES_COMPILEJS_H
 #define HERMES_COMPILEJS_H
 
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -41,14 +42,18 @@ class DiagnosticHandler {
 /// \param sourceURL this will be used as the "file name" of the buffer for
 ///   errors, stack traces, etc.
 /// \param optimize this will enable optimizations.
+/// \param emitAsyncBreakCheck this will make the bytecode interruptable.
 /// \param diagHandler if not null, receives any and all errors, warnings and
 ///   notes produced during compilation.
+/// \param sourceMapBuf optional source map string.
 bool compileJS(
     const std::string &str,
     const std::string &sourceURL,
     std::string &bytecode,
     bool optimize,
-    DiagnosticHandler *diagHandler);
+    bool emitAsyncBreakCheck,
+    DiagnosticHandler *diagHandler,
+    std::optional<std::string_view> sourceMapBuf = std::nullopt);
 
 bool compileJS(
     const std::string &str,

@@ -9,6 +9,7 @@
 #define HERMES_VM_MALLOCGC_H
 
 #include "hermes/Public/GCConfig.h"
+#include "hermes/VM/CompressedPointer.h"
 #include "hermes/VM/GCBase.h"
 #include "hermes/VM/GCCell.h"
 #include "hermes/VM/VMExperiments.h"
@@ -155,7 +156,7 @@ class MallocGC final : public GCBase {
       std::shared_ptr<StorageProvider> provider,
       experiments::VMExperimentFlags vmExperimentFlags);
 
-  ~MallocGC();
+  ~MallocGC() override;
 
   /// Checks if a requested \p size can fit in the heap. If it can't, a
   /// collection occurs. If it still can't after the collection, OOM is
@@ -214,10 +215,14 @@ class MallocGC final : public GCBase {
   /// \return true iff the pointer \p p is controlled by this GC.
   bool validPointer(const void *p) const override;
   bool dbgContains(const void *p) const override;
+
+  bool needsWriteBarrier(void *loc, GCCell *value) override;
 #endif
 
+#ifdef HERMES_MEMORY_INSTRUMENTATION
   /// Same as in superclass GCBase.
   virtual void createSnapshot(llvh::raw_ostream &os) override;
+#endif
 
   virtual void creditExternalMemory(GCCell *alloc, uint32_t size) override;
   virtual void debitExternalMemory(GCCell *alloc, uint32_t size) override;
@@ -239,19 +244,11 @@ class MallocGC final : public GCBase {
   void snapshotWriteBarrierRange(const GCHermesValue *, uint32_t) {}
   void snapshotWriteBarrierRange(const GCSmallHermesValue *, uint32_t) {}
   void weakRefReadBarrier(GCCell *) {}
-  void weakRefReadBarrier(HermesValue) {}
 
   void getHeapInfo(HeapInfo &info) override;
   void getHeapInfoWithMallocSize(HeapInfo &info) override;
   void getCrashManagerHeapInfo(CrashManager::HeapInformation &info) override;
   std::string getKindAsStr() const override;
-
-  /// @name Weak references
-  /// @{
-
-  /// Allocate a weak pointer slot for the value given.
-  /// \pre \p init should not be empty or a native value.
-  WeakRefSlot *allocWeakSlot(HermesValue init) override;
 
   /// The largest the size of this heap could ever grow to.
   size_t maxSize() const {
@@ -265,8 +262,6 @@ class MallocGC final : public GCBase {
   static bool classof(const GCBase *gc) {
     return gc->getKind() == HeapKind::MallocGC;
   }
-
-  /// @}
 
  private:
 #ifdef HERMES_SLOW_DEBUG
@@ -283,9 +278,6 @@ class MallocGC final : public GCBase {
 
   /// Initialize a cell with the required basic data for any cell.
   inline void initCell(GCCell *cell, uint32_t size);
-
-  /// Free a weak pointer slot, which invalidates it.
-  void freeWeakSlot(WeakRefSlot *slot);
 
   /// See \c GCBase::printStats.
   void printStats(JSONEmitter &json) override;

@@ -23,9 +23,6 @@
 
 using namespace hermes;
 
-using llvh::cast;
-using llvh::dyn_cast;
-
 // Make sure the ValueKinds.def tree is consistent with the class hierarchy.
 #define QUOTE(X) #X
 #define DEF_VALUE(CLASS, PARENT)                                           \
@@ -64,13 +61,13 @@ void Value::destroy(Value *V) {
   }
 }
 
-StringRef Value::getKindStr() const {
+llvh::StringRef Value::getKindStr() const {
   switch (Kind) {
     default:
       llvm_unreachable("Invalid kind");
 #define DEF_VALUE(XX, PARENT) \
   case ValueKind::XX##Kind:   \
-    return StringRef(#XX);
+    return llvh::StringRef(#XX);
 #include "hermes/IR/ValueKinds.def"
   }
 }
@@ -105,7 +102,7 @@ void Value::removeUse(Use U) {
   // If we've changed the location of a use in the use list then we need to
   // update the operand in the user.
   if (U.second != Users.size()) {
-    Use oldUse = {this, Users.size()};
+    Use oldUse = {this, static_cast<unsigned>(Users.size())};
     auto &operands = Users[U.second]->Operands;
     for (int i = 0, e = operands.size(); i < e; i++) {
       if (operands[i] == oldUse) {
@@ -119,7 +116,7 @@ void Value::removeUse(Use U) {
 
 Value::Use Value::addUser(Instruction *Inst) {
   Users.push_back(Inst);
-  return {this, Users.size() - 1};
+  return {this, static_cast<unsigned>(Users.size() - 1)};
 }
 
 void Value::replaceAllUsesWith(Value *Other) {
@@ -146,18 +143,26 @@ bool Value::hasUser(Value *other) {
   return std::find(Users.begin(), Users.end(), other) != Users.end();
 }
 
-bool VariableScope::isGlobalScope() const {
-  return function_->isGlobalScope() && function_->getFunctionScope() == this;
+ScopeDesc::~ScopeDesc() {
+  for (ScopeDesc *inner : innerScopes_) {
+    Value::destroy(inner);
+  }
+
+  // Free all variables.
+  for (auto *v : variables_) {
+    Value::destroy(v);
+  }
 }
 
-ExternalScope::ExternalScope(Function *function, int32_t depth)
-    : VariableScope(ValueKind::ExternalScopeKind, function), depth_(depth) {
-  function->addExternalScope(this);
+bool ScopeDesc::isGlobalScope() const {
+  return function_->isGlobalScope() &&
+      function_->getFunctionScopeDesc() == this;
 }
 
 Function::Function(
     ValueKind kind,
     Module *parent,
+    ScopeDesc *scopeDesc,
     Identifier originalName,
     DefinitionKind definitionKind,
     bool strictMode,
@@ -168,14 +173,14 @@ Function::Function(
     : Value(kind),
       parent_(parent),
       isGlobal_(isGlobal),
-      externalScopes_(),
-      functionScope_(this),
+      scopeDesc_(scopeDesc),
       originalOrInferredName_(originalName),
       definitionKind_(definitionKind),
       strictMode_(strictMode),
       SourceRange(sourceRange),
       sourceVisibility_(sourceVisibility),
       internalName_(parent->deriveUniqueInternalName(originalName)) {
+  scopeDesc_->setFunction(this);
   if (insertBefore) {
     assert(insertBefore != this && "Cannot insert a function before itself!");
     assert(
@@ -196,10 +201,6 @@ Function::~Function() {
     Value::destroy(p);
   }
   Value::destroy(thisParameter);
-
-  // Free all external scopes.
-  for (auto *ES : externalScopes_)
-    Value::destroy(ES);
 }
 
 std::string Function::getDefinitionKindStr(bool isDescriptive) const {
@@ -261,8 +262,8 @@ BasicBlock::BasicBlock(Function *parent)
   Parent->addBlock(this);
 }
 
-void BasicBlock::dump() {
-  IRPrinter D(getParent()->getContext(), llvh::outs());
+void BasicBlock::dump(llvh::raw_ostream &os) const {
+  IRPrinter D(getParent()->getContext(), os);
   D.visit(*this);
 }
 
@@ -272,7 +273,7 @@ void BasicBlock::printAsOperand(llvh::raw_ostream &OS, bool) const {
   OS << "BB#" << std::to_string(Num);
 }
 
-void Instruction::dump(llvh::raw_ostream &os) {
+void Instruction::dump(llvh::raw_ostream &os) const {
   IRPrinter D(getParent()->getContext(), os);
   D.visit(*this);
 }
@@ -409,7 +410,7 @@ void Function::eraseFromParentNoDestroy() {
   getParent()->getFunctionList().remove(getIterator());
 }
 
-StringRef Instruction::getName() {
+llvh::StringRef Instruction::getName() {
   switch (getKind()) {
     default:
       llvm_unreachable("Invalid kind");
@@ -456,7 +457,7 @@ Parameter::Parameter(Function *parent, Identifier name)
 
 Variable::Variable(
     ValueKind k,
-    VariableScope *scope,
+    ScopeDesc *scope,
     DeclKind declKind,
     Identifier txt)
     : Value(k), declKind(declKind), text(txt), parent(scope) {
@@ -541,6 +542,9 @@ Module::~Module() {
   // Note that we cannot delete while iterating due to the implementation
   // of FoldingSet.
   for (auto &L : literalNumbers) {
+    toDelete.push_back(&L);
+  }
+  for (auto &L : literalBigInts) {
     toDelete.push_back(&L);
   }
   for (auto &L : literalStrings) {
@@ -671,8 +675,8 @@ int Parameter::getIndexInParamList() const {
   llvm_unreachable("Cannot find parameter in the function");
 }
 
-void Function::dump() {
-  IRPrinter D(getParent()->getContext(), llvh::outs());
+void Function::dump(llvh::raw_ostream &os) const {
+  IRPrinter D(getParent()->getContext(), os);
   D.visit(*this);
 }
 
@@ -739,10 +743,9 @@ void Module::viewGraph() {
   }
 }
 
-void Module::dump() {
-  for (auto &F : *this) {
-    F.dump();
-  }
+void Module::dump(llvh::raw_ostream &os) const {
+  IRPrinter D(getContext(), os);
+  D.visit(*this);
 }
 
 LiteralNumber *Module::getLiteralNumber(double value) {
@@ -758,6 +761,22 @@ LiteralNumber *Module::getLiteralNumber(double value) {
 
   auto New = new LiteralNumber(value);
   literalNumbers.InsertNode(New, InsertPos);
+  return New;
+}
+
+LiteralBigInt *Module::getLiteralBigInt(UniqueString *value) {
+  // Check to see if we've already seen this tuple before.
+  llvh::FoldingSetNodeID ID;
+
+  LiteralBigInt::Profile(ID, value);
+
+  // If this is not the first time we see this tuple then return the old copy.
+  void *InsertPos = nullptr;
+  if (LiteralBigInt *LN = literalBigInts.FindNodeOrInsertPos(ID, InsertPos))
+    return LN;
+
+  auto New = new LiteralBigInt(value);
+  literalBigInts.InsertNode(New, InsertPos);
   return New;
 }
 

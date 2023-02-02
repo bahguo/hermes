@@ -16,6 +16,7 @@
 #include "hermes/VM/Runtime.h"
 #include "hermes/VM/RuntimeModule-inline.h"
 #include "hermes/VM/StringPrimitive.h"
+#include "hermes/VM/WeakRoot-inline.h"
 
 namespace hermes {
 namespace vm {
@@ -27,7 +28,7 @@ RuntimeModule::RuntimeModule(
     llvh::StringRef sourceURL,
     facebook::hermes::debugger::ScriptID scriptID)
     : runtime_(runtime),
-      domain_(&runtime.getHeap(), domain),
+      domain_(*domain, runtime),
       flags_(flags),
       sourceURL_(sourceURL),
       scriptID_(scriptID) {
@@ -335,6 +336,14 @@ std::string RuntimeModule::getStringFromStringID(StringID stringID) {
   }
 }
 
+llvh::ArrayRef<uint8_t> RuntimeModule::getBigIntBytesFromBigIntId(
+    BigIntID bigIntId) const {
+  assert(
+      bigIntId < bcProvider_->getBigIntTable().size() && "Invalid bigint id");
+  bigint::BigIntTableEntry entry = bcProvider_->getBigIntTable()[bigIntId];
+  return bcProvider_->getBigIntStorage().slice(entry.offset, entry.length);
+}
+
 llvh::ArrayRef<uint8_t> RuntimeModule::getRegExpBytecodeFromRegExpID(
     uint32_t regExpId) const {
   assert(
@@ -383,7 +392,7 @@ void RuntimeModule::markRoots(RootAcceptor &acceptor, bool markLongLived) {
   }
 }
 
-void RuntimeModule::markWeakRoots(WeakRootAcceptor &acceptor) {
+void RuntimeModule::markLongLivedWeakRoots(WeakRootAcceptor &acceptor) {
   for (auto &cbPtr : functionMap_) {
     // Only mark a CodeBlock is its non-null, and has not been scanned
     // previously in this top-level markRoots invocation.
@@ -398,10 +407,6 @@ void RuntimeModule::markWeakRoots(WeakRootAcceptor &acceptor) {
   }
 }
 
-void RuntimeModule::markDomainRef(WeakRefAcceptor &acceptor) {
-  acceptor.accept(domain_);
-}
-
 llvh::Optional<Handle<HiddenClass>> RuntimeModule::findCachedLiteralHiddenClass(
     Runtime &runtime,
     unsigned keyBufferIndex,
@@ -411,7 +416,7 @@ llvh::Optional<Handle<HiddenClass>> RuntimeModule::findCachedLiteralHiddenClass(
         getLiteralHiddenClassCacheHashKey(keyBufferIndex, numLiterals));
     if (cachedHiddenClassIter != objectLiteralHiddenClasses_.end()) {
       if (HiddenClass *const cachedHiddenClass =
-              cachedHiddenClassIter->second.get(runtime, &runtime.getHeap())) {
+              cachedHiddenClassIter->second.get(runtime, runtime.getHeap())) {
         return runtime_.makeHandle(cachedHiddenClass);
       }
     }
@@ -441,7 +446,8 @@ size_t RuntimeModule::additionalMemorySize() const {
       templateMap_.getMemorySize();
 }
 
-void RuntimeModule::snapshotAddNodes(GC *gc, HeapSnapshot &snap) const {
+#ifdef HERMES_MEMORY_INSTRUMENTATION
+void RuntimeModule::snapshotAddNodes(GC &gc, HeapSnapshot &snap) const {
   // Create a native node for each CodeBlock owned by this module.
   for (const CodeBlock *cb : functionMap_) {
     // Skip the null code blocks, they are lazily inserted the first time
@@ -452,7 +458,7 @@ void RuntimeModule::snapshotAddNodes(GC *gc, HeapSnapshot &snap) const {
       snap.endNode(
           HeapSnapshot::NodeType::Native,
           "CodeBlock",
-          gc->getNativeID(cb),
+          gc.getNativeID(cb),
           sizeof(CodeBlock) + cb->additionalMemorySize(),
           0);
     }
@@ -468,23 +474,24 @@ void RuntimeModule::snapshotAddNodes(GC *gc, HeapSnapshot &snap) const {
     if (cb && cb->getRuntimeModule() == this) {
       // Only add a CodeBlock if this runtime module is the owner.
       snap.addIndexedEdge(
-          HeapSnapshot::EdgeType::Element, i, gc->getNativeID(cb));
+          HeapSnapshot::EdgeType::Element, i, gc.getNativeID(cb));
     }
   }
   snap.endNode(
       HeapSnapshot::NodeType::Native,
       "std::vector<CodeBlock *>",
-      gc->getNativeID(&functionMap_),
+      gc.getNativeID(&functionMap_),
       functionMap_.capacity() * sizeof(CodeBlock *),
       0);
 }
 
-void RuntimeModule::snapshotAddEdges(GC *gc, HeapSnapshot &snap) const {
+void RuntimeModule::snapshotAddEdges(GC &gc, HeapSnapshot &snap) const {
   snap.addNamedEdge(
       HeapSnapshot::EdgeType::Internal,
       "functionMap",
-      gc->getNativeID(&functionMap_));
+      gc.getNativeID(&functionMap_));
 }
+#endif // HERMES_MEMORY_INSTRUMENTATION
 
 namespace detail {
 

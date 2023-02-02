@@ -21,6 +21,8 @@ import type {HermesNode} from './HermesAST';
 
 import HermesASTAdapter from './HermesASTAdapter';
 
+declare var BigInt: ?(value: $FlowFixMe) => mixed;
+
 export default class HermesToBabelAdapter extends HermesASTAdapter {
   fixSourceLocation(node: HermesNode): void {
     const loc = node.loc;
@@ -67,6 +69,8 @@ export default class HermesToBabelAdapter extends HermesASTAdapter {
         return this.mapExportDefaultDeclaration(node);
       case 'ExportNamedDeclaration':
         return this.mapExportNamedDeclaration(node);
+      case 'ExportNamespaceSpecifier':
+        return this.mapExportNamespaceSpecifier(node);
       case 'ExportAllDeclaration':
         return this.mapExportAllDeclaration(node);
       case 'RestElement':
@@ -76,6 +80,7 @@ export default class HermesToBabelAdapter extends HermesASTAdapter {
       case 'JSXStringLiteral':
         return this.mapJSXStringLiteral(node);
       case 'PrivateName':
+        return this.mapPrivateName(node);
       case 'ClassPrivateProperty':
         return this.mapPrivateProperty(node);
       case 'FunctionDeclaration':
@@ -84,6 +89,12 @@ export default class HermesToBabelAdapter extends HermesASTAdapter {
       case 'IndexedAccessType':
       case 'OptionalIndexedAccessType':
         return this.mapUnsupportedTypeAnnotation(node);
+      case 'BigIntLiteral':
+        return this.mapBigIntLiteral(node);
+      case 'BigIntLiteralTypeAnnotation':
+        return this.mapBigIntLiteralTypeAnnotation(node);
+      case 'BigIntTypeAnnotation':
+        return this.mapBigIntTypeAnnotation(node);
       default:
         return this.mapNodeDefault(node);
     }
@@ -251,13 +262,14 @@ export default class HermesToBabelAdapter extends HermesASTAdapter {
         predicate,
       } = value;
 
-      return {
+      const newNode: HermesNode = {
         type: 'ObjectMethod',
         loc: node.loc,
         start: node.start,
         end: node.end,
         // Non getter or setter methods have `kind = method`
         kind: node.kind === 'init' ? 'method' : node.kind,
+        method: node.kind === 'init' ? true : false,
         computed: node.computed,
         key,
         id,
@@ -269,6 +281,11 @@ export default class HermesToBabelAdapter extends HermesASTAdapter {
         typeParameters,
         predicate,
       };
+      if (node.kind !== 'init') {
+        // babel emits an empty variance property on accessors for some reason
+        newNode.variance = null;
+      }
+      return newNode;
     } else {
       // Non-method property nodes should be renamed to ObjectProperty
       node.type = 'ObjectProperty';
@@ -322,6 +339,18 @@ export default class HermesToBabelAdapter extends HermesASTAdapter {
     if (annotation != null) {
       restElement.typeAnnotation = annotation;
       restElement.argument.typeAnnotation = null;
+      // Unfortunately there's no way for us to recover the end location of
+      // the argument for the general case
+      if (restElement.argument.type === 'Identifier') {
+        restElement.argument.end =
+          restElement.argument.start + restElement.argument.name.length;
+        restElement.argument.loc.end = {
+          ...restElement.argument.loc.start,
+          column:
+            restElement.argument.loc.start.column +
+            restElement.argument.name.length,
+        };
+      }
     }
 
     return restElement;
@@ -337,9 +366,15 @@ export default class HermesToBabelAdapter extends HermesASTAdapter {
       end: node.end,
       callee: {
         type: 'Import',
-        loc: node.loc,
+        loc: {
+          ...node.loc,
+          end: {
+            ...node.loc.start,
+            column: node.loc.start.column + 'import'.length,
+          },
+        },
         start: node.start,
-        end: node.end,
+        end: node.start + 'import'.length,
       },
       arguments: [this.mapNode(node.source)],
     };
@@ -379,5 +414,86 @@ export default class HermesToBabelAdapter extends HermesASTAdapter {
       start: node.start,
       end: node.end,
     };
+  }
+
+  mapBigIntLiteral(node: HermesNode): HermesNode {
+    node.value = this.getBigIntLiteralValue(node.bigint).value;
+    return node;
+  }
+  mapBigIntLiteralTypeAnnotation(node: HermesNode): HermesNode {
+    node.value = this.getBigIntLiteralValue(node.raw).value;
+    return node;
+  }
+  /**
+   * Babel does not parse the bigint keyword type as the keyword node.
+   * So we need to down-level the AST to a plain GenericTypeAnnotation
+   */
+  mapBigIntTypeAnnotation(node: HermesNode): HermesNode {
+    return {
+      type: 'GenericTypeAnnotation',
+      id: {
+        type: 'Identifier',
+        name: 'bigint',
+        loc: node.loc,
+        start: node.start,
+        end: node.end,
+      },
+      typeParameters: null,
+      loc: node.loc,
+      start: node.start,
+      end: node.end,
+    };
+  }
+
+  mapPrivateProperty(nodeUnprocessed: HermesNode): HermesNode {
+    const node = this.mapNodeDefault(nodeUnprocessed);
+    node.key = {
+      type: 'PrivateName',
+      id: {
+        ...node.key,
+        // babel doesn't include the hash in the identifier
+        start: node.key.start + 1,
+        loc: {
+          ...node.key.loc,
+          start: {
+            ...node.key.loc.start,
+            column: node.key.loc.start.column + 1,
+          },
+        },
+      },
+      start: node.key.start,
+      end: node.key.end,
+      loc: node.key.loc,
+    };
+
+    return node;
+  }
+
+  mapPrivateName(node: HermesNode): HermesNode {
+    // babel doesn't include the hash in the identifier
+    node.id.start += 1;
+    node.id.loc.start.column += 1;
+    return node;
+  }
+
+  mapExportNamespaceSpecifier(nodeUnprocessed: HermesNode): HermesNode {
+    const node = this.mapNodeDefault(nodeUnprocessed);
+
+    // the hermes AST emits the location as the location of the entire export
+    // but babel emits the location as *just* the "* as id" bit
+
+    // the end will always align with the end of the identifier (ezpz)
+    // but the start will align with the "*" token - which we can't recover from just the AST
+    // so we just fudge the start location a bit to get it "good enough"
+    // it will be wrong if the AST is anything like "export      * as x from 'y'"... but oh well
+    node.start = node.start + 'export '.length;
+    node.loc.start.column = node.loc.start.column + 'export '.length;
+    node.end = node.exported.end;
+    node.loc.end = {
+      column: node.exported.loc.end.column,
+      line: node.exported.loc.end.line,
+    };
+
+    return node;
   }
 }

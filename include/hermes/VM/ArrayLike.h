@@ -12,7 +12,11 @@
 #include "hermes/VM/Handle.h"
 #include "hermes/VM/JSArray.h"
 #include "hermes/VM/JSObject.h"
+#pragma GCC diagnostic push
 
+#ifdef HERMES_COMPILER_SUPPORTS_WSHORTEN_64_TO_32
+#pragma GCC diagnostic ignored "-Wshorten-64-to-32"
+#endif
 namespace hermes {
 namespace vm {
 
@@ -51,7 +55,8 @@ ExecutionStatus createListFromArrayLike(
       // Fast path: we already have an array, so try and bypass the getComputed
       // checks and the handle loads & stores. Directly call ArrayImpl::at,
       // and only call getComputed if the element is empty.
-      PseudoHandle<> elem = createPseudoHandle(elemArray->at(runtime, elemIdx));
+      PseudoHandle<> elem = createPseudoHandle(
+          elemArray->at(runtime, elemIdx).unboxToHV(runtime));
       if (LLVM_LIKELY(!elem->isEmpty())) {
         if (LLVM_UNLIKELY(
                 elementCB(runtime, elemIdx, std::move(elem)) ==
@@ -96,5 +101,6 @@ ExecutionStatus createListFromArrayLike(
 
 } // namespace vm
 } // namespace hermes
+#pragma GCC diagnostic pop
 
 #endif // HERMES_VM_ARRAYLIKE_H

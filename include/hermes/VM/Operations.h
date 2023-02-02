@@ -8,6 +8,7 @@
 #ifndef HERMES_VM_OPERATIONS_H
 #define HERMES_VM_OPERATIONS_H
 
+#include "hermes/VM/BigIntPrimitive.h"
 #include "hermes/VM/CallResult.h"
 #include "hermes/VM/InternalProperty.h"
 #include "hermes/VM/Runtime.h"
@@ -48,15 +49,8 @@ bool toBoolean(HermesValue value);
 /// ES5.1 9.3
 CallResult<HermesValue> toNumber_RJS(Runtime &runtime, Handle<> valueHandle);
 
-/// ES 2020 7.1.3
-inline CallResult<HermesValue> toNumeric_RJS(
-    Runtime &runtime,
-    Handle<> valueHandle) {
-  // The difference between this and toNumber is that it can return a
-  // BigInt.  But Hermes doesn't support BigInt yet, so for now, this
-  // is a placeholder.
-  return toNumber_RJS(runtime, valueHandle);
-}
+/// ES 2020 7.1.3 ToNumeric(value)
+CallResult<HermesValue> toNumeric_RJS(Runtime &runtime, Handle<> valueHandle);
 
 /// ES6 7.1.15
 CallResult<HermesValue> toLength(Runtime &runtime, Handle<> valueHandle);
@@ -453,6 +447,21 @@ CallResult<HermesValue> objectFromPropertyDescriptor(
     Runtime &runtime,
     ComputedPropertyDescriptor desc,
     Handle<> valueOrAccessor);
+
+/// ES2022 21.2.1.1.1 NumberToBigInt(number)
+CallResult<HermesValue> numberToBigInt(Runtime &runtime, double number);
+
+// ES2022 7.2.6 IsIntegralNumber(argument)
+bool isIntegralNumber(double number);
+
+// ES2022 7.1.13 ToBigInt(argument)
+CallResult<HermesValue> toBigInt_RJS(Runtime &runtime, Handle<> value);
+
+// ES2022 7.1.14 StringToBigInt
+CallResult<HermesValue> stringToBigInt_RJS(Runtime &runtime, Handle<> value);
+
+// ES2022 21.2.3 Properties of the BigInt Prototype Object - thisBigIntValue
+CallResult<HermesValue> thisBigIntValue(Runtime &runtime, Handle<> value);
 
 } // namespace vm
 } // namespace hermes

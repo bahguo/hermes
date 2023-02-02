@@ -10,29 +10,42 @@
 
 'use strict';
 
+import type {AlignmentCase} from '../__test_utils__/alignment-utils';
+
+import {
+  expectBabelAlignment,
+  expectEspreeAlignment,
+} from '../__test_utils__/alignment-utils';
 import {parseForSnapshot} from '../__test_utils__/parse';
 
-describe('ClassProperty', () => {
-  const source = `
-    class C {
-      foo;
-      foo = 1;
-      foo: F = 1;
-      declare foo: 1;
-    }
-  `;
+describe('PropertyDefinition', () => {
+  const testCase: AlignmentCase = {
+    code: `
+      class C {
+        foo;
+        bar = 1;
+        static staticProp = 1;
+      }
+    `,
+    espree: {
+      expectToFail: false,
+    },
+    babel: {
+      expectToFail: false,
+    },
+  };
 
   test('ESTree', () => {
-    expect(parseForSnapshot(source)).toMatchInlineSnapshot(`
-      Object {
-        "body": Array [
-          Object {
-            "body": Object {
-              "body": Array [
-                Object {
+    expect(parseForSnapshot(testCase.code)).toMatchInlineSnapshot(`
+      {
+        "body": [
+          {
+            "body": {
+              "body": [
+                {
                   "computed": false,
                   "declare": false,
-                  "key": Object {
+                  "key": {
                     "name": "foo",
                     "optional": false,
                     "type": "Identifier",
@@ -40,25 +53,25 @@ describe('ClassProperty', () => {
                   },
                   "optional": false,
                   "static": false,
-                  "type": "ClassProperty",
+                  "type": "PropertyDefinition",
                   "typeAnnotation": null,
                   "value": null,
                   "variance": null,
                 },
-                Object {
+                {
                   "computed": false,
                   "declare": false,
-                  "key": Object {
-                    "name": "foo",
+                  "key": {
+                    "name": "bar",
                     "optional": false,
                     "type": "Identifier",
                     "typeAnnotation": null,
                   },
                   "optional": false,
                   "static": false,
-                  "type": "ClassProperty",
+                  "type": "PropertyDefinition",
                   "typeAnnotation": null,
-                  "value": Object {
+                  "value": {
                     "literalType": "numeric",
                     "raw": "1",
                     "type": "Literal",
@@ -66,73 +79,38 @@ describe('ClassProperty', () => {
                   },
                   "variance": null,
                 },
-                Object {
+                {
                   "computed": false,
                   "declare": false,
-                  "key": Object {
-                    "name": "foo",
+                  "key": {
+                    "name": "staticProp",
                     "optional": false,
                     "type": "Identifier",
                     "typeAnnotation": null,
                   },
                   "optional": false,
-                  "static": false,
-                  "type": "ClassProperty",
-                  "typeAnnotation": Object {
-                    "type": "TypeAnnotation",
-                    "typeAnnotation": Object {
-                      "id": Object {
-                        "name": "F",
-                        "optional": false,
-                        "type": "Identifier",
-                        "typeAnnotation": null,
-                      },
-                      "type": "GenericTypeAnnotation",
-                      "typeParameters": null,
-                    },
-                  },
-                  "value": Object {
+                  "static": true,
+                  "type": "PropertyDefinition",
+                  "typeAnnotation": null,
+                  "value": {
                     "literalType": "numeric",
                     "raw": "1",
                     "type": "Literal",
                     "value": 1,
                   },
-                  "variance": null,
-                },
-                Object {
-                  "computed": false,
-                  "declare": true,
-                  "key": Object {
-                    "name": "foo",
-                    "optional": false,
-                    "type": "Identifier",
-                    "typeAnnotation": null,
-                  },
-                  "optional": false,
-                  "static": false,
-                  "type": "ClassProperty",
-                  "typeAnnotation": Object {
-                    "type": "TypeAnnotation",
-                    "typeAnnotation": Object {
-                      "raw": "1",
-                      "type": "NumberLiteralTypeAnnotation",
-                      "value": 1,
-                    },
-                  },
-                  "value": null,
                   "variance": null,
                 },
               ],
               "type": "ClassBody",
             },
-            "decorators": Array [],
-            "id": Object {
+            "decorators": [],
+            "id": {
               "name": "C",
               "optional": false,
               "type": "Identifier",
               "typeAnnotation": null,
             },
-            "implements": Array [],
+            "implements": [],
             "superClass": null,
             "superTypeParameters": null,
             "type": "ClassDeclaration",
@@ -142,5 +120,174 @@ describe('ClassProperty', () => {
         "type": "Program",
       }
     `);
+    expectEspreeAlignment(testCase);
+  });
+
+  test('Babel', () => {
+    expectBabelAlignment(testCase);
+  });
+
+  describe('With types', () => {
+    describe('Property', () => {
+      const testCase: AlignmentCase = {
+        code: `
+          class C {
+            baz: F = 1;
+          }
+        `,
+        espree: {
+          // espree doesn't support types
+          expectToFail: 'espree-exception',
+          expectedExceptionMessage: 'Unexpected token :',
+        },
+        babel: {
+          expectToFail: false,
+        },
+      };
+
+      test('ESTree', () => {
+        expect(parseForSnapshot(testCase.code)).toMatchInlineSnapshot(`
+          {
+            "body": [
+              {
+                "body": {
+                  "body": [
+                    {
+                      "computed": false,
+                      "declare": false,
+                      "key": {
+                        "name": "baz",
+                        "optional": false,
+                        "type": "Identifier",
+                        "typeAnnotation": null,
+                      },
+                      "optional": false,
+                      "static": false,
+                      "type": "PropertyDefinition",
+                      "typeAnnotation": {
+                        "type": "TypeAnnotation",
+                        "typeAnnotation": {
+                          "id": {
+                            "name": "F",
+                            "optional": false,
+                            "type": "Identifier",
+                            "typeAnnotation": null,
+                          },
+                          "type": "GenericTypeAnnotation",
+                          "typeParameters": null,
+                        },
+                      },
+                      "value": {
+                        "literalType": "numeric",
+                        "raw": "1",
+                        "type": "Literal",
+                        "value": 1,
+                      },
+                      "variance": null,
+                    },
+                  ],
+                  "type": "ClassBody",
+                },
+                "decorators": [],
+                "id": {
+                  "name": "C",
+                  "optional": false,
+                  "type": "Identifier",
+                  "typeAnnotation": null,
+                },
+                "implements": [],
+                "superClass": null,
+                "superTypeParameters": null,
+                "type": "ClassDeclaration",
+                "typeParameters": null,
+              },
+            ],
+            "type": "Program",
+          }
+        `);
+        expectEspreeAlignment(testCase);
+      });
+
+      test('Babel', () => {
+        expectBabelAlignment(testCase);
+      });
+    });
+    describe('Declared Property', () => {
+      const testCase: AlignmentCase = {
+        code: `
+          class C {
+            declare bam: 1;
+          }
+        `,
+        espree: {
+          // espree doesn't support types
+          expectToFail: 'espree-exception',
+          expectedExceptionMessage: 'Unexpected token bam',
+        },
+        // babel: {expectToFail: false},
+        babel: {
+          // TODO - once we update the babel version we test against - we can enable this
+          expectToFail: 'babel-exception',
+          expectedExceptionMessage: 'Unexpected token',
+        },
+      };
+
+      test('ESTree', () => {
+        expect(parseForSnapshot(testCase.code)).toMatchInlineSnapshot(`
+          {
+            "body": [
+              {
+                "body": {
+                  "body": [
+                    {
+                      "computed": false,
+                      "declare": true,
+                      "key": {
+                        "name": "bam",
+                        "optional": false,
+                        "type": "Identifier",
+                        "typeAnnotation": null,
+                      },
+                      "optional": false,
+                      "static": false,
+                      "type": "PropertyDefinition",
+                      "typeAnnotation": {
+                        "type": "TypeAnnotation",
+                        "typeAnnotation": {
+                          "raw": "1",
+                          "type": "NumberLiteralTypeAnnotation",
+                          "value": 1,
+                        },
+                      },
+                      "value": null,
+                      "variance": null,
+                    },
+                  ],
+                  "type": "ClassBody",
+                },
+                "decorators": [],
+                "id": {
+                  "name": "C",
+                  "optional": false,
+                  "type": "Identifier",
+                  "typeAnnotation": null,
+                },
+                "implements": [],
+                "superClass": null,
+                "superTypeParameters": null,
+                "type": "ClassDeclaration",
+                "typeParameters": null,
+              },
+            ],
+            "type": "Program",
+          }
+        `);
+        expectEspreeAlignment(testCase);
+      });
+
+      test('Babel', () => {
+        expectBabelAlignment(testCase);
+      });
+    });
   });
 });

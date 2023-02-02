@@ -5,6 +5,11 @@
  * LICENSE file in the root directory of this source tree.
  */
 
+use std::fmt::Display;
+
+use juno_ast::NodeRc;
+use juno_support::declare_opaque_id;
+
 use super::completion_record::*;
 use super::environment_record::*;
 use super::execution_context::*;
@@ -12,9 +17,9 @@ use super::jsobject::*;
 use super::lexical_environment::*;
 use super::operations::*;
 use super::script::*;
-use crate::eval::jsvalue::{JSString, JSSymbol, JSValue};
-use juno_ast::NodeRc;
-use std::fmt::Display;
+use crate::eval::jsvalue::JSString;
+use crate::eval::jsvalue::JSSymbol;
+use crate::eval::jsvalue::JSValue;
 
 pub type Realm = ();
 
