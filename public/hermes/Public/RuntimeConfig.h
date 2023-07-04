@@ -35,7 +35,7 @@ class PinnedHermesValue;
   F(constexpr, PinnedHermesValue *, RegisterStack, nullptr)            \
                                                                        \
   /* Register Stack Size */                                            \
-  F(constexpr, unsigned, MaxNumRegisters, 64 * 1024)                   \
+  F(constexpr, unsigned, MaxNumRegisters, 128 * 1024)                  \
                                                                        \
   /* Whether to allow eval and Function ctor */                        \
   F(constexpr, bool, EnableEval, true)                                 \
@@ -119,6 +119,9 @@ class PinnedHermesValue;
                                                                        \
   /* The flags passed from a VM experiment */                          \
   F(constexpr, uint32_t, VMExperimentFlags, 0)                         \
+                                                                       \
+  /* Whether or not block scoping is enabled */                        \
+  F(constexpr, bool, EnableBlockScoping, false)                        \
   /* RUNTIME_FIELDS END */
 
 _HERMES_CTORCONFIG_STRUCT(RuntimeConfig, RUNTIME_FIELDS, {})

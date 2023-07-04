@@ -139,7 +139,8 @@ std::shared_ptr<Runtime> Runtime::create(const RuntimeConfig &runtimeConfig) {
   auto rt = HeapRuntime<Runtime>::create(sp);
   new (rt.get()) Runtime(std::move(sp), runtimeConfig);
   return rt;
-#elif defined(HERMES_FACEBOOK_BUILD) && !defined(HERMES_FBCODE_BUILD)
+#elif defined(HERMES_FACEBOOK_BUILD) && !defined(HERMES_FBCODE_BUILD) && \
+    !defined(__EMSCRIPTEN__)
   // TODO (T84179835): Disable this once it is no longer useful for debugging.
   return StackRuntime::create(runtimeConfig);
 #else
@@ -219,6 +220,7 @@ Runtime::Runtime(
       verifyEvalIR(runtimeConfig.getVerifyEvalIR()),
       optimizedEval(runtimeConfig.getOptimizedEval()),
       asyncBreakCheckInEval(runtimeConfig.getAsyncBreakCheckInEval()),
+      enableBlockScopingInEval(runtimeConfig.getEnableBlockScoping()),
       heapStorage_(
           *this,
           *this,

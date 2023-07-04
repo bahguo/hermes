@@ -101,7 +101,7 @@ void lowerIR(Module *M, const BytecodeGenerationOptions &options) {
   if (options.verifyIR &&
       verifyModule(*M, &llvh::errs(), VerificationMode::IR_VALID)) {
     M->dump();
-    llvm_unreachable("IR verification failed");
+    hermes_fatal("IR verification failed");
   }
 }
 
@@ -513,6 +513,7 @@ std::unique_ptr<BytecodeModule> hbc::generateBytecodeModule(
       funcGen = BytecodeFunctionGenerator::create(BMGen, 0);
     } else {
       HVMRegisterAllocator RA(&F);
+      ScopeRegisterAnalysis SRA(&F, RA);
       if (!options.optimizationEnabled) {
         RA.setFastPassThreshold(kFastRegisterAllocationThreshold);
         RA.setMemoryLimit(kRegisterAllocationMemoryLimit);
@@ -551,7 +552,7 @@ std::unique_ptr<BytecodeModule> hbc::generateBytecodeModule(
 
       funcGen =
           BytecodeFunctionGenerator::create(BMGen, RA.getMaxRegisterUsage());
-      HBCISel hbciSel(&F, funcGen.get(), RA, scopeAnalysis, options);
+      HBCISel hbciSel(&F, funcGen.get(), RA, scopeAnalysis, SRA, options);
       hbciSel.populateDebugCache(debugCache);
       hbciSel.generate(sourceMapGen);
       debugCache = hbciSel.getDebugCache();

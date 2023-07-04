@@ -351,8 +351,8 @@ CallResult<PseudoHandle<StringPrimitive>> toString_RJS(
     case HermesValue::ETag::BigInt1:
     case HermesValue::ETag::BigInt2: {
       const uint8_t kDefaultRadix = 10;
-      auto res =
-          vmcast<BigIntPrimitive>(value)->toString(runtime, kDefaultRadix);
+      auto res = BigIntPrimitive::toString(
+          runtime, Handle<BigIntPrimitive>::vmcast(valueHandle), kDefaultRadix);
       if (LLVM_UNLIKELY(res == ExecutionStatus::EXCEPTION)) {
         return ExecutionStatus::EXCEPTION;
       }
@@ -547,7 +547,7 @@ CallResult<HermesValue> toNumber_RJS(Runtime &runtime, Handle<> valueHandle) {
       // Already have a number, just return it.
       return value;
   }
-  return HermesValue::encodeDoubleValue(result);
+  return HermesValue::encodeUntrustedNumberValue(result);
 }
 
 CallResult<HermesValue> toNumeric_RJS(Runtime &runtime, Handle<> valueHandle) {
@@ -577,7 +577,7 @@ CallResult<HermesValue> toLength(Runtime &runtime, Handle<> valueHandle) {
   } else if (len > maxLength) {
     len = maxLength;
   }
-  return HermesValue::encodeDoubleValue(len);
+  return HermesValue::encodeUntrustedNumberValue(len);
 }
 
 CallResult<uint64_t> toLengthU64(Runtime &runtime, Handle<> valueHandle) {
@@ -598,7 +598,7 @@ CallResult<uint64_t> toLengthU64(Runtime &runtime, Handle<> valueHandle) {
 
 CallResult<HermesValue> toIndex(Runtime &runtime, Handle<> valueHandle) {
   auto value = (valueHandle->isUndefined())
-      ? runtime.makeHandle(HermesValue::encodeDoubleValue(0))
+      ? runtime.makeHandle(HermesValue::encodeUntrustedNumberValue(0))
       : valueHandle;
   auto res = toIntegerOrInfinity(runtime, value);
   if (res == ExecutionStatus::EXCEPTION) {
@@ -609,7 +609,7 @@ CallResult<HermesValue> toIndex(Runtime &runtime, Handle<> valueHandle) {
     return runtime.raiseRangeError("A negative value cannot be an index");
   }
   auto integerIndexHandle =
-      runtime.makeHandle(HermesValue::encodeDoubleValue(integerIndex));
+      runtime.makeHandle(HermesValue::encodeUntrustedNumberValue(integerIndex));
   res = toLength(runtime, integerIndexHandle);
   if (res == ExecutionStatus::EXCEPTION) {
     return ExecutionStatus::EXCEPTION;
@@ -638,7 +638,7 @@ CallResult<HermesValue> toIntegerOrInfinity(
     result = std::trunc(num);
   }
 
-  return HermesValue::encodeDoubleValue(result);
+  return HermesValue::encodeTrustedNumberValue(result);
 }
 
 /// Conversion of HermesValues to integers.
@@ -652,7 +652,7 @@ static inline CallResult<HermesValue> toInt(
   }
   double num = res->getNumber();
   T result = static_cast<T>(hermes::truncateToInt32(num));
-  return HermesValue::encodeNumberValue(result);
+  return HermesValue::encodeUntrustedNumberValue(result);
 }
 
 CallResult<HermesValue> toInt8(Runtime &runtime, Handle<> valueHandle) {
@@ -709,7 +709,8 @@ CallResult<HermesValue> toUInt8Clamp(Runtime &runtime, Handle<> valueHandle) {
     // 2. ReturnIfAbrupt(number)
     return ExecutionStatus::EXCEPTION;
   }
-  return HermesValue::encodeNumberValue(toUInt8Clamp(res->getNumber()));
+  return HermesValue::encodeUntrustedNumberValue(
+      toUInt8Clamp(res->getNumber()));
 }
 
 CallResult<HermesValue> toUInt16(Runtime &runtime, Handle<> valueHandle) {
@@ -849,7 +850,7 @@ static CallResult<bool> compareBigIntAndString(
     bool (*comparator)(int)) {
   assert(rightHandle->isString() && "rhs should be string");
 
-  auto bigintRight = stringToBigInt_RJS(runtime, rightHandle);
+  auto bigintRight = stringToBigInt(runtime, rightHandle);
   if (LLVM_UNLIKELY(bigintRight == ExecutionStatus::EXCEPTION)) {
     return ExecutionStatus::EXCEPTION;
   }
@@ -1080,7 +1081,7 @@ abstractEqualityTest_RJS(Runtime &runtime, Handle<> xHandle, Handle<> yHandle) {
       // 6. If Type(x) is BigInt and Type(y) is String, then
       CASE_M_M(BigInt, Str) {
         // a. Let n be ! StringToBigInt(y).
-        auto n = stringToBigInt_RJS(runtime, y);
+        auto n = stringToBigInt(runtime, y);
         if (LLVM_UNLIKELY(n == ExecutionStatus::EXCEPTION)) {
           return ExecutionStatus::EXCEPTION;
         }
@@ -1115,7 +1116,7 @@ abstractEqualityTest_RJS(Runtime &runtime, Handle<> xHandle, Handle<> yHandle) {
         return y->getBigInt()->compare(static_cast<int32_t>(x->getBool())) == 0;
       }
       CASE_S_M(Bool, Object) {
-        x = HermesValue::encodeDoubleValue(x->getBool());
+        x = HermesValue::encodeUntrustedNumberValue(x->getBool());
         break;
       }
       // 9. If Type(y) is Boolean, return the result of the comparison x == !
@@ -1131,7 +1132,7 @@ abstractEqualityTest_RJS(Runtime &runtime, Handle<> xHandle, Handle<> yHandle) {
         return x->getBigInt()->compare(static_cast<int32_t>(y->getBool())) == 0;
       }
       CASE_M_S(Object, Bool) {
-        y = HermesValue::encodeDoubleValue(y->getBool());
+        y = HermesValue::encodeUntrustedNumberValue(y->getBool());
         break;
       }
       // 10. If Type(x) is either String, Number, BigInt, or Symbol and Type(y)
@@ -1166,7 +1167,7 @@ abstractEqualityTest_RJS(Runtime &runtime, Handle<> xHandle, Handle<> yHandle) {
       // the mathematical value of y, return true; otherwise return false.
       CASE_M_S(BigInt, NUMBER_TAG) {
         std::swap(x, y);
-        LLVM_FALLTHROUGH;
+        [[fallthrough]];
       }
       CASE_S_M(NUMBER_TAG, BigInt) {
         if (!isIntegralNumber(x->getNumber())) {
@@ -1260,7 +1261,7 @@ addOp_RJS(Runtime &runtime, Handle<> xHandle, Handle<> yHandle) {
       return ExecutionStatus::EXCEPTION;
     }
     const double yNum = res->getNumber();
-    return HermesValue::encodeDoubleValue(xNum + yNum);
+    return HermesValue::encodeUntrustedNumberValue(xNum + yNum);
   }
 
   // yPrim is a primitive; therefore it is already a BigInt, or it will never be
@@ -1272,8 +1273,8 @@ addOp_RJS(Runtime &runtime, Handle<> xHandle, Handle<> yHandle) {
 
   return BigIntPrimitive::add(
       runtime,
-      runtime.makeHandle(resX->getBigInt()),
-      runtime.makeHandle(resY->getBigInt()));
+      runtime.makeHandle(xPrim->getBigInt()),
+      runtime.makeHandle(yPrim->getBigInt()));
 }
 
 static const size_t MIN_RADIX = 2;
@@ -1519,6 +1520,13 @@ CallResult<PseudoHandle<JSObject>> iteratorNext(
   return PseudoHandle<JSObject>::vmcast(std::move(*resultRes));
 }
 
+CallResult<PseudoHandle<HermesValue>> iteratorValue(
+    Runtime &runtime,
+    Handle<JSObject> iterResult) {
+  return JSObject::getNamed_RJS(
+      iterResult, runtime, Predefined::getSymbolID(Predefined::value));
+}
+
 CallResult<Handle<JSObject>> iteratorStep(
     Runtime &runtime,
     const IteratorRecord &iteratorRecord) {
@@ -1599,6 +1607,56 @@ ExecutionStatus iteratorClose(
     return runtime.raiseTypeError("iterator.return() did not return an object");
   }
   return ExecutionStatus::RETURNED;
+}
+
+CallResult<Handle<JSArray>> iterableToArray(
+    Runtime &runtime,
+    Handle<HermesValue> items) {
+  // IterableToList: 2a. Let iteratorRecord be ? GetIterator(items, sync).
+  CallResult<IteratorRecord> iteratorRecordRes = getIterator(runtime, items);
+  if (LLVM_UNLIKELY(iteratorRecordRes == ExecutionStatus::EXCEPTION)) {
+    return ExecutionStatus::EXCEPTION;
+  }
+  IteratorRecord iteratorRecord = *iteratorRecordRes;
+
+  // CreateArrayFromList: 1. Let array be ! ArrayCreate(0).
+  auto arrRes = JSArray::create(runtime, 0, 0);
+  assert(arrRes != ExecutionStatus::EXCEPTION && "could not create array");
+  Handle<JSArray> array = *arrRes;
+  // CreateArrayFromList: 2. Let n be 0.
+  size_t n = 0;
+
+  GCScopeMarkerRAII marker{runtime};
+  for (;; marker.flush()) {
+    // IterableToList: 5.a. Set next to ? IteratorStep(iteratorRecord).
+    CallResult<Handle<JSObject>> nextRes =
+        iteratorStep(runtime, iteratorRecord);
+    if (LLVM_UNLIKELY(nextRes == ExecutionStatus::EXCEPTION)) {
+      return ExecutionStatus::EXCEPTION;
+    }
+    if (!*nextRes) {
+      break;
+    }
+    // 5.b.i. Let nextValue be ? IteratorValue(next).
+    CallResult<PseudoHandle<HermesValue>> nextValueRes =
+        iteratorValue(runtime, *nextRes);
+    if (LLVM_UNLIKELY(nextValueRes == ExecutionStatus::EXCEPTION)) {
+      return ExecutionStatus::EXCEPTION;
+    }
+    // CreateArrayFromList: 3.a Perform ! CreateDataPropertyOrThrow(array, !
+    // ToString(𝔽(n)), e).
+    JSArray::setElementAt(
+        array, runtime, n, runtime.makeHandle(std::move(*nextValueRes)));
+    // CreateArrayFromList: 3.b Set n to n + 1.
+    n++;
+  }
+  if (LLVM_UNLIKELY(
+          JSArray::setLengthProperty(array, runtime, n) ==
+          ExecutionStatus::EXCEPTION)) {
+    return ExecutionStatus::EXCEPTION;
+  }
+  // 4. Return array.
+  return array;
 }
 
 bool isUncatchableError(HermesValue value) {
@@ -2059,11 +2117,7 @@ ExecutionStatus toPropertyDescriptor(
       return runtime.raiseTypeError(
           "Invalid property descriptor. Can't set both accessor and writable.");
     }
-    auto crtRes = PropertyAccessor::create(runtime, getterPtr, setterPtr);
-    if (LLVM_UNLIKELY(crtRes == ExecutionStatus::EXCEPTION)) {
-      return ExecutionStatus::EXCEPTION;
-    }
-    valueOrAccessor = *crtRes;
+    valueOrAccessor = PropertyAccessor::create(runtime, getterPtr, setterPtr);
   }
 
   return ExecutionStatus::RETURNED;
@@ -2227,7 +2281,7 @@ CallResult<HermesValue> toBigInt_RJS(Runtime &runtime, Handle<> value) {
       return *prim;
     case HermesValue::ETag::Str1:
     case HermesValue::ETag::Str2: {
-      auto n = stringToBigInt_RJS(runtime, runtime.makeHandle(*prim));
+      auto n = stringToBigInt(runtime, runtime.makeHandle(*prim));
       if (LLVM_UNLIKELY(n == ExecutionStatus::EXCEPTION)) {
         return ExecutionStatus::EXCEPTION;
       }
@@ -2243,7 +2297,7 @@ CallResult<HermesValue> toBigInt_RJS(Runtime &runtime, Handle<> value) {
   return runtime.raiseTypeError("invalid argument to BigInt()");
 }
 
-CallResult<HermesValue> stringToBigInt_RJS(Runtime &runtime, Handle<> value) {
+CallResult<HermesValue> stringToBigInt(Runtime &runtime, Handle<> value) {
   if (value->isString()) {
     auto str = value->getString();
 
@@ -2272,5 +2326,25 @@ CallResult<HermesValue> thisBigIntValue(Runtime &runtime, Handle<> value) {
   return runtime.raiseTypeError("value is not a bigint");
 }
 
+bool hasRestrictedGlobalProperty(Runtime &runtime, SymbolID N) {
+  Handle<JSObject> globalObject = runtime.getGlobal();
+
+  // 1. Let ObjRec be envRec.[[ObjectRecord]].
+  // 2. Let globalObject be ObjRec.[[BindingObject]].
+
+  // 3. Let existingProp be ? globalObject.[[GetOwnProperty]](N).
+  NamedPropertyDescriptor desc;
+  JSObject *existingProp =
+      JSObject::getNamedDescriptorUnsafe(globalObject, runtime, N, desc);
+
+  // 4. If existingProp is undefined, return false.
+  if (!existingProp) {
+    return false;
+  }
+
+  // 5. If existingProp.[[Configurable]] is true, return false.
+  // 6. Return true.
+  return !desc.flags.configurable;
+}
 } // namespace vm
 } // namespace hermes

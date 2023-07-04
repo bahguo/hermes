@@ -17,7 +17,7 @@
 
 // lint directives to let us do some basic validation of generated files
 /* eslint no-undef: 'error', no-unused-vars: ['error', {vars: "local"}], no-redeclare: 'error' */
-/* global $NonMaybeType, $Partial, $ReadOnly, $ReadOnlyArray */
+/* global $NonMaybeType, Partial, $ReadOnly, $ReadOnlyArray */
 
 'use strict';
 
@@ -79,6 +79,18 @@ function deserializeFunctionDeclaration() {
     predicate: this.deserializeNode(),
     generator: this.deserializeBoolean(),
     async: this.deserializeBoolean(),
+  };
+}
+
+function deserializeComponentDeclaration() {
+  return {
+    type: 'ComponentDeclaration',
+    loc: this.addEmptyLoc(),
+    id: this.deserializeNode(),
+    params: this.deserializeNodeList(),
+    body: this.deserializeNode(),
+    typeParameters: this.deserializeNode(),
+    rendersType: this.deserializeNode(),
   };
 }
 
@@ -609,6 +621,7 @@ function deserializeClassProperty() {
     optional: this.deserializeBoolean(),
     variance: this.deserializeNode(),
     typeAnnotation: this.deserializeNode(),
+    tsModifiers: this.deserializeNode(),
   };
 }
 
@@ -623,6 +636,7 @@ function deserializeClassPrivateProperty() {
     optional: this.deserializeBoolean(),
     variance: this.deserializeNode(),
     typeAnnotation: this.deserializeNode(),
+    tsModifiers: this.deserializeNode(),
   };
 }
 
@@ -804,8 +818,10 @@ function deserializeJSXOpeningElement() {
     name: this.deserializeNode(),
     attributes: this.deserializeNodeList(),
     selfClosing: this.deserializeBoolean(),
+    typeArguments: this.deserializeNode(),
   };
 }
+
 function deserializeJSXClosingElement() {
   return {
     type: 'JSXClosingElement',
@@ -952,6 +968,25 @@ function deserializeFunctionTypeParam() {
     optional: this.deserializeBoolean(),
   };
 }
+function deserializeComponentTypeAnnotation() {
+  return {
+    type: 'ComponentTypeAnnotation',
+    loc: this.addEmptyLoc(),
+    params: this.deserializeNodeList(),
+    rest: this.deserializeNode(),
+    typeParameters: this.deserializeNode(),
+    rendersType: this.deserializeNode(),
+  };
+}
+function deserializeComponentTypeParameter() {
+  return {
+    type: 'ComponentTypeParameter',
+    loc: this.addEmptyLoc(),
+    name: this.deserializeNode(),
+    typeAnnotation: this.deserializeNode(),
+    optional: this.deserializeBoolean(),
+  };
+}
 function deserializeNullableTypeAnnotation() {
   return {
     type: 'NullableTypeAnnotation',
@@ -974,6 +1009,21 @@ function deserializeTypeofTypeAnnotation() {
     argument: this.deserializeNode(),
   };
 }
+function deserializeKeyofTypeAnnotation() {
+  return {
+    type: 'KeyofTypeAnnotation',
+    loc: this.addEmptyLoc(),
+    argument: this.deserializeNode(),
+  };
+}
+function deserializeQualifiedTypeofIdentifier() {
+  return {
+    type: 'QualifiedTypeofIdentifier',
+    loc: this.addEmptyLoc(),
+    qualification: this.deserializeNode(),
+    id: this.deserializeNode(),
+  };
+}
 function deserializeTupleTypeAnnotation() {
   return {
     type: 'TupleTypeAnnotation',
@@ -981,11 +1031,36 @@ function deserializeTupleTypeAnnotation() {
     types: this.deserializeNodeList(),
   };
 }
+function deserializeTupleTypeSpreadElement() {
+  return {
+    type: 'TupleTypeSpreadElement',
+    loc: this.addEmptyLoc(),
+    label: this.deserializeNode(),
+    typeAnnotation: this.deserializeNode(),
+  };
+}
+function deserializeTupleTypeLabeledElement() {
+  return {
+    type: 'TupleTypeLabeledElement',
+    loc: this.addEmptyLoc(),
+    label: this.deserializeNode(),
+    elementType: this.deserializeNode(),
+    optional: this.deserializeBoolean(),
+    variance: this.deserializeNode(),
+  };
+}
 function deserializeArrayTypeAnnotation() {
   return {
     type: 'ArrayTypeAnnotation',
     loc: this.addEmptyLoc(),
     elementType: this.deserializeNode(),
+  };
+}
+function deserializeInferTypeAnnotation() {
+  return {
+    type: 'InferTypeAnnotation',
+    loc: this.addEmptyLoc(),
+    typeParameter: this.deserializeNode(),
   };
 }
 function deserializeUnionTypeAnnotation() {
@@ -1025,6 +1100,25 @@ function deserializeOptionalIndexedAccessType() {
     objectType: this.deserializeNode(),
     indexType: this.deserializeNode(),
     optional: this.deserializeBoolean(),
+  };
+}
+function deserializeConditionalTypeAnnotation() {
+  return {
+    type: 'ConditionalTypeAnnotation',
+    loc: this.addEmptyLoc(),
+    checkType: this.deserializeNode(),
+    extendsType: this.deserializeNode(),
+    trueType: this.deserializeNode(),
+    falseType: this.deserializeNode(),
+  };
+}
+function deserializeTypePredicate() {
+  return {
+    type: 'TypePredicate',
+    loc: this.addEmptyLoc(),
+    parameterName: this.deserializeNode(),
+    typeAnnotation: this.deserializeNode(),
+    asserts: this.deserializeBoolean(),
   };
 }
 function deserializeInterfaceTypeAnnotation() {
@@ -1113,11 +1207,31 @@ function deserializeDeclareFunction() {
     predicate: this.deserializeNode(),
   };
 }
+function deserializeDeclareComponent() {
+  return {
+    type: 'DeclareComponent',
+    loc: this.addEmptyLoc(),
+    id: this.deserializeNode(),
+    params: this.deserializeNodeList(),
+    rest: this.deserializeNode(),
+    typeParameters: this.deserializeNode(),
+    rendersType: this.deserializeNode(),
+  };
+}
 function deserializeDeclareVariable() {
   return {
     type: 'DeclareVariable',
     loc: this.addEmptyLoc(),
     id: this.deserializeNode(),
+    kind: this.deserializeString(),
+  };
+}
+function deserializeDeclareEnum() {
+  return {
+    type: 'DeclareEnum',
+    loc: this.addEmptyLoc(),
+    id: this.deserializeNode(),
+    body: this.deserializeNode(),
   };
 }
 function deserializeDeclareExportDeclaration() {
@@ -1239,6 +1353,17 @@ function deserializeObjectTypeIndexer() {
     variance: this.deserializeNode(),
   };
 }
+function deserializeObjectTypeMappedTypeProperty() {
+  return {
+    type: 'ObjectTypeMappedTypeProperty',
+    loc: this.addEmptyLoc(),
+    keyTparam: this.deserializeNode(),
+    propType: this.deserializeNode(),
+    sourceType: this.deserializeNode(),
+    variance: this.deserializeNode(),
+    optional: this.deserializeString(),
+  };
+}
 function deserializeVariance() {
   return {
     type: 'Variance',
@@ -1261,8 +1386,10 @@ function deserializeTypeParameter() {
     bound: this.deserializeNode(),
     variance: this.deserializeNode(),
     default: this.deserializeNode(),
+    usesExtendsBound: this.deserializeBoolean(),
   };
 }
+
 function deserializeTypeParameterInstantiation() {
   return {
     type: 'TypeParameterInstantiation',
@@ -1360,6 +1487,15 @@ function deserializeEnumBooleanMember() {
     loc: this.addEmptyLoc(),
     id: this.deserializeNode(),
     init: this.deserializeNode(),
+  };
+}
+function deserializeComponentParameter() {
+  return {
+    type: 'ComponentParameter',
+    loc: this.addEmptyLoc(),
+    name: this.deserializeNode(),
+    local: this.deserializeNode(),
+    shorthand: this.deserializeBoolean(),
   };
 }
 function deserializeTSTypeAnnotation() {
@@ -1609,10 +1745,10 @@ function deserializeTSConditionalType() {
   return {
     type: 'TSConditionalType',
     loc: this.addEmptyLoc(),
-    extendsType: this.deserializeNode(),
     checkType: this.deserializeNode(),
+    extendsType: this.deserializeNode(),
     trueType: this.deserializeNode(),
-    falseTYpe: this.deserializeNode(),
+    falseType: this.deserializeNode(),
   };
 }
 function deserializeTSTypeLiteral() {
@@ -1662,6 +1798,14 @@ function deserializeTSCallSignatureDeclaration() {
     returnType: this.deserializeNode(),
   };
 }
+function deserializeTSModifiers() {
+  return {
+    type: 'TSModifiers',
+    loc: this.addEmptyLoc(),
+    accessibility: this.deserializeString(),
+    readonly: this.deserializeBoolean(),
+  };
+}
 function deserializeCoverFirst() {
   throw new Error('Cover' + ' should not appear in program buffer');
 }
@@ -1707,6 +1851,8 @@ module.exports = [
   deserializeArrowFunctionExpression,
 
   deserializeFunctionDeclaration,
+
+  deserializeComponentDeclaration,
 
   deserializeFunctionLikeLast,
   deserializeStatementFirst,
@@ -1813,6 +1959,7 @@ module.exports = [
   deserializeJSXExpressionContainer,
   deserializeJSXSpreadChild,
   deserializeJSXOpeningElement,
+
   deserializeJSXClosingElement,
   deserializeJSXAttribute,
   deserializeJSXSpreadAttribute,
@@ -1839,16 +1986,25 @@ module.exports = [
   deserializeVoidTypeAnnotation,
   deserializeFunctionTypeAnnotation,
   deserializeFunctionTypeParam,
+  deserializeComponentTypeAnnotation,
+  deserializeComponentTypeParameter,
   deserializeNullableTypeAnnotation,
   deserializeQualifiedTypeIdentifier,
   deserializeTypeofTypeAnnotation,
+  deserializeKeyofTypeAnnotation,
+  deserializeQualifiedTypeofIdentifier,
   deserializeTupleTypeAnnotation,
+  deserializeTupleTypeSpreadElement,
+  deserializeTupleTypeLabeledElement,
   deserializeArrayTypeAnnotation,
+  deserializeInferTypeAnnotation,
   deserializeUnionTypeAnnotation,
   deserializeIntersectionTypeAnnotation,
   deserializeGenericTypeAnnotation,
   deserializeIndexedAccessType,
   deserializeOptionalIndexedAccessType,
+  deserializeConditionalTypeAnnotation,
+  deserializeTypePredicate,
   deserializeInterfaceTypeAnnotation,
   deserializeTypeAlias,
   deserializeOpaqueType,
@@ -1858,7 +2014,9 @@ module.exports = [
   deserializeDeclareInterface,
   deserializeDeclareClass,
   deserializeDeclareFunction,
+  deserializeDeclareComponent,
   deserializeDeclareVariable,
+  deserializeDeclareEnum,
   deserializeDeclareExportDeclaration,
   deserializeDeclareExportAllDeclaration,
   deserializeDeclareModule,
@@ -1872,9 +2030,11 @@ module.exports = [
   deserializeObjectTypeInternalSlot,
   deserializeObjectTypeCallProperty,
   deserializeObjectTypeIndexer,
+  deserializeObjectTypeMappedTypeProperty,
   deserializeVariance,
   deserializeTypeParameterDeclaration,
   deserializeTypeParameter,
+
   deserializeTypeParameterInstantiation,
   deserializeTypeCastExpression,
   deserializeInferredPredicate,
@@ -1888,6 +2048,7 @@ module.exports = [
   deserializeEnumStringMember,
   deserializeEnumNumberMember,
   deserializeEnumBooleanMember,
+  deserializeComponentParameter,
   deserializeTSTypeAnnotation,
   deserializeTSAnyKeyword,
   deserializeTSNumberKeyword,
@@ -1929,6 +2090,7 @@ module.exports = [
   deserializeTSMethodSignature,
   deserializeTSIndexSignature,
   deserializeTSCallSignatureDeclaration,
+  deserializeTSModifiers,
   deserializeCoverFirst,
   deserializeCoverEmptyArgs,
   deserializeCoverTrailingComma,
