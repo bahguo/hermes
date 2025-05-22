@@ -715,20 +715,6 @@ static void printDebugInfo(
   dbgs() << "\n";
 }
 
-/// \return whether \p opcode is a call opcode (Call, CallDirect, Construct,
-/// CallLongIndex, etc). Note CallBuiltin is not really a Call.
-LLVM_ATTRIBUTE_UNUSED
-static bool isCallType(OpCode opcode) {
-  switch (opcode) {
-#define DEFINE_RET_TARGET(name) \
-  case OpCode::name:            \
-    return true;
-#include "hermes/BCGen/HBC/BytecodeList.def"
-    default:
-      return false;
-  }
-}
-
 #endif
 
 /// \return the address of the next instruction after \p ip, which must be a
@@ -1087,6 +1073,9 @@ tailCall:
   }                                             \
   goto *opcodeDispatch[(unsigned)ip->opCode]
 
+// Do nothing if we're not in a switch.
+#define INTERPRETER_FALLTHROUGH
+
 #else // HERMESVM_INDIRECT_THREADING
 
 #define CASE(name) case OpCode::name:
@@ -1099,23 +1088,46 @@ tailCall:
   }                                             \
   continue
 
+// Fallthrough if we're in a switch.
+#define INTERPRETER_FALLTHROUGH [[fallthrough]]
+
 #endif // HERMESVM_INDIRECT_THREADING
 
-#define RUN_DEBUGGER_ASYNC_BREAK(flags)                                      \
-  do {                                                                       \
-    CAPTURE_IP_ASSIGN(                                                       \
-        auto dRes,                                                           \
-        runDebuggerUpdatingState(                                            \
-            (uint8_t)(flags) &                                               \
-                    (uint8_t)Runtime::AsyncBreakReasonBits::DebuggerExplicit \
-                ? Debugger::RunReason::AsyncBreakExplicit                    \
-                : Debugger::RunReason::AsyncBreakImplicit,                   \
-            runtime,                                                         \
-            curCodeBlock,                                                    \
-            ip,                                                              \
-            frameRegs));                                                     \
-    if (dRes == ExecutionStatus::EXCEPTION)                                  \
-      goto exception;                                                        \
+// This macro is used when we detect that either the Implicit or Explicit
+// AsyncBreak flags have been set. It checks to see which one was requested and
+// propagate the corresponding RunReason. If both Implicit and Explicit have
+// been requested, then we'll propagate the RunReasons for both. Once for
+// Implicit and once for Explicit.
+#define RUN_DEBUGGER_ASYNC_BREAK(flags)                         \
+  bool requestedImplicit = (uint8_t)(flags) &                   \
+      (uint8_t)Runtime::AsyncBreakReasonBits::DebuggerImplicit; \
+  bool requestedExplicit = (uint8_t)(flags) &                   \
+      (uint8_t)Runtime::AsyncBreakReasonBits::DebuggerExplicit; \
+  do {                                                          \
+    if (requestedImplicit) {                                    \
+      CAPTURE_IP_ASSIGN(                                        \
+          auto dRes,                                            \
+          runDebuggerUpdatingState(                             \
+              Debugger::RunReason::AsyncBreakImplicit,          \
+              runtime,                                          \
+              curCodeBlock,                                     \
+              ip,                                               \
+              frameRegs));                                      \
+      if (dRes == ExecutionStatus::EXCEPTION)                   \
+        goto exception;                                         \
+    }                                                           \
+    if (requestedExplicit) {                                    \
+      CAPTURE_IP_ASSIGN(                                        \
+          auto dRes,                                            \
+          runDebuggerUpdatingState(                             \
+              Debugger::RunReason::AsyncBreakExplicit,          \
+              runtime,                                          \
+              curCodeBlock,                                     \
+              ip,                                               \
+              frameRegs));                                      \
+      if (dRes == ExecutionStatus::EXCEPTION)                   \
+        goto exception;                                         \
+    }                                                           \
   } while (0)
 
   for (;;) {
@@ -1161,6 +1173,7 @@ tailCall:
   CASE(name) {                                                           \
     if (LLVM_LIKELY(O2REG(name).isNumber() && O3REG(name).isNumber())) { \
       /* Fast-path. */                                                   \
+      INTERPRETER_FALLTHROUGH;                                           \
       CASE(name##N) {                                                    \
         O1REG(name) = HermesValue::encodeTrustedNumberValue(             \
             do##name(O2REG(name).getNumber(), O3REG(name).getNumber())); \
@@ -1292,6 +1305,7 @@ tailCall:
             O2REG(name##suffix).isNumber() &&                             \
             O3REG(name##suffix).isNumber())) {                            \
       /* Fast-path. */                                                    \
+      INTERPRETER_FALLTHROUGH;                                            \
       CASE(name##N##suffix) {                                             \
         if (O2REG(name##N##suffix)                                        \
                 .getNumber() oper O3REG(name##N##suffix)                  \
@@ -1472,7 +1486,7 @@ tailCall:
         ip = NEXTINST(LoadThisNS);
         DISPATCH;
       }
-    coerceThisSlowPath : {
+    coerceThisSlowPath: {
       CAPTURE_IP(res = toObject(runtime, tmpHandle));
       if (LLVM_UNLIKELY(res == ExecutionStatus::EXCEPTION)) {
         goto exception;
@@ -1556,7 +1570,7 @@ tailCall:
         goto doCall;
       }
 
-    doCall : {
+    doCall: {
 #ifdef HERMES_ENABLE_DEBUGGER
       // Check for an async debugger request.
       if (uint8_t asyncFlags =
@@ -1724,9 +1738,10 @@ tailCall:
       CASE(ResumeGenerator) {
         auto *innerFn = vmcast<GeneratorInnerFunction>(
             runtime.getCurrentFrame().getCalleeClosureUnsafe());
-        O1REG(ResumeGenerator) = innerFn->getResult().unboxToHV(runtime);
         O2REG(ResumeGenerator) = HermesValue::encodeBoolValue(
             innerFn->getAction() == GeneratorInnerFunction::Action::Return);
+        // Write the result last in case it is the same register as O2REG.
+        O1REG(ResumeGenerator) = innerFn->getResult().unboxToHV(runtime);
         innerFn->clearResult(runtime);
         if (innerFn->getAction() == GeneratorInnerFunction::Action::Throw) {
           runtime.setThrownValue(O1REG(ResumeGenerator));
@@ -1738,12 +1753,27 @@ tailCall:
 
       CASE(Ret) {
 #ifdef HERMES_ENABLE_DEBUGGER
-        // Check for an async debugger request.
-        if (uint8_t asyncFlags =
-                runtime.testAndClearDebuggerAsyncBreakRequest()) {
-          RUN_DEBUGGER_ASYNC_BREAK(asyncFlags);
-          gcScope.flushToSmallCount(KEEP_HANDLES);
-          DISPATCH;
+        // Check for an async debugger request, but skip it if we're single
+        // stepping. The only case where we'd be single stepping a Ret is if it
+        // was replaced with Debugger OpCode and we're coming here from
+        // stepFunction(). This does take away a chance to handle AsyncBreak. An
+        // AsyncBreak request could be either Explicit or Implicit. The Explicit
+        // case is to have the program being executed to pause. There isn't a
+        // need to pause at a particular location. Also, since we just came from
+        // a breakpoint, handling Explicit AsyncBreak for single step isn't so
+        // important. The other possible kind is an Implicit AsyncBreak, which
+        // is used for debug clients to interrupt the runtime to execute their
+        // own code. Not processing AsyncBreak just means that the Implicit
+        // AsyncBreak needs to wait for the next opportunity to interrupt the
+        // runtime, which should be fine. There is no contract for when the
+        // interrupt should happen.
+        if (!SingleStep) {
+          if (uint8_t asyncFlags =
+                  runtime.testAndClearDebuggerAsyncBreakRequest()) {
+            RUN_DEBUGGER_ASYNC_BREAK(asyncFlags);
+            gcScope.flushToSmallCount(KEEP_HANDLES);
+            DISPATCH;
+          }
         }
 #endif
 
@@ -1774,7 +1804,23 @@ tailCall:
 
         INIT_STATE_FOR_CODEBLOCK(curCodeBlock);
         O1REG(Call) = res.getValue();
+
+#ifdef HERMES_ENABLE_DEBUGGER
+        // Only do the more expensive check for breakpoint location (in
+        // getRealOpCode) if there are breakpoints installed in the function
+        // we're returning into.
+        if (LLVM_UNLIKELY(curCodeBlock->getNumInstalledBreakpoints() > 0)) {
+          ip = IPADD(inst::getInstSize(
+              runtime.debugger_.getRealOpCode(curCodeBlock, CUROFFSET)));
+        } else {
+          // No breakpoints in the function being returned to, just use
+          // nextInstCall().
+          ip = nextInstCall(ip);
+        }
+#else
         ip = nextInstCall(ip);
+#endif
+
         DISPATCH;
       }
 
@@ -1839,35 +1885,23 @@ tailCall:
               goto exception;
             }
           }
-          auto breakpointOpt = runtime.debugger_.getBreakpointLocation(ip);
-          if (breakpointOpt.hasValue()) {
-            // We're on a breakpoint but we're supposed to continue.
-            curCodeBlock->uninstallBreakpointAtOffset(
-                CUROFFSET, breakpointOpt->opCode);
-            if (ip->opCode == OpCode::Debugger) {
-              // Breakpointed a debugger instruction, so move past it
-              // since we've already called the debugger on this instruction.
-              ip = NEXTINST(Debugger);
-            } else {
-              InterpreterState newState{curCodeBlock, (uint32_t)CUROFFSET};
-              CAPTURE_IP_ASSIGN(
-                  ExecutionStatus status, runtime.stepFunction(newState));
-              curCodeBlock->installBreakpointAtOffset(CUROFFSET);
-              if (status == ExecutionStatus::EXCEPTION) {
-                goto exception;
-              }
+          InterpreterState newState{curCodeBlock, (uint32_t)CUROFFSET};
+          ExecutionStatus status =
+              runtime.debugger_.processInstUnderDebuggerOpCode(newState);
+          if (status == ExecutionStatus::EXCEPTION) {
+            goto exception;
+          }
+
+          if (newState.codeBlock != curCodeBlock ||
+              newState.offset != (uint32_t)CUROFFSET) {
+            ip = newState.codeBlock->getOffsetPtr(newState.offset);
+
+            if (newState.codeBlock != curCodeBlock) {
               curCodeBlock = newState.codeBlock;
-              ip = newState.codeBlock->getOffsetPtr(newState.offset);
               INIT_STATE_FOR_CODEBLOCK(curCodeBlock);
               // Single-stepping should handle call stack management for us.
               frameRegs = &runtime.getCurrentFrame().getFirstLocalRef();
             }
-          } else if (ip->opCode == OpCode::Debugger) {
-            // No breakpoint here and we've already run the debugger,
-            // just continue on.
-            // If the current instruction is no longer a debugger instruction,
-            // we're just going to keep executing from the current IP.
-            ip = NEXTINST(Debugger);
           }
           gcScope.flushToSmallCount(KEEP_HANDLES);
         }
@@ -1929,7 +1963,7 @@ tailCall:
         nextIP = NEXTINST(CreateClosureLongIndex);
         goto createClosure;
       }
-    createClosure : {
+    createClosure: {
       auto *runtimeModule = curCodeBlock->getRuntimeModule();
       CAPTURE_IP(
           O1REG(CreateClosure) =
@@ -1955,7 +1989,7 @@ tailCall:
         nextIP = NEXTINST(CreateAsyncClosureLongIndex);
         goto createAsyncClosure;
       }
-    createAsyncClosure : {
+    createAsyncClosure: {
       auto *runtimeModule = curCodeBlock->getRuntimeModule();
       CAPTURE_IP_ASSIGN(
           O1REG(CreateAsyncClosure),
@@ -1981,7 +2015,7 @@ tailCall:
         nextIP = NEXTINST(CreateGeneratorClosureLongIndex);
         goto createGeneratorClosure;
       }
-    createGeneratorClosure : {
+    createGeneratorClosure: {
       auto *runtimeModule = curCodeBlock->getRuntimeModule();
       CAPTURE_IP_ASSIGN(
           O1REG(CreateGeneratorClosure),
@@ -2180,7 +2214,7 @@ tailCall:
         idVal = ip->iGetById.op4;
         nextIP = NEXTINST(GetById);
       }
-    getById : {
+    getById: {
       ++NumGetById;
       // NOTE: it is safe to use OnREG(GetById) here because all instructions
       // have the same layout: opcode, registers, non-register operands, i.e.
@@ -2370,7 +2404,7 @@ tailCall:
         idVal = ip->iPutById.op4;
         nextIP = NEXTINST(PutById);
       }
-    putById : {
+    putById: {
       ++NumPutById;
       if (LLVM_LIKELY(O1REG(PutById).isObject())) {
         CAPTURE_IP_ASSIGN(
@@ -2544,7 +2578,7 @@ tailCall:
         nextIP = NEXTINST(PutOwnByIndex);
         idVal = ip->iPutOwnByIndex.op3;
       }
-    putOwnByIndex : {
+    putOwnByIndex: {
       tmpHandle = HermesValue::encodeUntrustedNumberValue(idVal);
       CAPTURE_IP(JSObject::defineOwnComputedPrimitive(
           Handle<JSObject>::vmcast(&O1REG(PutOwnByIndex)),
@@ -2600,9 +2634,10 @@ tailCall:
                   "toString on number cannot fail");
               tmpHandle = status->getHermesValue();
             }
-            O1REG(GetNextPName) = tmpHandle.get();
             O4REG(GetNextPName) =
                 HermesValue::encodeUntrustedNumberValue(idx + 1);
+            // Write the result last in case it is the same register as O4REG.
+            O1REG(GetNextPName) = tmpHandle.get();
           } else {
             O1REG(GetNextPName) = HermesValue::encodeUndefinedValue();
           }
@@ -2733,6 +2768,7 @@ tailCall:
         if (LLVM_LIKELY(
                 O2REG(Add).isNumber() &&
                 O3REG(Add).isNumber())) { /* Fast-path. */
+          INTERPRETER_FALLTHROUGH;
           CASE(AddN) {
             O1REG(Add) = HermesValue::encodeTrustedNumberValue(
                 O2REG(Add).getNumber() + O3REG(Add).getNumber());
@@ -3124,7 +3160,7 @@ tailCall:
         nextIP = NEXTINST(PutNewOwnById);
         idVal = ip->iPutNewOwnById.op3;
       }
-    putOwnById : {
+    putOwnById: {
       assert(
           O1REG(PutNewOwnById).isObject() &&
           "Object argument of PutNewOwnById must be an object");
@@ -3156,7 +3192,7 @@ tailCall:
         idVal = ip->iDelById.op3;
         nextIP = NEXTINST(DelById);
       }
-    DelById : {
+    DelById: {
       if (LLVM_LIKELY(O2REG(DelById).isObject())) {
         CAPTURE_IP_ASSIGN(
             auto status,
@@ -3328,7 +3364,7 @@ tailCall:
         nextIP = NEXTINST(LoadConstBigIntLongIndex);
         goto doLoadConstBigInt;
       }
-    doLoadConstBigInt : {
+    doLoadConstBigInt: {
       CAPTURE_IP_ASSIGN(
           auto res,
           BigIntPrimitive::fromBytes(
@@ -3429,14 +3465,16 @@ tailCall:
 #ifdef HERMES_RUN_WASM
       // Asm.js/Wasm Intrinsics
       CASE(Add32) {
-        O1REG(Add32) = HermesValue::encodeUntrustedNumberValue((
-            int32_t)(int64_t)(O2REG(Add32).getNumber() + O3REG(Add32).getNumber()));
+        O1REG(Add32) = HermesValue::encodeUntrustedNumberValue(
+            (int32_t)(int64_t)(O2REG(Add32).getNumber() +
+                               O3REG(Add32).getNumber()));
         ip = NEXTINST(Add32);
         DISPATCH;
       }
       CASE(Sub32) {
-        O1REG(Sub32) = HermesValue::encodeUntrustedNumberValue((
-            int32_t)(int64_t)(O2REG(Sub32).getNumber() - O3REG(Sub32).getNumber()));
+        O1REG(Sub32) = HermesValue::encodeUntrustedNumberValue(
+            (int32_t)(int64_t)(O2REG(Sub32).getNumber() -
+                               O3REG(Sub32).getNumber()));
         ip = NEXTINST(Sub32);
         DISPATCH;
       }

@@ -30,6 +30,8 @@ NodeList &getParams(FunctionLikeNode *node) {
 #if HERMES_PARSE_FLOW
     case NodeKind::ComponentDeclaration:
       return cast<ComponentDeclarationNode>(node)->_params;
+    case NodeKind::HookDeclaration:
+      return cast<HookDeclarationNode>(node)->_params;
 #endif
   }
 }
@@ -48,11 +50,13 @@ BlockStatementNode *getBlockStatement(FunctionLikeNode *node) {
           cast<FunctionDeclarationNode>(node)->_body);
     case NodeKind::ArrowFunctionExpression:
       return dyn_cast<BlockStatementNode>(
-          cast<FunctionDeclarationNode>(node)->_body);
+          cast<ArrowFunctionExpressionNode>(node)->_body);
 #if HERMES_PARSE_FLOW
     case NodeKind::ComponentDeclaration:
       return cast<BlockStatementNode>(
           cast<ComponentDeclarationNode>(node)->_body);
+    case NodeKind::HookDeclaration:
+      return cast<BlockStatementNode>(cast<HookDeclarationNode>(node)->_body);
 #endif
   }
 }
@@ -159,6 +163,8 @@ bool isGenerator(FunctionLikeNode *node) {
 #if HERMES_PARSE_FLOW
     case NodeKind::ComponentDeclaration:
       return false;
+    case NodeKind::HookDeclaration:
+      return false;
 #endif
   }
 }
@@ -177,6 +183,8 @@ bool isAsync(FunctionLikeNode *node) {
       return cast<FunctionDeclarationNode>(node)->_async;
 #if HERMES_PARSE_FLOW
     case NodeKind::ComponentDeclaration:
+      return false;
+    case NodeKind::HookDeclaration:
       return false;
 #endif
   }

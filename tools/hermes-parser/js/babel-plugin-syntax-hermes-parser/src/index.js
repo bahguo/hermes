@@ -14,31 +14,64 @@ import type {ParserOptions} from 'hermes-parser';
 
 import * as HermesParser from 'hermes-parser';
 
+type Options = {
+  /**
+   * When set to 'flow', will check files for a `@flow` annotation to apply
+   * this plugin, otherwise falling back to Babel's parser.
+   *
+   * This is independent of `parserOpts.flow`, which may customise 'detect'
+   * behaviour within hermes-parser (downstream from this plugin).
+   *
+   * Defaults to 'all'.
+   */
+  parseLangTypes?: 'flow' | 'all',
+};
+
 export default function BabelPluginSyntaxHermesParser(
   // $FlowExpectedError[unclear-type] We don't have types for this.
   api: any,
+  options: Options,
 ): $ReadOnly<{...}> {
-  api.assertVersion(7);
+  api.assertVersion('^7.0.0 || ^8.0.0-alpha.6');
+
+  const {parseLangTypes = 'all'} = options;
 
   let curParserOpts: ParserOptions = {};
+  let curFilename: ?string = null;
 
   return {
     name: 'syntax-hermes-parser',
 
-    manipulateOptions(opts: $ReadOnly<{parserOpts: ParserOptions}>) {
+    manipulateOptions(
+      opts: $ReadOnly<{parserOpts: ParserOptions, filename?: ?string}>,
+    ) {
       curParserOpts = opts.parserOpts;
+      curFilename = opts.filename;
     },
 
     // API suggested via https://babeljs.io/docs/babel-parser#will-the-babel-parser-support-a-plugin-system
     parserOverride(code: string) {
-      const opts: ParserOptions = {};
+      const filename = curFilename;
+      if (
+        filename != null &&
+        (filename.endsWith('.ts') || filename.endsWith('.tsx'))
+      ) {
+        return;
+      }
+
+      const parserOpts: ParserOptions = {};
       for (const [key, value] of Object.entries(curParserOpts)) {
         if (HermesParser.ParserOptionsKeys.has(key)) {
           // $FlowExpectedError[incompatible-type]
-          opts[key] = value;
+          parserOpts[key] = value;
         }
       }
-      return HermesParser.parse(code, {...opts, babel: true});
+
+      if (parseLangTypes === 'flow' && !/@flow/.test(code)) {
+        return;
+      }
+
+      return HermesParser.parse(code, {...parserOpts, babel: true});
     },
 
     pre() {

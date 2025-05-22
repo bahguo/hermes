@@ -111,6 +111,12 @@ OptValue<uint32_t> toArrayIndex(StringView str) {
 }
 
 bool isSameValue(HermesValue x, HermesValue y) {
+  // Check for NaN before checking the tag. We have to do this because NaNs may
+  // differ in the sign bit, which may result in the tag comparison below
+  // incorrectly returning false.
+  if (LLVM_UNLIKELY(x.isNaN()) && y.isNaN())
+    return true;
+
   if (x.getTag() != y.getTag()) {
     // If the tags are different, they must be different.
     return false;
@@ -993,6 +999,49 @@ IMPLEMENT_COMPARISON_OP(greaterOp_RJS, >);
 IMPLEMENT_COMPARISON_OP(lessEqualOp_RJS, <=);
 IMPLEMENT_COMPARISON_OP(greaterEqualOp_RJS, >=);
 
+namespace {
+
+enum class EqualityResult { Unknown = -1, NotEqual, Equal };
+
+/// Perform a fast equality check to see if a given double and a given
+/// BigInt are equal. If both numbers are small enough for a fast
+/// comparison, this will return `Equal` or `NotEqual`. Otherwise, if
+/// the numbers are not small enough to be quickly compared, this will
+/// return `Unknown`, which denotes that a non-fast-path check is needed.
+EqualityResult areEqualSmallNumbers(const double x, BigIntPrimitive *y) {
+  // Doubles have a 53-bit mantissa, so only values from 0 to 2^53 - 1 are
+  // contiguously representable.
+  constexpr int64_t MaxSafeIntegerValueOfDouble =
+      (int64_t{1} << std::numeric_limits<double>::digits) - 1;
+
+  // Do a quick pass for single digit values. This prevents us from
+  // having to instantiate a BigInt object for small numbers. We can
+  // only do this if we can cast our single BigInt digit to a double
+  // without loss of precision.
+  if (y->isTruncationToSingleDigitLossless(true)) {
+    const auto yDigit =
+        static_cast<bigint::SignedBigIntDigitType>(y->truncateToSingleDigit());
+
+    if (std::abs(yDigit) < MaxSafeIntegerValueOfDouble) {
+      // `false` and `true` are safely castable directly to EqualityResults
+      return static_cast<EqualityResult>(static_cast<double>(yDigit) == x);
+    }
+  }
+
+  // y (the BigInt) is greater than MaxSafeIntegerValueOfDouble. Thus, if
+  // x (the double) is less than MaxSafeIntegerValueOfDouble they are
+  // certainly NotEqual.
+  if (std::abs(x) < static_cast<double>(MaxSafeIntegerValueOfDouble)) {
+    static_assert(
+        std::numeric_limits<bigint::SignedBigIntDigitType>::max() >
+        MaxSafeIntegerValueOfDouble);
+    return EqualityResult::NotEqual;
+  }
+
+  return EqualityResult::Unknown;
+}
+} // namespace
+
 /// ES11 7.2.15 Abstract Equality Comparison
 CallResult<bool>
 abstractEqualityTest_RJS(Runtime &runtime, Handle<> xHandle, Handle<> yHandle) {
@@ -1172,6 +1221,12 @@ abstractEqualityTest_RJS(Runtime &runtime, Handle<> xHandle, Handle<> yHandle) {
       CASE_S_M(NUMBER_TAG, BigInt) {
         if (!isIntegralNumber(x->getNumber())) {
           return false;
+        }
+
+        EqualityResult areEqual =
+            areEqualSmallNumbers(x->getNumber(), y->getBigInt());
+        if (areEqual != EqualityResult::Unknown) {
+          return areEqual == EqualityResult::Equal ? true : false;
         }
 
         auto xAsBigInt = BigIntPrimitive::fromDouble(runtime, x->getNumber());
@@ -1855,13 +1910,6 @@ CallResult<bool> instanceOfOperator_RJS(
         "right operand of 'instanceof' is not an object");
   }
 
-  // Fast path: Function.prototype[Symbol.hasInstance] is non-configurable
-  // and non-writable (ES6.0 19.2.3.6), so we directly run its behavior here.
-  // Simply call through to ordinaryHasInstance.
-  if (vmisa<JSFunction>(*constructor)) {
-    return ordinaryHasInstance(runtime, constructor, object);
-  }
-
   // 2. Let instOfHandler be GetMethod(C,@@hasInstance).
   CallResult<PseudoHandle<>> instOfHandlerRes = JSObject::getNamed_RJS(
       Handle<JSObject>::vmcast(constructor),
@@ -2125,13 +2173,13 @@ ExecutionStatus toPropertyDescriptor(
 
 CallResult<HermesValue> objectFromPropertyDescriptor(
     Runtime &runtime,
-    ComputedPropertyDescriptor desc,
+    DefinePropertyFlags dpFlags,
     Handle<> valueOrAccessor) {
   Handle<JSObject> obj = runtime.makeHandle(JSObject::create(runtime));
 
   DefinePropertyFlags dpf = DefinePropertyFlags::getDefaultNewPropertyFlags();
 
-  if (!desc.flags.accessor) {
+  if (!dpFlags.isAccessor()) {
     // Data Descriptor
     auto result = JSObject::defineOwnProperty(
         obj,
@@ -2147,18 +2195,20 @@ CallResult<HermesValue> objectFromPropertyDescriptor(
       return ExecutionStatus::EXCEPTION;
     }
 
-    result = JSObject::defineOwnProperty(
-        obj,
-        runtime,
-        Predefined::getSymbolID(Predefined::writable),
-        dpf,
-        Runtime::getBoolValue(desc.flags.writable),
-        PropOpFlags().plusThrowOnError());
-    assert(
-        result != ExecutionStatus::EXCEPTION &&
-        "defineOwnProperty() failed on a new object");
-    if (result == ExecutionStatus::EXCEPTION) {
-      return ExecutionStatus::EXCEPTION;
+    if (dpFlags.setWritable) {
+      result = JSObject::defineOwnProperty(
+          obj,
+          runtime,
+          Predefined::getSymbolID(Predefined::writable),
+          dpf,
+          Runtime::getBoolValue(dpFlags.writable),
+          PropOpFlags().plusThrowOnError());
+      assert(
+          result != ExecutionStatus::EXCEPTION &&
+          "defineOwnProperty() failed on a new object");
+      if (result == ExecutionStatus::EXCEPTION) {
+        return ExecutionStatus::EXCEPTION;
+      }
     }
   } else {
     // Accessor
@@ -2203,34 +2253,37 @@ CallResult<HermesValue> objectFromPropertyDescriptor(
     }
   }
 
-  auto result = JSObject::defineOwnProperty(
-      obj,
-      runtime,
-      Predefined::getSymbolID(Predefined::enumerable),
-      dpf,
-      Runtime::getBoolValue(desc.flags.enumerable),
-      PropOpFlags().plusThrowOnError());
-  assert(
-      result != ExecutionStatus::EXCEPTION &&
-      "defineOwnProperty() failed on a new object");
-  if (result == ExecutionStatus::EXCEPTION) {
-    return ExecutionStatus::EXCEPTION;
+  if (dpFlags.setEnumerable) {
+    auto result = JSObject::defineOwnProperty(
+        obj,
+        runtime,
+        Predefined::getSymbolID(Predefined::enumerable),
+        dpf,
+        Runtime::getBoolValue(dpFlags.enumerable),
+        PropOpFlags().plusThrowOnError());
+    assert(
+        result != ExecutionStatus::EXCEPTION &&
+        "defineOwnProperty() failed on a new object");
+    if (result == ExecutionStatus::EXCEPTION) {
+      return ExecutionStatus::EXCEPTION;
+    }
   }
 
-  result = JSObject::defineOwnProperty(
-      obj,
-      runtime,
-      Predefined::getSymbolID(Predefined::configurable),
-      dpf,
-      Runtime::getBoolValue(desc.flags.configurable),
-      PropOpFlags().plusThrowOnError());
-  assert(
-      result != ExecutionStatus::EXCEPTION &&
-      "defineOwnProperty() failed on a new object");
-  if (result == ExecutionStatus::EXCEPTION) {
-    return ExecutionStatus::EXCEPTION;
+  if (dpFlags.setConfigurable) {
+    auto result = JSObject::defineOwnProperty(
+        obj,
+        runtime,
+        Predefined::getSymbolID(Predefined::configurable),
+        dpf,
+        Runtime::getBoolValue(dpFlags.configurable),
+        PropOpFlags().plusThrowOnError());
+    assert(
+        result != ExecutionStatus::EXCEPTION &&
+        "defineOwnProperty() failed on a new object");
+    if (result == ExecutionStatus::EXCEPTION) {
+      return ExecutionStatus::EXCEPTION;
+    }
   }
-
   return obj.getHermesValue();
 }
 

@@ -7,6 +7,7 @@
 
 // RUN: %hermes -O0 %s | %FileCheck --match-full-lines %s
 // RUN: %hermes -O %s  | %FileCheck --match-full-lines %s
+// REQUIRES: !check_native_stack
 
 "use strict";
 
@@ -22,9 +23,9 @@ test("overriding toString", () => {
 });
 // CHECK-LABEL: overriding toString
 // CHECK-NEXT: Error: overriding toString
-// CHECK-NEXT:     at anonymous ({{.*}}.js:19:24)
-// CHECK-NEXT:     at test ({{.*}}.js:15:20)
-// CHECK-NEXT:     at global ({{.*}}.js:18:5)
+// CHECK-NEXT:     at anonymous ({{.*}}.js:20:24)
+// CHECK-NEXT:     at test ({{.*}}.js:16:20)
+// CHECK-NEXT:     at global ({{.*}}.js:19:5)
 
 test("overriding name getter", () => {
     var err = new Error("overriding name getter");
@@ -33,12 +34,12 @@ test("overriding name getter", () => {
 });
 // CHECK-LABEL: overriding name getter
 // CHECK-NEXT: <while converting error to string: RangeError: Maximum call stack size exceeded (native stack depth)>
-// CHECK-NEXT:     at anonymous ({{.*}}.js:30:24)
-// CHECK-NEXT:     at test ({{.*}}.js:15:20)
-// CHECK-NEXT:     at global ({{.*}}.js:29:5): overriding name getter
-// CHECK-NEXT:     at anonymous ({{.*}}.js:30:24)
-// CHECK-NEXT:     at test ({{.*}}.js:15:20)
-// CHECK-NEXT:     at global ({{.*}}.js:29:5): overriding name getter
+// CHECK-NEXT:     at anonymous ({{.*}}.js:31:24)
+// CHECK-NEXT:     at test ({{.*}}.js:16:20)
+// CHECK-NEXT:     at global ({{.*}}.js:30:5): overriding name getter
+// CHECK-NEXT:     at anonymous ({{.*}}.js:31:24)
+// CHECK-NEXT:     at test ({{.*}}.js:16:20)
+// CHECK-NEXT:     at global ({{.*}}.js:30:5): overriding name getter
 
 test("overriding message getter", () => {
     var err = new Error("overriding message getter");
@@ -47,12 +48,12 @@ test("overriding message getter", () => {
 });
 // CHECK-LABEL: overriding message getter
 // CHECK-NEXT: Error: Error: {{.*}}: <while converting error to string: RangeError: Maximum call stack size exceeded (native stack depth)>
-// CHECK-NEXT:     at anonymous ({{.*}}.js:44:24)
-// CHECK-NEXT:     at test ({{.*}}.js:15:20)
-// CHECK-NEXT:     at global ({{.*}}.js:43:5)
-// CHECK-NEXT:     at anonymous ({{.*}}.js:44:24)
-// CHECK-NEXT:     at test ({{.*}}.js:15:20)
-// CHECK-NEXT:     at global ({{.*}}.js:43:5)
+// CHECK-NEXT:     at anonymous ({{.*}}.js:45:24)
+// CHECK-NEXT:     at test ({{.*}}.js:16:20)
+// CHECK-NEXT:     at global ({{.*}}.js:44:5)
+// CHECK-NEXT:     at anonymous ({{.*}}.js:45:24)
+// CHECK-NEXT:     at test ({{.*}}.js:16:20)
+// CHECK-NEXT:     at global ({{.*}}.js:44:5)
 
 test("Object.toString => this.stack", () => {
     var o = { toString: function() { return this.stack; } };

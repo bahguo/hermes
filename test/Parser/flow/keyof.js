@@ -58,6 +58,87 @@ type A = keyof B.C;
 // CHECK-NEXT:           "typeParameters": null
 // CHECK-NEXT:         }
 // CHECK-NEXT:       }
+// CHECK-NEXT:     },
+
+type A = keyof B | C;
+// CHECK-NEXT:     {
+// CHECK-NEXT:       "type": "TypeAlias",
+// CHECK-NEXT:       "id": {
+// CHECK-NEXT:         "type": "Identifier",
+// CHECK-NEXT:         "name": "A"
+// CHECK-NEXT:       },
+// CHECK-NEXT:       "typeParameters": null,
+// CHECK-NEXT:       "right": {
+// CHECK-NEXT:         "type": "UnionTypeAnnotation",
+// CHECK-NEXT:         "types": [
+// CHECK-NEXT:           {
+// CHECK-NEXT:             "type": "KeyofTypeAnnotation",
+// CHECK-NEXT:             "argument": {
+// CHECK-NEXT:               "type": "GenericTypeAnnotation",
+// CHECK-NEXT:               "id": {
+// CHECK-NEXT:                 "type": "Identifier",
+// CHECK-NEXT:                 "name": "B"
+// CHECK-NEXT:               },
+// CHECK-NEXT:               "typeParameters": null
+// CHECK-NEXT:             }
+// CHECK-NEXT:           },
+// CHECK-NEXT:           {
+// CHECK-NEXT:             "type": "GenericTypeAnnotation",
+// CHECK-NEXT:             "id": {
+// CHECK-NEXT:               "type": "Identifier",
+// CHECK-NEXT:               "name": "C"
+// CHECK-NEXT:             },
+// CHECK-NEXT:             "typeParameters": null
+// CHECK-NEXT:           }
+// CHECK-NEXT:         ]
+// CHECK-NEXT:       }
+// CHECK-NEXT:     },
+
+type A = keyof ?number;
+// CHECK-NEXT:     {
+// CHECK-NEXT:       "type": "TypeAlias",
+// CHECK-NEXT:       "id": {
+// CHECK-NEXT:         "type": "Identifier",
+// CHECK-NEXT:         "name": "A"
+// CHECK-NEXT:       },
+// CHECK-NEXT:       "typeParameters": null,
+// CHECK-NEXT:       "right": {
+// CHECK-NEXT:         "type": "KeyofTypeAnnotation",
+// CHECK-NEXT:         "argument": {
+// CHECK-NEXT:           "type": "NullableTypeAnnotation",
+// CHECK-NEXT:           "typeAnnotation": {
+// CHECK-NEXT:             "type": "NumberTypeAnnotation"
+// CHECK-NEXT:           }
+// CHECK-NEXT:         }
+// CHECK-NEXT:       }
+// CHECK-NEXT:     },
+
+type A = keyof React.Node;
+// CHECK-NEXT:     {
+// CHECK-NEXT:       "type": "TypeAlias",
+// CHECK-NEXT:       "id": {
+// CHECK-NEXT:         "type": "Identifier",
+// CHECK-NEXT:         "name": "A"
+// CHECK-NEXT:       },
+// CHECK-NEXT:       "typeParameters": null,
+// CHECK-NEXT:       "right": {
+// CHECK-NEXT:         "type": "KeyofTypeAnnotation",
+// CHECK-NEXT:         "argument": {
+// CHECK-NEXT:           "type": "GenericTypeAnnotation",
+// CHECK-NEXT:           "id": {
+// CHECK-NEXT:             "type": "QualifiedTypeIdentifier",
+// CHECK-NEXT:             "qualification": {
+// CHECK-NEXT:               "type": "Identifier",
+// CHECK-NEXT:               "name": "React"
+// CHECK-NEXT:             },
+// CHECK-NEXT:             "id": {
+// CHECK-NEXT:               "type": "Identifier",
+// CHECK-NEXT:               "name": "Node"
+// CHECK-NEXT:             }
+// CHECK-NEXT:           },
+// CHECK-NEXT:           "typeParameters": null
+// CHECK-NEXT:         }
+// CHECK-NEXT:       }
 // CHECK-NEXT:     }
 
 // CHECK-NEXT:   ]

@@ -12,6 +12,7 @@
 
 import type {
   ArrowFunctionExpression,
+  AsExpression,
   AssignmentExpression,
   AssignmentPattern,
   BlockStatement,
@@ -27,8 +28,10 @@ import type {
   DeclareExportAllDeclaration,
   DeclareExportDeclaration,
   DeclareFunction,
+  DeclareHook,
   DeclareInterface,
   DeclareModule,
+  DeclareNamespace,
   DeclareOpaqueType,
   DeclareTypeAlias,
   DeclareVariable,
@@ -43,6 +46,7 @@ import type {
   ForStatement,
   FunctionDeclaration,
   FunctionExpression,
+  HookDeclaration,
   Identifier,
   ImportAttribute,
   ImportDeclaration,
@@ -56,6 +60,12 @@ import type {
   JSXOpeningElement,
   JSXTagNameExpression,
   LabeledStatement,
+  MatchAsPattern,
+  MatchBindingPattern,
+  MatchExpressionCase,
+  MatchMemberPattern,
+  MatchObjectPatternProperty,
+  MatchStatementCase,
   MemberExpression,
   MetaProperty,
   NewExpression,
@@ -86,9 +96,10 @@ import {TypeVisitor} from './TypeVisitor';
 import {Visitor} from './Visitor';
 import {
   CatchClauseDefinition,
+  ComponentNameDefinition,
   EnumDefinition,
   FunctionNameDefinition,
-  ComponentNameDefinition,
+  HookNameDefinition,
   ParameterDefinition,
   VariableDefinition,
 } from '../definition';
@@ -352,12 +363,48 @@ class Referencer extends Visitor {
     TypeVisitor.visit(this, node);
   };
 
+  visitJSXTag(node: JSXOpeningElement | JSXClosingElement): void {
+    const rootName = getJsxName(node.name);
+    if (this._fbtSupport !== true || !FBT_NAMES.has(rootName)) {
+      // <fbt /> does not reference the jsxPragma, but instead references the fbt import
+      this._referenceJsxPragma();
+    }
+
+    switch (node.name.type) {
+      case 'JSXIdentifier':
+        if (
+          rootName[0].toUpperCase() === rootName[0] ||
+          (this._fbtSupport === true && FBT_NAMES.has(rootName))
+        ) {
+          // lower cased component names are always treated as "intrinsic" names, and are converted to a string,
+          // not a variable by JSX transforms:
+          // <div /> => React.createElement("div", null)
+          this.visit(node.name);
+        }
+        break;
+
+      case 'JSXMemberExpression':
+      case 'JSXNamespacedName':
+        // special case for <this.Foo /> - we don't want to create an unclosed
+        // and impossible-to-resolve reference to a variable called `this`.
+        if (rootName !== 'this') {
+          this.visit(node.name);
+        }
+        break;
+    }
+  }
+
   /////////////////////
   // Visit selectors //
   /////////////////////
 
   ArrowFunctionExpression(node: ArrowFunctionExpression): void {
     this.visitFunction(node);
+  }
+
+  AsExpression(node: AsExpression): void {
+    this.visit(node.expression);
+    this.visitType(node.typeAnnotation);
   }
 
   AssignmentExpression(node: AssignmentExpression): void {
@@ -560,6 +607,42 @@ class Referencer extends Visitor {
     this.close(node);
   }
 
+  HookDeclaration(node: HookDeclaration): void {
+    const id = node.id;
+    // id is defined in upper scope
+    this.currentScope().defineIdentifier(id, new HookNameDefinition(id, node));
+
+    this.scopeManager.nestHookScope(node);
+
+    // hook type parameters can be referenced by hook params, so have to be declared first
+    this.visitType(node.typeParameters);
+    // Return type may reference type parameters but not hook parameters, so visit it before the parameters
+    this.visitType(node.returnType);
+
+    // Process parameter declarations.
+    for (const param of node.params) {
+      this.visitPattern(
+        param,
+        (pattern, info) => {
+          this.currentScope().defineIdentifier(
+            pattern,
+            new ParameterDefinition(pattern, node, info.rest),
+          );
+
+          this.referencingDefaultValue(pattern, info.assignments, null, true);
+        },
+        typeAnnotation => {
+          this.visitType(typeAnnotation);
+        },
+        {processRightHandNodes: true},
+      );
+    }
+
+    this.visitChildren(node.body);
+
+    this.close(node);
+  }
+
   FunctionDeclaration(node: FunctionDeclaration): void {
     this.visitFunction(node);
   }
@@ -591,8 +674,19 @@ class Referencer extends Visitor {
     this.visit(node.value);
   }
 
-  JSXClosingElement(_: JSXClosingElement): void {
-    // should not be counted as a reference
+  JSXClosingElement(node: JSXClosingElement): void {
+    /**
+     * Note that this was not previously considered to be a reference and that
+     * other scope analyzers do not count them either: e.g. TypeScript-eslint
+     * https://fburl.com/4q93a3x3
+     *
+     * We are considering this a reference because it technically includes an
+     * identifier that refers to a defined variable. So, if you want to answer:
+     * "what are all of the references to this variable?", the closing element
+     * should be included.
+     */
+
+    this.visitJSXTag(node);
   }
 
   JSXFragment(node: JSXFragment): void {
@@ -617,35 +711,9 @@ class Referencer extends Visitor {
   }
 
   JSXOpeningElement(node: JSXOpeningElement): void {
-    const rootName = getJsxName(node.name);
-    if (this._fbtSupport !== true || !FBT_NAMES.has(rootName)) {
-      // <fbt /> does not reference the jsxPragma, but instead references the fbt import
-      this._referenceJsxPragma();
-    }
+    this.visitJSXTag(node);
 
-    switch (node.name.type) {
-      case 'JSXIdentifier':
-        if (
-          rootName[0].toUpperCase() === rootName[0] ||
-          (this._fbtSupport === true && FBT_NAMES.has(rootName))
-        ) {
-          // lower cased component names are always treated as "intrinsic" names, and are converted to a string,
-          // not a variable by JSX transforms:
-          // <div /> => React.createElement("div", null)
-          this.visit(node.name);
-        }
-        break;
-
-      case 'JSXMemberExpression':
-      case 'JSXNamespacedName':
-        // special case for <this.Foo /> - we don't want to create an unclosed
-        // and impossible-to-resolve reference to a variable called `this`.
-        if (rootName !== 'this') {
-          this.visit(node.name);
-        }
-        break;
-    }
-
+    // the opening tag may also have type args and attributes
     this.visitType(node.typeArguments);
 
     for (const attr of node.attributes) {
@@ -826,11 +894,19 @@ class Referencer extends Visitor {
     this.visitType(node);
   }
 
+  DeclareHook(node: DeclareHook): void {
+    this.visitType(node);
+  }
+
   DeclareModule(node: DeclareModule): void {
     this.visitType(node);
   }
 
   DeclareModuleExports(node: DeclareModuleExports): void {
+    this.visitType(node);
+  }
+
+  DeclareNamespace(node: DeclareNamespace): void {
     this.visitType(node);
   }
 
@@ -869,6 +945,61 @@ class Referencer extends Visitor {
   TypeCastExpression(node: TypeCastExpression): void {
     this.visit(node.expression);
     this.visitType(node.typeAnnotation);
+  }
+
+  //
+  // Match
+  //
+
+  MatchExpressionCase(node: MatchExpressionCase): void {
+    this.scopeManager.nestMatchCaseScope(node);
+    this.visitChildren(node);
+    this.close(node);
+  }
+
+  MatchStatementCase(node: MatchStatementCase): void {
+    this.scopeManager.nestMatchCaseScope(node);
+    this.visitChildren(node);
+    this.close(node);
+  }
+
+  MatchBindingPattern(node: MatchBindingPattern): void {
+    const {id, kind} = node;
+    const variableTargetScope =
+      kind === 'var' ? this.currentScope().variableScope : this.currentScope();
+
+    variableTargetScope.defineIdentifier(
+      id,
+      new VariableDefinition(id, node, node),
+    );
+  }
+
+  MatchMemberPattern(node: MatchMemberPattern): void {
+    this.visit(node.base);
+    // Skip `node.property`
+  }
+
+  MatchObjectPatternProperty(node: MatchObjectPatternProperty): void {
+    this.visit(node.pattern);
+    // Skip `node.key`
+  }
+
+  MatchAsPattern(node: MatchAsPattern): void {
+    const {pattern, target} = node;
+    this.visit(pattern);
+    switch (target.type) {
+      case 'Identifier': {
+        this.currentScope().defineIdentifier(
+          target,
+          new VariableDefinition(target, node, node),
+        );
+        break;
+      }
+      case 'MatchBindingPattern': {
+        this.visit(target);
+        break;
+      }
+    }
   }
 }
 

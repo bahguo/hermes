@@ -11,23 +11,36 @@
 'use strict';
 
 import type {ObjectWithLoc} from 'hermes-estree';
-import * as FlowESTree from 'hermes-estree';
+import type {TranslationOptions} from './utils/TranslationUtils';
 import type {ScopeManager} from 'hermes-eslint';
+
+import * as FlowESTree from 'hermes-estree';
+import * as TSESTree from './utils/ts-estree-ast-types';
 import {
   cloneJSDocCommentsToNewNode as cloneJSDocCommentsToNewNodeOriginal,
   makeCommentOwnLine as makeCommentOwnLineOriginal,
 } from 'hermes-transform';
-import * as TSESTree from './utils/ts-estree-ast-types';
 import {
   buildCodeFrame,
   translationError as translationErrorBase,
   unexpectedTranslationError as unexpectedTranslationErrorBase,
 } from './utils/ErrorUtils';
 import {removeAtFlowFromDocblock} from './utils/DocblockUtils';
-import type {TranslationOptions} from './utils/TranslationUtils';
 import {EOL} from 'os';
 
 type DeclarationOrUnsupported<T> = T | TSESTree.TSTypeAliasDeclaration;
+
+const DUMMY_LOC: FlowESTree.SourceLocation = {
+  start: {line: 1, column: 0},
+  end: {line: 1, column: 0},
+};
+
+function constructFlowNode<T: FlowESTree.BaseNode>(
+  node: $Diff<T, FlowESTree.BaseNode>,
+): T {
+  // $FlowFixMe[prop-missing]
+  return node;
+}
 
 const cloneJSDocCommentsToNewNode =
   // $FlowExpectedError[incompatible-cast] - trust me this re-type is 100% safe
@@ -45,6 +58,20 @@ function isValidReactImportOrGlobal(id: FlowESTree.Identifier): boolean {
 
 let shouldAddReactImport: boolean | null = null;
 
+// Returns appropriate Identifier for `React` import.
+// If a global is in use, set a flag to indicate that we should add the import.
+function getReactIdentifier(hasReactImport: boolean) {
+  if (shouldAddReactImport !== false) {
+    shouldAddReactImport = !hasReactImport;
+  }
+
+  return {
+    type: 'Identifier',
+    loc: DUMMY_LOC,
+    name: `React`,
+  };
+}
+
 export function flowDefToTSDef(
   originalCode: string,
   ast: FlowESTree.Program,
@@ -56,6 +83,7 @@ export function flowDefToTSDef(
     type: 'Program',
     body: tsBody,
     sourceType: ast.sourceType,
+    loc: ast.loc,
     docblock:
       ast.docblock == null ? null : removeAtFlowFromDocblock(ast.docblock),
   };
@@ -89,16 +117,20 @@ export function flowDefToTSDef(
     tsBody.unshift({
       type: 'ImportDeclaration',
       assertions: [],
+      loc: DUMMY_LOC,
       source: {
         type: 'Literal',
+        loc: DUMMY_LOC,
         value: 'react',
         raw: "'react'",
       },
       specifiers: [
         {
           type: 'ImportNamespaceSpecifier',
+          loc: DUMMY_LOC,
           local: {
             type: 'Identifier',
+            loc: DUMMY_LOC,
             name: 'React',
           },
         },
@@ -129,8 +161,9 @@ const getTransforms = (
     return buildCodeFrame(node, message, code, false);
   }
   function addErrorComment(node: TSESTree.Node, message: string): void {
-    const comment = {
+    const comment: TSESTree.Comment = {
       type: 'Block',
+      loc: DUMMY_LOC,
       value: `*${EOL} * ${message.replace(
         new RegExp(EOL, 'g'),
         `${EOL} * `,
@@ -144,7 +177,6 @@ const getTransforms = (
     // $FlowExpectedError[prop-missing]
     // $FlowExpectedError[cannot-write]
     node.comments ??= [];
-    // $FlowExpectedError[prop-missing]
     // $FlowExpectedError[incompatible-cast]
     (node.comments: Array<TSESTree.Comment>).push(comment);
   }
@@ -155,8 +187,9 @@ const getTransforms = (
     const message = unsupportedFeatureMessage(thing);
     if (opts.recoverFromErrors) {
       const codeFrame = buildCodeFrameForComment(node, message);
-      const newNode = {
+      const newNode: TSESTree.TSAnyKeyword = {
         type: 'TSAnyKeyword',
+        loc: DUMMY_LOC,
       };
       addErrorComment(newNode, codeFrame);
       return newNode;
@@ -174,12 +207,14 @@ const getTransforms = (
     const message = unsupportedFeatureMessage(thing);
     if (opts.recoverFromErrors) {
       const codeFrame = buildCodeFrameForComment(node, message);
-      const newNode = {
+      const newNode: TSESTree.TSTypeAliasDeclaration = {
         type: 'TSTypeAliasDeclaration',
+        loc: DUMMY_LOC,
         declare,
         id: transform.Identifier(id, false),
         typeAnnotation: {
           type: 'TSAnyKeyword',
+          loc: DUMMY_LOC,
         },
         typeParameters:
           typeParameters == null
@@ -204,10 +239,10 @@ const getTransforms = (
     return globalScope;
   })();
 
-  function isReactImport(id: FlowESTree.Identifier): boolean {
+  function isReactImport(scopeNode: FlowESTree.ESNode, name: string): boolean {
     let currentScope = (() => {
       let scope = null;
-      let node: FlowESTree.ESNode = id;
+      let node: FlowESTree.ESNode = scopeNode;
       while (!scope && node) {
         scope = scopeManager.acquire(node, true);
         node = node.parent;
@@ -223,7 +258,7 @@ const getTransforms = (
     const variableDef = (() => {
       while (currentScope != null) {
         for (const variable of currentScope.variables) {
-          if (variable.defs.length && variable.name === id.name) {
+          if (variable.defs.length && variable.name === name) {
             return variable;
           }
         }
@@ -254,7 +289,7 @@ const getTransforms = (
 
       // Globals
       case 'ImplicitGlobalVariable': {
-        return VALID_REACT_IMPORTS.has(id.name);
+        return VALID_REACT_IMPORTS.has(name);
       }
 
       // TODO Handle:
@@ -345,10 +380,12 @@ const getTransforms = (
           }
           members.push({
             type: 'TSEnumMember',
+            loc: DUMMY_LOC,
             computed: false,
             id: transform.Identifier(member.id, false),
             initializer: ({
               type: 'Literal',
+              loc: DUMMY_LOC,
               raw: `"${member.id.name}"`,
               value: member.id.name,
             }: TSESTree.StringLiteral),
@@ -360,6 +397,7 @@ const getTransforms = (
         case 'EnumStringMember':
           members.push({
             type: 'TSEnumMember',
+            loc: DUMMY_LOC,
             computed: false,
             id: transform.Identifier(member.id, false),
             initializer:
@@ -372,13 +410,14 @@ const getTransforms = (
 
     const bodyRepresentationType =
       body.type === 'EnumNumberBody'
-        ? {type: 'TSNumberKeyword'}
-        : {type: 'TSStringKeyword'};
+        ? {type: 'TSNumberKeyword', loc: DUMMY_LOC}
+        : {type: 'TSStringKeyword', loc: DUMMY_LOC};
 
     const enumName = transform.Identifier(node.id, false);
     return [
       {
         type: 'TSEnumDeclaration',
+        loc: DUMMY_LOC,
         const: false,
         declare: true,
         id: enumName,
@@ -400,18 +439,23 @@ const getTransforms = (
       */
       {
         type: 'TSModuleDeclaration',
+        loc: DUMMY_LOC,
         declare: true,
         id: enumName,
         body: {
           type: 'TSModuleBlock',
+          loc: DUMMY_LOC,
           body: [
             // export function cast(value: number | null | undefined): Foo
             {
               type: 'ExportNamedDeclaration',
+              loc: DUMMY_LOC,
               declaration: {
                 type: 'TSDeclareFunction',
+                loc: DUMMY_LOC,
                 id: {
                   type: 'Identifier',
+                  loc: DUMMY_LOC,
                   name: 'cast',
                 },
                 generator: false,
@@ -420,18 +464,23 @@ const getTransforms = (
                 params: [
                   {
                     type: 'Identifier',
+                    loc: DUMMY_LOC,
                     name: 'value',
                     typeAnnotation: {
                       type: 'TSTypeAnnotation',
+                      loc: DUMMY_LOC,
                       typeAnnotation: {
                         type: 'TSUnionType',
+                        loc: DUMMY_LOC,
                         types: [
                           bodyRepresentationType,
                           {
                             type: 'TSNullKeyword',
+                            loc: DUMMY_LOC,
                           },
                           {
                             type: 'TSUndefinedKeyword',
+                            loc: DUMMY_LOC,
                           },
                         ],
                       },
@@ -440,8 +489,10 @@ const getTransforms = (
                 ],
                 returnType: {
                   type: 'TSTypeAnnotation',
+                  loc: DUMMY_LOC,
                   typeAnnotation: {
                     type: 'TSTypeReference',
+                    loc: DUMMY_LOC,
                     typeName: enumName,
                   },
                 },
@@ -454,10 +505,13 @@ const getTransforms = (
             // export function isValid(value: number | null | undefined): value is Foo;
             {
               type: 'ExportNamedDeclaration',
+              loc: DUMMY_LOC,
               declaration: {
                 type: 'TSDeclareFunction',
+                loc: DUMMY_LOC,
                 id: {
                   type: 'Identifier',
+                  loc: DUMMY_LOC,
                   name: 'isValid',
                 },
                 generator: false,
@@ -466,18 +520,23 @@ const getTransforms = (
                 params: [
                   {
                     type: 'Identifier',
+                    loc: DUMMY_LOC,
                     name: 'value',
                     typeAnnotation: {
                       type: 'TSTypeAnnotation',
+                      loc: DUMMY_LOC,
                       typeAnnotation: {
                         type: 'TSUnionType',
+                        loc: DUMMY_LOC,
                         types: [
                           bodyRepresentationType,
                           {
                             type: 'TSNullKeyword',
+                            loc: DUMMY_LOC,
                           },
                           {
                             type: 'TSUndefinedKeyword',
+                            loc: DUMMY_LOC,
                           },
                         ],
                       },
@@ -486,17 +545,22 @@ const getTransforms = (
                 ],
                 returnType: {
                   type: 'TSTypeAnnotation',
+                  loc: DUMMY_LOC,
                   typeAnnotation: {
                     type: 'TSTypePredicate',
+                    loc: DUMMY_LOC,
                     asserts: false,
                     parameterName: {
                       type: 'Identifier',
+                      loc: DUMMY_LOC,
                       name: 'value',
                     },
                     typeAnnotation: {
                       type: 'TSTypeAnnotation',
+                      loc: DUMMY_LOC,
                       typeAnnotation: {
                         type: 'TSTypeReference',
+                        loc: DUMMY_LOC,
                         typeName: enumName,
                       },
                     },
@@ -511,10 +575,13 @@ const getTransforms = (
             // export function members(): IterableIterator<Foo>;
             {
               type: 'ExportNamedDeclaration',
+              loc: DUMMY_LOC,
               declaration: {
                 type: 'TSDeclareFunction',
+                loc: DUMMY_LOC,
                 id: {
                   type: 'Identifier',
+                  loc: DUMMY_LOC,
                   name: 'members',
                 },
                 generator: false,
@@ -523,17 +590,22 @@ const getTransforms = (
                 params: [],
                 returnType: {
                   type: 'TSTypeAnnotation',
+                  loc: DUMMY_LOC,
                   typeAnnotation: {
                     type: 'TSTypeReference',
+                    loc: DUMMY_LOC,
                     typeName: {
                       type: 'Identifier',
+                      loc: DUMMY_LOC,
                       name: 'IterableIterator',
                     },
                     typeParameters: {
                       type: 'TSTypeParameterInstantiation',
+                      loc: DUMMY_LOC,
                       params: [
                         {
                           type: 'TSTypeReference',
+                          loc: DUMMY_LOC,
                           typeName: enumName,
                         },
                       ],
@@ -549,10 +621,13 @@ const getTransforms = (
             // export function getName(value: Foo): string;
             {
               type: 'ExportNamedDeclaration',
+              loc: DUMMY_LOC,
               declaration: {
                 type: 'TSDeclareFunction',
+                loc: DUMMY_LOC,
                 id: {
                   type: 'Identifier',
+                  loc: DUMMY_LOC,
                   name: 'getName',
                 },
                 generator: false,
@@ -561,11 +636,14 @@ const getTransforms = (
                 params: [
                   {
                     type: 'Identifier',
+                    loc: DUMMY_LOC,
                     name: 'value',
                     typeAnnotation: {
                       type: 'TSTypeAnnotation',
+                      loc: DUMMY_LOC,
                       typeAnnotation: {
                         type: 'TSTypeReference',
+                        loc: DUMMY_LOC,
                         typeName: enumName,
                       },
                     },
@@ -573,8 +651,10 @@ const getTransforms = (
                 ],
                 returnType: {
                   type: 'TSTypeAnnotation',
+                  loc: DUMMY_LOC,
                   typeAnnotation: {
                     type: 'TSStringKeyword',
+                    loc: DUMMY_LOC,
                   },
                 },
               },
@@ -650,9 +730,6 @@ const getTransforms = (
         return transform.ThisTypeAnnotation(node);
       case 'TupleTypeAnnotation':
         return transform.TupleTypeAnnotation(node);
-      case 'TupleTypeLabeledElement':
-      case 'TupleTypeSpreadElement':
-        return unsupportedAnnotation(node, node.type);
       case 'TypeofTypeAnnotation':
         return transform.TypeofTypeAnnotation(node);
       case 'UnionTypeAnnotation':
@@ -660,7 +737,17 @@ const getTransforms = (
       case 'VoidTypeAnnotation':
         return transform.VoidTypeAnnotation(node);
       case 'TypePredicate':
-        return unsupportedAnnotation(node, node.type);
+        return transform.TypePredicateAnnotation(node);
+      case 'ConditionalTypeAnnotation':
+        return transform.ConditionalTypeAnnotation(node);
+      case 'InferTypeAnnotation':
+        return transform.InferTypeAnnotation(node);
+      case 'KeyofTypeAnnotation':
+        return transform.KeyofTypeAnnotation(node);
+      case 'TypeOperator':
+        return transform.TypeOperator(node);
+      case 'ComponentTypeAnnotation':
+        return transform.ComponentTypeAnnotation(node);
       default:
         throw unexpectedTranslationError(node, `Unhandled type ${node.type}`);
     }
@@ -672,6 +759,7 @@ const getTransforms = (
     ): TSESTree.TSAnyKeyword {
       return {
         type: 'TSAnyKeyword',
+        loc: DUMMY_LOC,
       };
     },
     ArrayTypeAnnotation(
@@ -679,12 +767,14 @@ const getTransforms = (
     ): TSESTree.TSArrayType {
       return {
         type: 'TSArrayType',
+        loc: DUMMY_LOC,
         elementType: transformTypeAnnotationType(node.elementType),
       };
     },
     BigIntLiteral(node: FlowESTree.BigIntLiteral): TSESTree.BigIntLiteral {
       return {
         type: 'Literal',
+        loc: DUMMY_LOC,
         bigint: node.bigint,
         raw: node.raw,
         value: node.value,
@@ -706,8 +796,10 @@ const getTransforms = (
           .replace(/_/, '');
       return {
         type: 'TSLiteralType',
+        loc: DUMMY_LOC,
         literal: ({
           type: 'Literal',
+          loc: DUMMY_LOC,
           value: node.value,
           raw: node.raw,
           bigint,
@@ -719,11 +811,13 @@ const getTransforms = (
     ): TSESTree.TSBigIntKeyword {
       return {
         type: 'TSBigIntKeyword',
+        loc: DUMMY_LOC,
       };
     },
     BooleanLiteral(node: FlowESTree.BooleanLiteral): TSESTree.BooleanLiteral {
       return {
         type: 'Literal',
+        loc: DUMMY_LOC,
         raw: node.raw,
         value: node.value,
       };
@@ -733,8 +827,10 @@ const getTransforms = (
     ): TSESTree.TSLiteralType {
       return {
         type: 'TSLiteralType',
+        loc: DUMMY_LOC,
         literal: ({
           type: 'Literal',
+          loc: DUMMY_LOC,
           value: node.value,
           raw: node.raw,
         }: TSESTree.BooleanLiteral),
@@ -745,6 +841,7 @@ const getTransforms = (
     ): TSESTree.TSBooleanKeyword {
       return {
         type: 'TSBooleanKeyword',
+        loc: DUMMY_LOC,
       };
     },
     ClassImplements(
@@ -752,6 +849,7 @@ const getTransforms = (
     ): TSESTree.TSClassImplements {
       return {
         type: 'TSClassImplements',
+        loc: DUMMY_LOC,
         expression: transform.Identifier(node.id, false),
         typeParameters:
           node.typeParameters == null
@@ -800,10 +898,12 @@ const getTransforms = (
             if (isConstructor) {
               const newNode: TSESTree.MethodDefinitionAmbiguous = {
                 type: 'MethodDefinition',
+                loc: DUMMY_LOC,
                 accessibility: undefined,
                 computed: false,
                 key: {
                   type: 'Identifier',
+                  loc: DUMMY_LOC,
                   name: 'constructor',
                 },
                 kind: 'constructor',
@@ -812,6 +912,7 @@ const getTransforms = (
                 static: false,
                 value: {
                   type: 'TSEmptyBodyFunctionExpression',
+                  loc: DUMMY_LOC,
                   async: false,
                   body: null,
                   declare: false,
@@ -827,17 +928,51 @@ const getTransforms = (
               cloneJSDocCommentsToNewNode(member, newNode);
               classMembers.push(newNode);
             } else {
+              const [key, computed] = (() => {
+                const _key = member.key;
+                if (_key.type === 'Identifier' && _key.name.startsWith('@@')) {
+                  const name = _key.name.slice(2);
+                  if (['iterator', 'asyncIterator'].includes(name)) {
+                    return [
+                      {
+                        type: 'MemberExpression',
+                        computed: false,
+                        object: {
+                          type: 'Identifier',
+                          name: 'Symbol',
+                          optional: false,
+                          loc: DUMMY_LOC,
+                        },
+                        optional: false,
+                        property: {
+                          type: 'Identifier',
+                          name,
+                          optional: false,
+                          loc: DUMMY_LOC,
+                        },
+                        loc: DUMMY_LOC,
+                      },
+                      true,
+                    ];
+                  }
+                }
+
+                return [member.key, member.computed];
+              })();
+
               const newNode: TSESTree.MethodDefinitionAmbiguous = {
                 type: 'MethodDefinition',
+                loc: DUMMY_LOC,
                 accessibility: member.accessibility,
-                computed: member.computed ?? false,
-                key: member.key,
+                computed: computed ?? false,
+                key,
                 kind: member.kind,
                 optional: member.optional,
                 override: false,
                 static: member.static ?? false,
                 value: {
                   type: 'TSEmptyBodyFunctionExpression',
+                  loc: DUMMY_LOC,
                   async: false,
                   body: null,
                   declare: false,
@@ -858,6 +993,7 @@ const getTransforms = (
           case 'TSPropertySignature': {
             const newNode: TSESTree.PropertyDefinitionAmbiguous = {
               type: 'PropertyDefinition',
+              loc: DUMMY_LOC,
               accessibility: member.accessibility,
               computed: member.computed ?? false,
               declare: false,
@@ -911,8 +1047,10 @@ const getTransforms = (
 
       return {
         type: 'ClassDeclaration',
+        loc: DUMMY_LOC,
         body: {
           type: 'ClassBody',
+          loc: DUMMY_LOC,
           body: classMembers,
         },
         declare: true,
@@ -924,7 +1062,9 @@ const getTransforms = (
         superClass:
           superClass == null
             ? null
-            : transform.Identifier(superClass.id, false),
+            : superClass.id.type === 'QualifiedTypeIdentifier'
+            ? transform.QualifiedTypeIdentifier(superClass.id)
+            : transform.Identifier((superClass.id: $FlowFixMe), false),
         superTypeParameters:
           superClass?.typeParameters == null
             ? undefined
@@ -950,6 +1090,16 @@ const getTransforms = (
             | TSESTree.TSTypeAliasDeclaration
           ),
           TSESTree.ExportDefaultDeclaration,
+        ]
+      | [
+          (
+            | TSESTree.VariableDeclaration
+            | TSESTree.ClassDeclaration
+            | TSESTree.TSDeclareFunction
+            | TSESTree.TSTypeAliasDeclaration
+          ),
+          TSESTree.TSTypeAliasDeclaration,
+          TSESTree.ExportDefaultDeclaration,
         ] {
       if (node.default === true) {
         const declaration = node.declaration;
@@ -963,8 +1113,10 @@ const getTransforms = (
               classDecl,
               {
                 type: 'ExportDefaultDeclaration',
+                loc: DUMMY_LOC,
                 declaration: {
                   type: 'Identifier',
+                  loc: DUMMY_LOC,
                   name,
                 },
                 exportKind: 'value',
@@ -980,8 +1132,48 @@ const getTransforms = (
               functionDecl,
               {
                 type: 'ExportDefaultDeclaration',
+                loc: DUMMY_LOC,
                 declaration: {
                   type: 'Identifier',
+                  loc: DUMMY_LOC,
+                  name,
+                },
+                exportKind: 'value',
+              },
+            ];
+          }
+
+          // TS doesn't support direct default export for declare'd functions
+          case 'DeclareComponent': {
+            const functionDecl = transform.DeclareComponent(declaration);
+            const name = declaration.id.name;
+            return [
+              functionDecl,
+              {
+                type: 'ExportDefaultDeclaration',
+                loc: DUMMY_LOC,
+                declaration: {
+                  type: 'Identifier',
+                  loc: DUMMY_LOC,
+                  name,
+                },
+                exportKind: 'value',
+              },
+            ];
+          }
+
+          // TS doesn't support direct default export for declare'd functions
+          case 'DeclareHook': {
+            const functionDecl = transform.DeclareHook(declaration);
+            const name = declaration.id.name;
+            return [
+              functionDecl,
+              {
+                type: 'ExportDefaultDeclaration',
+                loc: DUMMY_LOC,
+                declaration: {
+                  type: 'Identifier',
+                  loc: DUMMY_LOC,
                   name,
                 },
                 exportKind: 'value',
@@ -1028,8 +1220,10 @@ const getTransforms = (
                     // there's already a variable defined to hold the type
                     return {
                       type: 'ExportDefaultDeclaration',
+                      loc: DUMMY_LOC,
                       declaration: {
                         type: 'Identifier',
+                        loc: DUMMY_LOC,
                         name: referencedId.name,
                       },
                       exportKind: 'value',
@@ -1046,6 +1240,38 @@ const getTransforms = (
                   case 'Type':
                     // fallthrough to the "default" handling
                     break;
+                }
+              }
+            }
+
+            // intentional fallthrough to the "default" handling
+          }
+
+          case 'TypeofTypeAnnotation': {
+            if (
+              declaration.type === 'TypeofTypeAnnotation' &&
+              declaration.argument.type === 'Identifier'
+            ) {
+              const name = declaration.argument.name;
+              const exportedVar = topScope.set.get(name);
+              if (exportedVar != null && exportedVar.defs.length === 1) {
+                const def = exportedVar.defs[0];
+
+                switch (def.type) {
+                  case 'ClassName': {
+                    return {
+                      type: 'ExportDefaultDeclaration',
+                      declaration: {
+                        type: 'Identifier',
+                        decorators: [],
+                        name,
+                        optional: false,
+                        loc: DUMMY_LOC,
+                      },
+                      exportKind: 'value',
+                      loc: DUMMY_LOC,
+                    };
+                  }
                 }
               }
             }
@@ -1070,14 +1296,18 @@ const getTransforms = (
             return [
               {
                 type: 'VariableDeclaration',
+                loc: DUMMY_LOC,
                 declarations: [
                   {
                     type: 'VariableDeclarator',
+                    loc: DUMMY_LOC,
                     id: {
                       type: 'Identifier',
+                      loc: DUMMY_LOC,
                       name: SPECIFIER,
                       typeAnnotation: {
                         type: 'TSTypeAnnotation',
+                        loc: DUMMY_LOC,
                         typeAnnotation:
                           transformTypeAnnotationType(declaration),
                       },
@@ -1089,9 +1319,34 @@ const getTransforms = (
                 kind: 'const',
               },
               {
+                type: 'TSTypeAliasDeclaration',
+                declare: true,
+                id: {
+                  type: 'Identifier',
+                  decorators: [],
+                  name: SPECIFIER,
+                  optional: false,
+                  loc: DUMMY_LOC,
+                },
+                typeAnnotation: {
+                  type: 'TSTypeQuery',
+                  exprName: {
+                    type: 'Identifier',
+                    decorators: [],
+                    name: SPECIFIER,
+                    optional: false,
+                    loc: DUMMY_LOC,
+                  },
+                  loc: DUMMY_LOC,
+                },
+                loc: DUMMY_LOC,
+              },
+              {
                 type: 'ExportDefaultDeclaration',
+                loc: DUMMY_LOC,
                 declaration: {
                   type: 'Identifier',
+                  loc: DUMMY_LOC,
                   name: SPECIFIER,
                 },
                 exportKind: 'value',
@@ -1106,6 +1361,7 @@ const getTransforms = (
           if (node.declaration === null) {
             return ({
               type: 'ExportNamedDeclaration',
+              loc: DUMMY_LOC,
               // flow does not currently support assertions
               assertions: [],
               declaration: null,
@@ -1122,6 +1378,20 @@ const getTransforms = (
                 return [
                   {
                     declaration: transform.DeclareClass(node.declaration),
+                    exportKind: 'value',
+                  },
+                ];
+              case 'DeclareComponent':
+                return [
+                  {
+                    declaration: transform.DeclareComponent(node.declaration),
+                    exportKind: 'value',
+                  },
+                ];
+              case 'DeclareHook':
+                return [
+                  {
+                    declaration: transform.DeclareHook(node.declaration),
                     exportKind: 'value',
                   },
                 ];
@@ -1175,6 +1445,7 @@ const getTransforms = (
             ({declaration, exportKind}) =>
               ({
                 type: 'ExportNamedDeclaration',
+                loc: DUMMY_LOC,
                 // flow does not currently support assertions
                 assertions: [],
                 declaration,
@@ -1186,6 +1457,7 @@ const getTransforms = (
         } else {
           return ({
             type: 'ExportNamedDeclaration',
+            loc: DUMMY_LOC,
             // flow does not currently support assertions
             assertions: [],
             declaration: null,
@@ -1196,6 +1468,169 @@ const getTransforms = (
           }: TSESTree.ExportNamedDeclarationWithSource);
         }
       }
+    },
+    DeclareComponent(
+      node: FlowESTree.DeclareComponent,
+    ): TSESTree.TSDeclareFunction {
+      const id = transform.Identifier(node.id, false);
+
+      const typeParameters =
+        node.typeParameters == null
+          ? undefined
+          : transform.TypeParameterDeclaration(node.typeParameters);
+
+      const params = transform.ComponentTypeParameters(node.params, node.rest);
+
+      // TS cannot support `renderType` so we always use ReactNode as the return type.
+      const hasReactImport = isReactImport(node, 'React');
+      const returnType: TSESTree.TSTypeAnnotation = {
+        type: 'TSTypeAnnotation',
+        loc: DUMMY_LOC,
+        // If no rendersType we assume its ReactNode type.
+        typeAnnotation: {
+          type: 'TSTypeReference',
+          loc: DUMMY_LOC,
+          typeName: {
+            type: 'TSQualifiedName',
+            loc: DUMMY_LOC,
+            left: getReactIdentifier(hasReactImport),
+            right: {
+              type: 'Identifier',
+              loc: DUMMY_LOC,
+              name: `ReactNode`,
+            },
+          },
+          typeParameters: undefined,
+        },
+      };
+
+      return {
+        type: 'TSDeclareFunction',
+        loc: DUMMY_LOC,
+        async: false,
+        body: undefined,
+        declare: true,
+        expression: false,
+        generator: false,
+        id: {
+          type: 'Identifier',
+          loc: DUMMY_LOC,
+          name: id.name,
+        },
+        params,
+        returnType: returnType,
+        typeParameters: typeParameters,
+      };
+    },
+    ComponentTypeParameters(
+      params: $ReadOnlyArray<FlowESTree.ComponentTypeParameter>,
+      rest: FlowESTree.ComponentTypeParameter | null,
+    ): $ReadOnlyArray<TSESTree.Parameter> {
+      if (params.length === 0 && rest != null) {
+        return [
+          {
+            type: 'Identifier',
+            loc: DUMMY_LOC,
+            name: 'props',
+            typeAnnotation: {
+              type: 'TSTypeAnnotation',
+              loc: DUMMY_LOC,
+              typeAnnotation: transformTypeAnnotationType(rest.typeAnnotation),
+            },
+            optional: false,
+          },
+        ];
+      }
+
+      const flowPropsType: Array<
+        FlowESTree.ObjectTypeProperty | FlowESTree.ObjectTypeSpreadProperty,
+      > = [];
+
+      if (rest != null) {
+        flowPropsType.push(
+          constructFlowNode<FlowESTree.ObjectTypeSpreadProperty>({
+            type: 'ObjectTypeSpreadProperty',
+            argument: rest.typeAnnotation,
+            range: rest.range,
+            loc: rest.loc,
+          }),
+        );
+      }
+
+      for (let i = 0; i < params.length; i++) {
+        const param = params[i];
+        flowPropsType.push(
+          constructFlowNode<FlowESTree.ObjectTypePropertySignature>({
+            type: 'ObjectTypeProperty',
+            kind: 'init',
+            method: false,
+            optional: param.optional,
+            variance: null,
+            proto: false,
+            static: false,
+            key:
+              param.name ??
+              constructFlowNode<FlowESTree.Identifier>({
+                type: 'Identifier',
+                name: `$$PARAM_${i}$$`,
+                optional: false,
+                typeAnnotation: null,
+              }),
+            value: param.typeAnnotation,
+            range: param.range,
+            loc: param.loc,
+          }),
+        );
+      }
+      const tsPropsObjectType = transform.ObjectTypeAnnotation(
+        constructFlowNode<FlowESTree.ObjectTypeAnnotation>({
+          type: 'ObjectTypeAnnotation',
+          inexact: false,
+          exact: true,
+          properties: flowPropsType,
+          indexers: [],
+          callProperties: [],
+          internalSlots: [],
+        }),
+      );
+      return [
+        {
+          type: 'Identifier',
+          loc: DUMMY_LOC,
+          name: 'props',
+          typeAnnotation: {
+            type: 'TSTypeAnnotation',
+            loc: DUMMY_LOC,
+            typeAnnotation: tsPropsObjectType,
+          },
+          optional: false,
+        },
+      ];
+    },
+    DeclareHook(node: FlowESTree.DeclareHook): TSESTree.TSDeclareFunction {
+      // the hook params/returnType are stored as an annotation on the ID...
+      const id = transform.Identifier(node.id, false);
+      const functionInfo = transform.FunctionTypeAnnotation(
+        node.id.typeAnnotation.typeAnnotation,
+      );
+
+      return {
+        type: 'TSDeclareFunction',
+        loc: DUMMY_LOC,
+        async: false,
+        body: undefined,
+        declare: true,
+        expression: false,
+        generator: false,
+        id: {
+          type: 'Identifier',
+          loc: DUMMY_LOC,
+          name: id.name,
+        },
+        params: functionInfo.params,
+        returnType: functionInfo.returnType,
+        typeParameters: functionInfo.typeParameters,
+      };
     },
     DeclareFunction(
       node: FlowESTree.DeclareFunction,
@@ -1208,6 +1643,7 @@ const getTransforms = (
 
       return {
         type: 'TSDeclareFunction',
+        loc: DUMMY_LOC,
         async: false,
         body: undefined,
         declare: true,
@@ -1215,6 +1651,7 @@ const getTransforms = (
         generator: false,
         id: {
           type: 'Identifier',
+          loc: DUMMY_LOC,
           name: id.name,
         },
         params: functionInfo.params,
@@ -1235,8 +1672,10 @@ const getTransforms = (
 
       return {
         type: 'TSInterfaceDeclaration',
+        loc: DUMMY_LOC,
         body: {
           type: 'TSInterfaceBody',
+          loc: DUMMY_LOC,
           body: transformedBody.members,
         },
         declare: node.type !== 'InterfaceDeclaration',
@@ -1253,6 +1692,7 @@ const getTransforms = (
     ): TSESTree.TSTypeAliasDeclaration {
       return {
         type: 'TSTypeAliasDeclaration',
+        loc: DUMMY_LOC,
         declare: node.type === 'DeclareTypeAlias',
         id: transform.Identifier(node.id, false),
         typeAnnotation: transformTypeAnnotationType(node.right),
@@ -1271,12 +1711,14 @@ const getTransforms = (
 
       return {
         type: 'TSTypeAliasDeclaration',
+        loc: DUMMY_LOC,
         declare: true,
         id: transform.Identifier(node.id, false),
         typeAnnotation:
           node.supertype == null
             ? {
                 type: 'TSUnknownKeyword',
+                loc: DUMMY_LOC,
               }
             : transformTypeAnnotationType(node.supertype),
         typeParameters:
@@ -1290,10 +1732,12 @@ const getTransforms = (
     ): TSESTree.VariableDeclaration {
       return {
         type: 'VariableDeclaration',
+        loc: DUMMY_LOC,
         declare: true,
         declarations: [
           {
             type: 'VariableDeclarator',
+            loc: DUMMY_LOC,
             declare: true,
             id: transform.Identifier(node.id, true),
             init: null,
@@ -1337,6 +1781,20 @@ const getTransforms = (
       // It's also super deprecated - so let's not ever worry
       return unsupportedAnnotation(node, 'existential type');
     },
+    ExportAllDeclaration(
+      node: FlowESTree.ExportAllDeclaration,
+    ): TSESTree.ExportAllDeclaration {
+      return {
+        type: 'ExportAllDeclaration',
+        loc: DUMMY_LOC,
+        // flow does not currently support import/export assertions
+        assertions: [],
+        exportKind: node.exportKind,
+        source: transform.StringLiteral(node.source),
+        exported:
+          node.exported == null ? null : transform.Identifier(node.exported),
+      };
+    },
     ExportNamedDeclaration(
       node: FlowESTree.ExportNamedDeclaration,
     ):
@@ -1346,6 +1804,7 @@ const getTransforms = (
         // can never have a declaration with a source
         return {
           type: 'ExportNamedDeclaration',
+          loc: DUMMY_LOC,
           // flow does not currently support import/export assertions
           assertions: [],
           declaration: null,
@@ -1364,6 +1823,7 @@ const getTransforms = (
         switch (node.declaration.type) {
           case 'ClassDeclaration':
           case 'ComponentDeclaration':
+          case 'HookDeclaration':
           case 'FunctionDeclaration':
           case 'VariableDeclaration':
             // These cases shouldn't happen in flow defs because they have their own special
@@ -1388,6 +1848,7 @@ const getTransforms = (
 
       const mainExport = {
         type: 'ExportNamedDeclaration',
+        loc: DUMMY_LOC,
         assertions: [],
         declaration: exportedDeclaration,
         exportKind: node.exportKind,
@@ -1401,6 +1862,7 @@ const getTransforms = (
           mainExport,
           {
             type: 'ExportNamedDeclaration',
+            loc: DUMMY_LOC,
             assertions: [],
             declaration: mergedDeclaration,
             exportKind: node.exportKind,
@@ -1417,6 +1879,7 @@ const getTransforms = (
     ): TSESTree.ExportSpecifier {
       return {
         type: 'ExportSpecifier',
+        loc: DUMMY_LOC,
         exported: transform.Identifier(node.exported, false),
         local: transform.Identifier(node.local, false),
         // flow does not support inline exportKind for named exports
@@ -1424,15 +1887,17 @@ const getTransforms = (
       };
     },
     FunctionTypeAnnotation(
-      node: FlowESTree.FunctionTypeAnnotation,
+      node: FlowESTree.FunctionTypeAnnotation | FlowESTree.HookTypeAnnotation,
     ): TSESTree.TSFunctionType {
       const params = node.params.map(transform.FunctionTypeParam);
-      if (node.this != null) {
+      if (node.type === 'FunctionTypeAnnotation' && node.this != null) {
         params.unshift({
           type: 'Identifier',
+          loc: DUMMY_LOC,
           name: 'this',
           typeAnnotation: {
             type: 'TSTypeAnnotation',
+            loc: DUMMY_LOC,
             typeAnnotation: transformTypeAnnotationType(
               node.this.typeAnnotation,
             ),
@@ -1443,15 +1908,18 @@ const getTransforms = (
         const rest = node.rest;
         params.push({
           type: 'RestElement',
+          loc: DUMMY_LOC,
           argument:
             rest.name == null
               ? {
                   type: 'Identifier',
+                  loc: DUMMY_LOC,
                   name: '$$REST$$',
                 }
               : transform.Identifier(rest.name, false),
           typeAnnotation: {
             type: 'TSTypeAnnotation',
+            loc: DUMMY_LOC,
             typeAnnotation: transformTypeAnnotationType(rest.typeAnnotation),
           },
         });
@@ -1459,9 +1927,11 @@ const getTransforms = (
 
       return {
         type: 'TSFunctionType',
+        loc: DUMMY_LOC,
         params,
         returnType: {
           type: 'TSTypeAnnotation',
+          loc: DUMMY_LOC,
           typeAnnotation: transformTypeAnnotationType(node.returnType),
         },
         typeParameters:
@@ -1476,9 +1946,11 @@ const getTransforms = (
     ): TSESTree.Parameter {
       return {
         type: 'Identifier',
+        loc: DUMMY_LOC,
         name: node.name == null ? `$$PARAM_${idx}$$` : node.name.name,
         typeAnnotation: {
           type: 'TSTypeAnnotation',
+          loc: DUMMY_LOC,
           typeAnnotation: transformTypeAnnotationType(node.typeAnnotation),
         },
         optional: node.optional,
@@ -1541,6 +2013,31 @@ const getTransforms = (
         return [];
       };
 
+      function assertHasTypeParametersInRange(
+        min: number,
+        max: number,
+      ): $ReadOnlyArray<TSESTree.TypeNode> {
+        const {typeParameters} = node;
+        if (typeParameters == null) {
+          if (min > 0) {
+            throw translationError(
+              node,
+              `Expected between ${min} and ${max} type parameters with \`${fullTypeName}\`, but got none.`,
+            );
+          }
+          return [];
+        }
+        const params = typeParameters.params;
+        if (params.length < min || params.length > max) {
+          throw translationError(
+            node,
+            `Expected between ${min} and ${max} type parameters with \`${fullTypeName}\`, but got ${params.length}.`,
+          );
+        }
+
+        return typeParameters.params.map(transformTypeAnnotationType);
+      }
+
       switch (fullTypeName) {
         case '$Call':
         case '$ObjMap':
@@ -1572,36 +2069,62 @@ const getTransforms = (
           return unsupportedAnnotation(node, fullTypeName);
         }
 
+        case '$ArrayLike': {
+          // `$ArrayLike<T>` => `ArrayLike<T>`
+          return {
+            type: 'TSTypeReference',
+            loc: DUMMY_LOC,
+            typeName: {
+              type: 'Identifier',
+              loc: DUMMY_LOC,
+              name: 'ArrayLike',
+            },
+            typeParameters: {
+              type: 'TSTypeParameterInstantiation',
+              loc: DUMMY_LOC,
+              params: assertHasExactlyNTypeParameters(1),
+            },
+          };
+        }
+
         case '$Diff':
         case '$Rest': {
           // `$Diff<A, B>` => `Pick<A, Exclude<keyof A, keyof B>>`
           const params = assertHasExactlyNTypeParameters(2);
           return {
             type: 'TSTypeReference',
+            loc: DUMMY_LOC,
             typeName: {
               type: 'Identifier',
+              loc: DUMMY_LOC,
               name: 'Pick',
             },
             typeParameters: {
               type: 'TSTypeParameterInstantiation',
+              loc: DUMMY_LOC,
               params: [
                 params[0],
                 {
                   type: 'TSTypeReference',
+                  loc: DUMMY_LOC,
                   typeName: {
                     type: 'Identifier',
+                    loc: DUMMY_LOC,
                     name: 'Exclude',
                   },
                   typeParameters: {
                     type: 'TSTypeParameterInstantiation',
+                    loc: DUMMY_LOC,
                     params: [
                       {
                         type: 'TSTypeOperator',
+                        loc: DUMMY_LOC,
                         operator: 'keyof',
                         typeAnnotation: params[0],
                       },
                       {
                         type: 'TSTypeOperator',
+                        loc: DUMMY_LOC,
                         operator: 'keyof',
                         typeAnnotation: params[1],
                       },
@@ -1619,6 +2142,7 @@ const getTransforms = (
           const params = assertHasExactlyNTypeParameters(2);
           return {
             type: 'TSIndexedAccessType',
+            loc: DUMMY_LOC,
             objectType: params[0],
             indexType: params[1],
           };
@@ -1646,8 +2170,9 @@ const getTransforms = (
 
           return {
             type: 'TSImportType',
+            loc: DUMMY_LOC,
             isTypeOf: true,
-            parameter: moduleName,
+            argument: moduleName,
             qualifier: null,
             typeParameters: null,
           };
@@ -1657,6 +2182,7 @@ const getTransforms = (
           // `$FlowFixMe` => `any`
           return {
             type: 'TSAnyKeyword',
+            loc: DUMMY_LOC,
           };
         }
 
@@ -1664,14 +2190,18 @@ const getTransforms = (
           // `$KeyMirror<T>` => `{[K in keyof T]: K}`
           return {
             type: 'TSMappedType',
+            loc: DUMMY_LOC,
             typeParameter: {
               type: 'TSTypeParameter',
+              loc: DUMMY_LOC,
               name: {
                 type: 'Identifier',
+                loc: DUMMY_LOC,
                 name: 'K',
               },
               constraint: {
                 type: 'TSTypeOperator',
+                loc: DUMMY_LOC,
                 operator: 'keyof',
                 typeAnnotation: assertHasExactlyNTypeParameters(1)[0],
               },
@@ -1681,8 +2211,10 @@ const getTransforms = (
             nameType: null,
             typeAnnotation: {
               type: 'TSTypeReference',
+              loc: DUMMY_LOC,
               typeName: {
                 type: 'Identifier',
+                loc: DUMMY_LOC,
                 name: 'K',
               },
             },
@@ -1693,6 +2225,7 @@ const getTransforms = (
           // `$Keys<T>` => `keyof T`
           return {
             type: 'TSTypeOperator',
+            loc: DUMMY_LOC,
             operator: 'keyof',
             typeAnnotation: assertHasExactlyNTypeParameters(1)[0],
           };
@@ -1703,12 +2236,15 @@ const getTransforms = (
           // Not a great name because `NonNullable` also excludes `undefined`
           return {
             type: 'TSTypeReference',
+            loc: DUMMY_LOC,
             typeName: {
               type: 'Identifier',
+              loc: DUMMY_LOC,
               name: 'NonNullable',
             },
             typeParameters: {
               type: 'TSTypeParameterInstantiation',
+              loc: DUMMY_LOC,
               params: assertHasExactlyNTypeParameters(1),
             },
           };
@@ -1718,12 +2254,15 @@ const getTransforms = (
           // `$ReadOnly<T>` => `Readonly<T>`
           return {
             type: 'TSTypeReference',
+            loc: DUMMY_LOC,
             typeName: {
               type: 'Identifier',
+              loc: DUMMY_LOC,
               name: 'Readonly',
             },
             typeParameters: {
               type: 'TSTypeParameterInstantiation',
+              loc: DUMMY_LOC,
               params: assertHasExactlyNTypeParameters(1),
             },
           };
@@ -1736,28 +2275,49 @@ const getTransforms = (
           // TODO - maybe a config option?
           return {
             type: 'TSTypeReference',
+            loc: DUMMY_LOC,
             typeName: {
               type: 'Identifier',
+              loc: DUMMY_LOC,
               name: 'ReadonlyArray',
             },
             typeParameters: {
               type: 'TSTypeParameterInstantiation',
+              loc: DUMMY_LOC,
               params: assertHasExactlyNTypeParameters(1),
             },
           };
         }
 
-        case '$Shape':
-        case '$Partial': {
-          // `$Partial<T>` => `Partial<T>`
+        case '$ReadOnlyMap': {
           return {
             type: 'TSTypeReference',
+            loc: DUMMY_LOC,
             typeName: {
               type: 'Identifier',
-              name: 'Partial',
+              loc: DUMMY_LOC,
+              name: 'ReadonlyMap',
             },
             typeParameters: {
               type: 'TSTypeParameterInstantiation',
+              loc: DUMMY_LOC,
+              params: assertHasExactlyNTypeParameters(2),
+            },
+          };
+        }
+
+        case '$ReadOnlySet': {
+          return {
+            type: 'TSTypeReference',
+            loc: DUMMY_LOC,
+            typeName: {
+              type: 'Identifier',
+              loc: DUMMY_LOC,
+              name: 'ReadonlySet',
+            },
+            typeParameters: {
+              type: 'TSTypeParameterInstantiation',
+              loc: DUMMY_LOC,
               params: assertHasExactlyNTypeParameters(1),
             },
           };
@@ -1768,9 +2328,11 @@ const getTransforms = (
           const transformedType = assertHasExactlyNTypeParameters(1)[0];
           return {
             type: 'TSIndexedAccessType',
+            loc: DUMMY_LOC,
             objectType: transformedType,
             indexType: {
               type: 'TSTypeOperator',
+              loc: DUMMY_LOC,
               operator: 'keyof',
               typeAnnotation: transformedType,
             },
@@ -1789,20 +2351,26 @@ const getTransforms = (
 
           return {
             type: 'TSConstructorType',
+            loc: DUMMY_LOC,
             abstract: false,
             params: [
               {
                 type: 'RestElement',
+                loc: DUMMY_LOC,
                 argument: {
                   type: 'Identifier',
+                  loc: DUMMY_LOC,
                   name: 'args',
                 },
                 typeAnnotation: {
                   type: 'TSTypeAnnotation',
+                  loc: DUMMY_LOC,
                   typeAnnotation: {
                     type: 'TSArrayType',
+                    loc: DUMMY_LOC,
                     elementType: {
                       type: 'TSAnyKeyword',
+                      loc: DUMMY_LOC,
                     },
                   },
                 },
@@ -1810,29 +2378,111 @@ const getTransforms = (
             ],
             returnType: {
               type: 'TSTypeAnnotation',
+              loc: DUMMY_LOC,
               typeAnnotation: param,
             },
+          };
+        }
+
+        case 'StringPrefix': {
+          // `StringPrefix<foo>` => `foo${string}`
+          // `StringPrefix<foo, T>` => `foo${T}`
+          const params = assertHasTypeParametersInRange(1, 2);
+          const prefix = params[0];
+          if (
+            prefix.type !== 'TSLiteralType' ||
+            typeof prefix.literal.value !== 'string'
+          ) {
+            throw translationError(
+              node,
+              'Expected a string literal for the first type parameter.',
+            );
+          }
+          const prefixStr = prefix.literal.value;
+          const remainder = params[1] ?? {
+            type: 'TSStringKeyword',
+            loc: DUMMY_LOC,
+          };
+
+          return {
+            type: 'TSTemplateLiteralType',
+            loc: DUMMY_LOC,
+            quasis: [
+              {
+                type: 'TemplateElement',
+                loc: DUMMY_LOC,
+                value: {
+                  raw: prefixStr,
+                  cooked: prefixStr,
+                },
+                tail: false,
+              },
+              {
+                type: 'TemplateElement',
+                loc: DUMMY_LOC,
+                value: {
+                  raw: '',
+                  cooked: '',
+                },
+                tail: true,
+              },
+            ],
+            types: [remainder],
+          };
+        }
+
+        case 'StringSuffix': {
+          // `StringSuffix<foo>` => `${string}foo`
+          // `StringSuffix<foo, T>` => `${T}foo`
+          const params = assertHasTypeParametersInRange(1, 2);
+          const suffix = params[0];
+          if (
+            suffix.type !== 'TSLiteralType' ||
+            typeof suffix.literal.value !== 'string'
+          ) {
+            throw translationError(
+              node,
+              'Expected a string literal for the first type parameter.',
+            );
+          }
+          const suffixStr = suffix.literal.value;
+          const remainder = params[1] ?? {
+            type: 'TSStringKeyword',
+            loc: DUMMY_LOC,
+          };
+
+          return {
+            type: 'TSTemplateLiteralType',
+            loc: DUMMY_LOC,
+            quasis: [
+              {
+                type: 'TemplateElement',
+                loc: DUMMY_LOC,
+                value: {
+                  raw: '',
+                  cooked: '',
+                },
+                tail: false,
+              },
+              {
+                type: 'TemplateElement',
+                loc: DUMMY_LOC,
+                value: {
+                  raw: suffixStr,
+                  cooked: suffixStr,
+                },
+                tail: true,
+              },
+            ],
+            types: [remainder],
           };
         }
       }
 
       // React special conversion:
       const validReactImportOrGlobal = isValidReactImportOrGlobal(baseId);
-      const reactImport = isReactImport(baseId);
-      if (validReactImportOrGlobal || reactImport) {
-        // Returns appropriate Identifier for `React` import.
-        // If a global is in use, set a flag to indicate that we should add the import.
-        const getReactIdentifier = () => {
-          if (shouldAddReactImport !== false) {
-            shouldAddReactImport = !reactImport;
-          }
-
-          return {
-            type: 'Identifier',
-            name: `React`,
-          };
-        };
-
+      const hasReactImport = isReactImport(baseId, baseId.name);
+      if (validReactImportOrGlobal || hasReactImport) {
         switch (fullTypeName) {
           // TODO: In flow this is `ChildrenArray<T> = T | $ReadOnlyArray<ChildrenArray<T>>`.
           // The recursive nature of it is rarely needed, so we're simplifying this for now
@@ -1845,16 +2495,20 @@ const getTransforms = (
             const [param] = assertHasExactlyNTypeParameters(1);
             return {
               type: 'TSUnionType',
+              loc: DUMMY_LOC,
               types: [
                 param,
                 {
                   type: 'TSTypeReference',
+                  loc: DUMMY_LOC,
                   typeName: {
                     type: 'Identifier',
+                    loc: DUMMY_LOC,
                     name: 'ReadonlyArray',
                   },
                   typeParameters: {
                     type: 'TSTypeParameterInstantiation',
+                    loc: DUMMY_LOC,
                     params: [param],
                   },
                 },
@@ -1882,16 +2536,20 @@ const getTransforms = (
 
             return {
               type: 'TSTypeReference',
+              loc: DUMMY_LOC,
               typeName: {
                 type: 'TSQualifiedName',
-                left: getReactIdentifier(),
+                loc: DUMMY_LOC,
+                left: getReactIdentifier(hasReactImport),
                 right: {
                   type: 'Identifier',
+                  loc: DUMMY_LOC,
                   name: 'Component',
                 },
               },
               typeParameters: {
                 type: 'TSTypeParameterInstantiation',
+                loc: DUMMY_LOC,
                 params: params.map(param => transformTypeAnnotationType(param)),
               },
             };
@@ -1903,16 +2561,20 @@ const getTransforms = (
           case 'React.Context':
             return {
               type: 'TSTypeReference',
+              loc: DUMMY_LOC,
               typeName: {
                 type: 'TSQualifiedName',
-                left: getReactIdentifier(),
+                loc: DUMMY_LOC,
+                left: getReactIdentifier(hasReactImport),
                 right: {
                   type: 'Identifier',
+                  loc: DUMMY_LOC,
                   name: `Context`,
                 },
               },
               typeParameters: {
                 type: 'TSTypeParameterInstantiation',
+                loc: DUMMY_LOC,
                 params: assertHasExactlyNTypeParameters(1),
               },
             };
@@ -1923,11 +2585,14 @@ const getTransforms = (
             assertHasExactlyNTypeParameters(0);
             return {
               type: 'TSTypeReference',
+              loc: DUMMY_LOC,
               typeName: {
                 type: 'TSQualifiedName',
-                left: getReactIdentifier(),
+                loc: DUMMY_LOC,
+                left: getReactIdentifier(hasReactImport),
                 right: {
                   type: 'Identifier',
+                  loc: DUMMY_LOC,
                   name: 'Key',
                 },
               },
@@ -1939,11 +2604,14 @@ const getTransforms = (
             assertHasExactlyNTypeParameters(0);
             return {
               type: 'TSTypeReference',
+              loc: DUMMY_LOC,
               typeName: {
                 type: 'TSQualifiedName',
-                left: getReactIdentifier(),
+                loc: DUMMY_LOC,
+                left: getReactIdentifier(hasReactImport),
                 right: {
                   type: 'Identifier',
+                  loc: DUMMY_LOC,
                   name: `ElementType`,
                 },
               },
@@ -1956,11 +2624,14 @@ const getTransforms = (
             assertHasExactlyNTypeParameters(0);
             return {
               type: 'TSTypeReference',
+              loc: DUMMY_LOC,
               typeName: {
                 type: 'TSQualifiedName',
-                left: getReactIdentifier(),
+                loc: DUMMY_LOC,
+                left: getReactIdentifier(hasReactImport),
                 right: {
                   type: 'Identifier',
+                  loc: DUMMY_LOC,
                   name: `ReactNode`,
                 },
               },
@@ -1972,16 +2643,20 @@ const getTransforms = (
           case 'React.Element': {
             return {
               type: 'TSTypeReference',
+              loc: DUMMY_LOC,
               typeName: {
                 type: 'TSQualifiedName',
-                left: getReactIdentifier(),
+                loc: DUMMY_LOC,
+                left: getReactIdentifier(hasReactImport),
                 right: {
                   type: 'Identifier',
+                  loc: DUMMY_LOC,
                   name: `ReactElement`,
                 },
               },
               typeParameters: {
                 type: 'TSTypeParameterInstantiation',
+                loc: DUMMY_LOC,
                 params: assertHasExactlyNTypeParameters(1),
               },
             };
@@ -1992,16 +2667,20 @@ const getTransforms = (
           case 'React.ElementRef':
             return {
               type: 'TSTypeReference',
+              loc: DUMMY_LOC,
               typeName: {
                 type: 'TSQualifiedName',
-                left: getReactIdentifier(),
+                loc: DUMMY_LOC,
+                left: getReactIdentifier(hasReactImport),
                 right: {
                   type: 'Identifier',
+                  loc: DUMMY_LOC,
                   name: `ElementRef`,
                 },
               },
               typeParameters: {
                 type: 'TSTypeParameterInstantiation',
+                loc: DUMMY_LOC,
                 params: assertHasExactlyNTypeParameters(1),
               },
             };
@@ -2012,29 +2691,45 @@ const getTransforms = (
             assertHasExactlyNTypeParameters(0);
             return {
               type: 'TSTypeReference',
+              loc: DUMMY_LOC,
               typeName: {
                 type: 'TSQualifiedName',
-                left: getReactIdentifier(),
+                loc: DUMMY_LOC,
+                left: getReactIdentifier(hasReactImport),
                 right: {
                   type: 'Identifier',
+                  loc: DUMMY_LOC,
                   name: `Fragment`,
                 },
               },
             };
-          // React.MixedElement -> JSX.Element
+          // React.MixedElement -> React.JSX.Element
           case 'React$MixedElement':
           case 'React.MixedElement': {
             assertHasExactlyNTypeParameters(0);
             return {
               type: 'TSTypeReference',
+              loc: DUMMY_LOC,
               typeName: {
                 type: 'TSQualifiedName',
+                loc: DUMMY_LOC,
                 left: {
-                  type: 'Identifier',
-                  name: 'JSX',
+                  type: 'TSQualifiedName',
+                  loc: DUMMY_LOC,
+                  left: {
+                    type: 'Identifier',
+                    loc: DUMMY_LOC,
+                    name: 'React',
+                  },
+                  right: {
+                    type: 'Identifier',
+                    loc: DUMMY_LOC,
+                    name: 'JSX',
+                  },
                 },
                 right: {
                   type: 'Identifier',
+                  loc: DUMMY_LOC,
                   name: 'Element',
                 },
               },
@@ -2047,16 +2742,20 @@ const getTransforms = (
           case 'React$ComponentType': {
             return {
               type: 'TSTypeReference',
+              loc: DUMMY_LOC,
               typeName: {
                 type: 'TSQualifiedName',
-                left: getReactIdentifier(),
+                loc: DUMMY_LOC,
+                left: getReactIdentifier(hasReactImport),
                 right: {
                   type: 'Identifier',
+                  loc: DUMMY_LOC,
                   name: 'ComponentType',
                 },
               },
               typeParameters: {
                 type: 'TSTypeParameterInstantiation',
+                loc: DUMMY_LOC,
                 params: assertHasExactlyNTypeParameters(1),
               },
             };
@@ -2075,10 +2774,10 @@ const getTransforms = (
               );
             }
             const params = typeParameters.params;
-            if (params.length > 2) {
+            if (params.length > 3) {
               throw translationError(
                 node,
-                `Expected at no more than 2 type parameters with \`${fullTypeName}\``,
+                `Expected at no more than 3 type parameters with \`${fullTypeName}\``,
               );
             }
 
@@ -2087,28 +2786,35 @@ const getTransforms = (
                 return assertHasExactlyNTypeParameters(1);
               }
 
-              const [props, ref] = assertHasExactlyNTypeParameters(2);
+              const props = transformTypeAnnotationType(params[0]);
+              const ref = transformTypeAnnotationType(params[1]);
 
               return [
                 {
                   type: 'TSIntersectionType',
+                  loc: DUMMY_LOC,
                   types: [
                     props,
                     {
                       type: 'TSTypeReference',
+                      loc: DUMMY_LOC,
                       typeName: {
                         type: 'TSQualifiedName',
+                        loc: DUMMY_LOC,
                         left: {
                           type: 'Identifier',
+                          loc: DUMMY_LOC,
                           name: 'React',
                         },
                         right: {
                           type: 'Identifier',
+                          loc: DUMMY_LOC,
                           name: 'RefAttributes',
                         },
                       },
                       typeParameters: {
                         type: 'TSTypeParameterInstantiation',
+                        loc: DUMMY_LOC,
                         params: [ref],
                       },
                     },
@@ -2119,54 +2825,100 @@ const getTransforms = (
 
             return {
               type: 'TSTypeReference',
+              loc: DUMMY_LOC,
               typeName: {
                 type: 'TSQualifiedName',
-                left: getReactIdentifier(),
+                loc: DUMMY_LOC,
+                left: getReactIdentifier(hasReactImport),
                 right: {
                   type: 'Identifier',
+                  loc: DUMMY_LOC,
                   name: 'ComponentType',
                 },
               },
               typeParameters: {
                 type: 'TSTypeParameterInstantiation',
+                loc: DUMMY_LOC,
                 params: newParams,
               },
             };
           }
-          // React.ElementConfig<A> ->  JSX.LibraryManagedAttributes<A, React.ComponentProps<A>>
-          // React$ElementConfig<A> ->  JSX.LibraryManagedAttributes<A, React.ComponentProps<A>>
+          // React.ElementProps<A> -> React.ComponentProps<A>
+          // React$ElementProps<A> -> React.ComponentProps<A>
+          case 'React.ElementProps':
+          case 'React$ElementProps': {
+            return {
+              type: 'TSTypeReference',
+              loc: DUMMY_LOC,
+              typeName: {
+                type: 'TSQualifiedName',
+                loc: DUMMY_LOC,
+                left: getReactIdentifier(hasReactImport),
+                right: {
+                  type: 'Identifier',
+                  loc: DUMMY_LOC,
+                  name: 'ComponentProps',
+                },
+              },
+              typeParameters: {
+                type: 'TSTypeParameterInstantiation',
+                loc: DUMMY_LOC,
+                params: assertHasExactlyNTypeParameters(1),
+              },
+            };
+          }
+          // React.ElementConfig<A> ->  React.JSX.LibraryManagedAttributes<A, React.ComponentProps<A>>
+          // React$ElementConfig<A> ->  React.JSX.LibraryManagedAttributes<A, React.ComponentProps<A>>
           case 'React.ElementConfig':
           case 'React$ElementConfig': {
             const [param] = assertHasExactlyNTypeParameters(1);
             return {
               type: 'TSTypeReference',
+              loc: DUMMY_LOC,
               typeName: {
                 type: 'TSQualifiedName',
+                loc: DUMMY_LOC,
                 left: {
-                  type: 'Identifier',
-                  name: 'JSX',
+                  type: 'TSQualifiedName',
+                  loc: DUMMY_LOC,
+                  left: {
+                    type: 'Identifier',
+                    loc: DUMMY_LOC,
+                    name: 'React',
+                  },
+                  right: {
+                    type: 'Identifier',
+                    loc: DUMMY_LOC,
+                    name: 'JSX',
+                  },
                 },
                 right: {
                   type: 'Identifier',
+                  loc: DUMMY_LOC,
                   name: 'LibraryManagedAttributes',
                 },
               },
               typeParameters: {
                 type: 'TSTypeParameterInstantiation',
+                loc: DUMMY_LOC,
                 params: [
                   param,
                   {
                     type: 'TSTypeReference',
+                    loc: DUMMY_LOC,
                     typeName: {
                       type: 'TSQualifiedName',
-                      left: getReactIdentifier(),
+                      loc: DUMMY_LOC,
+                      left: getReactIdentifier(hasReactImport),
                       right: {
                         type: 'Identifier',
+                        loc: DUMMY_LOC,
                         name: `ComponentProps`,
                       },
                     },
                     typeParameters: {
                       type: 'TSTypeParameterInstantiation',
+                      loc: DUMMY_LOC,
                       params: [param],
                     },
                   },
@@ -2174,46 +2926,27 @@ const getTransforms = (
               },
             };
           }
-          // React.Ref<C> -> NonNullable<React.Ref<C> | string | number>
-          // React$Ref<C> -> NonNullable<React.Ref<C> | string | number>
-          case 'React.Ref':
-          case 'React$Ref':
+          // React.RefSetter<C> -> React.Ref<C>
+          // React$RefSetter<C> -> React.Ref<C>
+          case 'React.RefSetter':
+          case 'React$RefSetter':
             return {
               type: 'TSTypeReference',
+              loc: DUMMY_LOC,
               typeName: {
-                type: 'Identifier',
-                name: 'NonNullable',
+                type: 'TSQualifiedName',
+                loc: DUMMY_LOC,
+                left: getReactIdentifier(hasReactImport),
+                right: {
+                  type: 'Identifier',
+                  loc: DUMMY_LOC,
+                  name: 'Ref',
+                },
               },
               typeParameters: {
                 type: 'TSTypeParameterInstantiation',
-                params: [
-                  {
-                    type: 'TSUnionType',
-                    types: [
-                      {
-                        type: 'TSTypeReference',
-                        typeName: {
-                          type: 'TSQualifiedName',
-                          left: getReactIdentifier(),
-                          right: {
-                            type: 'Identifier',
-                            name: 'Ref',
-                          },
-                        },
-                        typeParameters: {
-                          type: 'TSTypeParameterInstantiation',
-                          params: assertHasExactlyNTypeParameters(1),
-                        },
-                      },
-                      {
-                        type: 'TSStringKeyword',
-                      },
-                      {
-                        type: 'TSNumberKeyword',
-                      },
-                    ],
-                  },
-                ],
+                loc: DUMMY_LOC,
+                params: assertHasExactlyNTypeParameters(1),
               },
             };
           default:
@@ -2223,6 +2956,7 @@ const getTransforms = (
 
       return {
         type: 'TSTypeReference',
+        loc: DUMMY_LOC,
         typeName:
           node.id.type === 'Identifier'
             ? transform.Identifier(node.id, false)
@@ -2239,6 +2973,7 @@ const getTransforms = (
     ): TSESTree.Identifier {
       return {
         type: 'Identifier',
+        loc: DUMMY_LOC,
         name: node.name,
         ...(includeTypeAnnotation && node.typeAnnotation != null
           ? {
@@ -2252,6 +2987,7 @@ const getTransforms = (
     ): TSESTree.TSIndexedAccessType {
       return {
         type: 'TSIndexedAccessType',
+        loc: DUMMY_LOC,
         objectType: transformTypeAnnotationType(node.objectType),
         indexType: transformTypeAnnotationType(node.indexType),
       };
@@ -2266,6 +3002,7 @@ const getTransforms = (
     ): TSESTree.ImportAttribute {
       return {
         type: 'ImportAttribute',
+        loc: DUMMY_LOC,
         key:
           node.key.type === 'Identifier'
             ? transform.Identifier(node.key)
@@ -2279,20 +3016,23 @@ const getTransforms = (
       const importKind = node.importKind;
 
       const specifiers = [];
-      const unsupportedSpecifiers = [];
+      const unsupportedSpecifiers: Array<TSESTree.TSTypeAliasDeclaration> = [];
       node.specifiers.forEach(spec => {
         let id = (() => {
           if (node.importKind === 'typeof' || spec.importKind === 'typeof') {
             const id = {
               type: 'Identifier',
+              loc: DUMMY_LOC,
               name: getPlaceholderNameForTypeofImport(),
             };
 
             unsupportedSpecifiers.push({
               type: 'TSTypeAliasDeclaration',
+              loc: DUMMY_LOC,
               id: transform.Identifier(spec.local, false),
               typeAnnotation: {
                 type: 'TSTypeQuery',
+                loc: DUMMY_LOC,
                 exprName: id,
               },
             });
@@ -2307,6 +3047,7 @@ const getTransforms = (
           case 'ImportDefaultSpecifier':
             specifiers.push({
               type: 'ImportDefaultSpecifier',
+              loc: DUMMY_LOC,
               local: id,
             });
             return;
@@ -2314,6 +3055,7 @@ const getTransforms = (
           case 'ImportNamespaceSpecifier':
             specifiers.push({
               type: 'ImportNamespaceSpecifier',
+              loc: DUMMY_LOC,
               local: id,
             });
             return;
@@ -2321,6 +3063,7 @@ const getTransforms = (
           case 'ImportSpecifier':
             specifiers.push({
               type: 'ImportSpecifier',
+              loc: DUMMY_LOC,
               importKind:
                 spec.importKind === 'typeof' || spec.importKind === 'type'
                   ? 'type'
@@ -2332,10 +3075,11 @@ const getTransforms = (
         }
       });
 
-      const out = specifiers.length
+      const out: Array<TSESTree.ImportDeclaration> = specifiers.length
         ? [
             {
               type: 'ImportDeclaration',
+              loc: DUMMY_LOC,
               assertions: node.assertions.map(transform.ImportAttribute),
               importKind:
                 importKind === 'typeof' ? 'type' : importKind ?? 'value',
@@ -2352,7 +3096,9 @@ const getTransforms = (
     ): TSESTree.TSInterfaceHeritage {
       return {
         type: 'TSInterfaceHeritage',
-        expression: transform.Identifier(node.id, false),
+        loc: DUMMY_LOC,
+        // Bug: node.id can be qualified
+        expression: transform.Identifier((node.id: $FlowFixMe), false),
         typeParameters:
           node.typeParameters == null
             ? undefined
@@ -2368,10 +3114,13 @@ const getTransforms = (
         // type T = U & V & { ... }
         return {
           type: 'TSIntersectionType',
+          loc: DUMMY_LOC,
           types: [
             ...node.extends.map(ex => ({
               type: 'TSTypeReference',
-              typeName: transform.Identifier(ex.id, false),
+              loc: DUMMY_LOC,
+              // Bug: ex.id can be qualified
+              typeName: transform.Identifier((ex.id: $FlowFixMe), false),
               typeParameters:
                 ex.typeParameters == null
                   ? undefined
@@ -2389,6 +3138,7 @@ const getTransforms = (
     ): TSESTree.TSIntersectionType {
       return {
         type: 'TSIntersectionType',
+        loc: DUMMY_LOC,
         types: node.types.map(transformTypeAnnotationType),
       };
     },
@@ -2413,11 +3163,13 @@ const getTransforms = (
     ): TSESTree.TSUnknownKeyword {
       return {
         type: 'TSUnknownKeyword',
+        loc: DUMMY_LOC,
       };
     },
     NullLiteral(_node: FlowESTree.NullLiteral): TSESTree.NullLiteral {
       return {
         type: 'Literal',
+        loc: DUMMY_LOC,
         raw: 'null',
         value: null,
       };
@@ -2427,6 +3179,7 @@ const getTransforms = (
     ): TSESTree.TSNullKeyword {
       return {
         type: 'TSNullKeyword',
+        loc: DUMMY_LOC,
       };
     },
     NullableTypeAnnotation(
@@ -2436,12 +3189,15 @@ const getTransforms = (
       // `?T` becomes `null | undefined | T`
       return {
         type: 'TSUnionType',
+        loc: DUMMY_LOC,
         types: [
           {
             type: 'TSNullKeyword',
+            loc: DUMMY_LOC,
           },
           {
             type: 'TSUndefinedKeyword',
+            loc: DUMMY_LOC,
           },
           transformTypeAnnotationType(node.typeAnnotation),
         ],
@@ -2452,8 +3208,10 @@ const getTransforms = (
     ): TSESTree.TSLiteralType {
       return {
         type: 'TSLiteralType',
+        loc: DUMMY_LOC,
         literal: ({
           type: 'Literal',
+          loc: DUMMY_LOC,
           value: node.value,
           raw: node.raw,
         }: TSESTree.NumberLiteral),
@@ -2464,11 +3222,13 @@ const getTransforms = (
     ): TSESTree.TSNumberKeyword {
       return {
         type: 'TSNumberKeyword',
+        loc: DUMMY_LOC,
       };
     },
     NumericLiteral(node: FlowESTree.NumericLiteral): TSESTree.NumberLiteral {
       return {
         type: 'Literal',
+        loc: DUMMY_LOC,
         raw: node.raw,
         value: node.value,
       };
@@ -2478,7 +3238,39 @@ const getTransforms = (
     ):
       | TSESTree.TSTypeLiteral
       | TSESTree.TSIntersectionType
-      | TSESTree.TSAnyKeyword {
+      | TSESTree.TSAnyKeyword
+      | TSESTree.TSMappedType {
+      if (
+        node.properties.length === 1 &&
+        node.properties[0].type === 'ObjectTypeMappedTypeProperty'
+      ) {
+        // Mapped Object Object types must not have other object properties.
+        const prop: FlowESTree.ObjectTypeMappedTypeProperty =
+          node.properties[0];
+        const tsProp: TSESTree.TSMappedType = {
+          type: 'TSMappedType',
+          loc: DUMMY_LOC,
+          typeParameter: {
+            type: 'TSTypeParameter',
+            loc: DUMMY_LOC,
+            name: {
+              type: 'Identifier',
+              loc: DUMMY_LOC,
+              name: prop.keyTparam.name,
+            },
+            constraint: transformTypeAnnotationType(prop.sourceType),
+            in: false,
+            out: false,
+          },
+          readonly: prop.variance?.kind === 'plus',
+          optional: prop.optional === 'Optional',
+          typeAnnotation: transformTypeAnnotationType(prop.propType),
+          nameType: null,
+        };
+
+        return tsProp;
+      }
+
       // we want to preserve the source order of the members
       // unfortunately flow has unordered properties storing things
       // so store all elements with their start index and sort the
@@ -2517,10 +3309,9 @@ const getTransforms = (
           }
 
           if (property.type === 'ObjectTypeMappedTypeProperty') {
-            // TODO - Support mapped types
             return unsupportedAnnotation(
               property,
-              'object type with mapped type property',
+              'object type with mapped type property along with other properties',
             );
           }
 
@@ -2536,6 +3327,7 @@ const getTransforms = (
 
         return {
           type: 'TSTypeLiteral',
+          loc: DUMMY_LOC,
           members: tsBody,
         };
       } else {
@@ -2627,7 +3419,10 @@ const getTransforms = (
             }
 
             const spreadType = transformTypeAnnotationType(property.argument);
-            if (spreadType.type !== 'TSTypeReference') {
+            if (
+              spreadType.type !== 'TSTypeReference' &&
+              spreadType.type !== 'TSTypeQuery'
+            ) {
               return unsupportedAnnotation(
                 property,
                 'object types with complex spreads',
@@ -2654,6 +3449,7 @@ const getTransforms = (
           .map(({node}) => node);
         const objectType = {
           type: 'TSTypeLiteral',
+          loc: DUMMY_LOC,
           members: tsBody,
         };
 
@@ -2663,19 +3459,24 @@ const getTransforms = (
           const remainingTypes = typesToIntersect.slice(i + 1);
           intersectionMembers.push({
             type: 'TSTypeReference',
+            loc: DUMMY_LOC,
             typeName: {
               type: 'Identifier',
+              loc: DUMMY_LOC,
               name: 'Omit',
             },
             typeParameters: {
               type: 'TSTypeParameterInstantiation',
+              loc: DUMMY_LOC,
               params: [
                 currentType,
                 {
                   type: 'TSTypeOperator',
+                  loc: DUMMY_LOC,
                   operator: 'keyof',
                   typeAnnotation: {
                     type: 'TSUnionType',
+                    loc: DUMMY_LOC,
                     types: [...remainingTypes, objectType],
                   },
                 },
@@ -2687,6 +3488,7 @@ const getTransforms = (
 
         return {
           type: 'TSIntersectionType',
+          loc: DUMMY_LOC,
           types: intersectionMembers,
         };
       }
@@ -2698,6 +3500,7 @@ const getTransforms = (
       const func = transform.FunctionTypeAnnotation(node.value);
       return {
         type: 'TSCallSignatureDeclaration',
+        loc: DUMMY_LOC,
         params: func.params,
         returnType: func.returnType,
         typeParameters: func.typeParameters,
@@ -2708,12 +3511,15 @@ const getTransforms = (
     ): TSESTree.TSIndexSignature {
       return {
         type: 'TSIndexSignature',
+        loc: DUMMY_LOC,
         parameters: [
           {
             type: 'Identifier',
+            loc: DUMMY_LOC,
             name: node.id == null ? '$$Key$$' : node.id.name,
             typeAnnotation: {
               type: 'TSTypeAnnotation',
+              loc: DUMMY_LOC,
               typeAnnotation: transformTypeAnnotationType(node.key),
             },
           },
@@ -2722,6 +3528,7 @@ const getTransforms = (
         static: node.static,
         typeAnnotation: {
           type: 'TSTypeAnnotation',
+          loc: DUMMY_LOC,
           typeAnnotation: transformTypeAnnotationType(node.value),
         },
       };
@@ -2740,6 +3547,7 @@ const getTransforms = (
         const func = transform.FunctionTypeAnnotation(node.value);
         return {
           type: 'TSMethodSignature',
+          loc: DUMMY_LOC,
           computed: false,
           key,
           kind: node.kind === 'init' ? 'method' : node.kind,
@@ -2757,6 +3565,7 @@ const getTransforms = (
         const func = transform.FunctionTypeAnnotation(node.value);
         return {
           type: 'TSMethodSignature',
+          loc: DUMMY_LOC,
           computed: false,
           key,
           kind: node.kind,
@@ -2772,6 +3581,7 @@ const getTransforms = (
 
       return {
         type: 'TSPropertySignature',
+        loc: DUMMY_LOC,
         computed: false,
         key,
         optional: node.optional,
@@ -2779,6 +3589,7 @@ const getTransforms = (
         static: node.static,
         typeAnnotation: {
           type: 'TSTypeAnnotation',
+          loc: DUMMY_LOC,
           typeAnnotation: transformTypeAnnotationType(node.value),
         },
       };
@@ -2800,14 +3611,18 @@ const getTransforms = (
       // `T?.[K]` becomes `NonNullable<T>[K]`
       return {
         type: 'TSIndexedAccessType',
+        loc: DUMMY_LOC,
         objectType: {
           type: 'TSTypeReference',
+          loc: DUMMY_LOC,
           typeName: {
             type: 'Identifier',
+            loc: DUMMY_LOC,
             name: 'NonNullable',
           },
           typeParameters: {
             type: 'TSTypeParameterInstantiation',
+            loc: DUMMY_LOC,
             params: [transformTypeAnnotationType(node.objectType)],
           },
         },
@@ -2821,6 +3636,7 @@ const getTransforms = (
 
       return {
         type: 'TSQualifiedName',
+        loc: DUMMY_LOC,
         left:
           qual.type === 'Identifier'
             ? transform.Identifier(qual, false)
@@ -2835,6 +3651,7 @@ const getTransforms = (
 
       return {
         type: 'TSQualifiedName',
+        loc: DUMMY_LOC,
         left:
           qual.type === 'Identifier'
             ? transform.Identifier(qual, false)
@@ -2845,6 +3662,7 @@ const getTransforms = (
     RegExpLiteral(node: FlowESTree.RegExpLiteral): TSESTree.RegExpLiteral {
       return {
         type: 'Literal',
+        loc: DUMMY_LOC,
         raw: node.raw,
         regex: {
           pattern: node.regex.pattern,
@@ -2856,6 +3674,7 @@ const getTransforms = (
     StringLiteral(node: FlowESTree.StringLiteral): TSESTree.StringLiteral {
       return {
         type: 'Literal',
+        loc: DUMMY_LOC,
         raw: node.raw,
         value: node.value,
       };
@@ -2865,8 +3684,10 @@ const getTransforms = (
     ): TSESTree.TSLiteralType {
       return {
         type: 'TSLiteralType',
+        loc: DUMMY_LOC,
         literal: ({
           type: 'Literal',
+          loc: DUMMY_LOC,
           value: node.value,
           raw: node.raw,
         }: TSESTree.StringLiteral),
@@ -2877,6 +3698,7 @@ const getTransforms = (
     ): TSESTree.TSStringKeyword {
       return {
         type: 'TSStringKeyword',
+        loc: DUMMY_LOC,
       };
     },
     SymbolTypeAnnotation(
@@ -2884,6 +3706,7 @@ const getTransforms = (
     ): TSESTree.TSSymbolKeyword {
       return {
         type: 'TSSymbolKeyword',
+        loc: DUMMY_LOC,
       };
     },
     ThisTypeAnnotation(
@@ -2891,15 +3714,89 @@ const getTransforms = (
     ): TSESTree.TSThisType {
       return {
         type: 'TSThisType',
+        loc: DUMMY_LOC,
       };
     },
     TupleTypeAnnotation(
       node: FlowESTree.TupleTypeAnnotation,
-    ): TSESTree.TSTupleType {
-      return {
+    ): TSESTree.TSTupleType | TSESTree.TSTypeOperator {
+      const allReadOnly =
+        node.types.length > 0 &&
+        node.types.every(
+          element =>
+            element.type === 'TupleTypeLabeledElement' &&
+            element.variance != null &&
+            element.variance.kind === 'plus',
+        );
+      const elems = node.types.map(element => {
+        switch (element.type) {
+          case 'TupleTypeLabeledElement':
+            if (!allReadOnly && element.variance != null) {
+              return unsupportedAnnotation(
+                element,
+                'tuple type element variance annotations',
+              );
+            }
+            return {
+              type: 'TSNamedTupleMember',
+              loc: DUMMY_LOC,
+              label: transform.Identifier(element.label),
+              optional: element.optional,
+              elementType: transformTypeAnnotationType(element.elementType),
+            };
+          case 'TupleTypeSpreadElement': {
+            const annot = transformTypeAnnotationType(element.typeAnnotation);
+            return {
+              type: 'TSRestType',
+              loc: DUMMY_LOC,
+              typeAnnotation:
+                element.label != null
+                  ? {
+                      type: 'TSNamedTupleMember',
+                      loc: DUMMY_LOC,
+                      label: transform.Identifier(element.label),
+                      optional: false,
+                      elementType: annot,
+                    }
+                  : annot,
+            };
+          }
+          default:
+            return transformTypeAnnotationType(element);
+        }
+      });
+
+      const elementTypes = node.inexact
+        ? [
+            ...elems,
+            {
+              type: 'TSRestType',
+              loc: DUMMY_LOC,
+              typeAnnotation: {
+                type: 'TSArrayType',
+                loc: DUMMY_LOC,
+                elementType: {
+                  type: 'TSUnknownKeyword',
+                  loc: DUMMY_LOC,
+                },
+              },
+            },
+          ]
+        : elems;
+
+      const tupleAnnot: TSESTree.TSTupleType = {
         type: 'TSTupleType',
-        elementTypes: node.types.map(transformTypeAnnotationType),
+        loc: DUMMY_LOC,
+        elementTypes,
       };
+      return allReadOnly
+        ? {
+            type: 'TSTypeOperator',
+            loc: DUMMY_LOC,
+            operator: 'readonly',
+            typeAnnotation: tupleAnnot,
+          }
+        : tupleAnnot;
     },
     TypeAlias(node: FlowESTree.TypeAlias): TSESTree.TSTypeAliasDeclaration {
       return transform.DeclareTypeAlias(node);
@@ -2907,6 +3804,7 @@ const getTransforms = (
     TypeAnnotation(node: FlowESTree.TypeAnnotation): TSESTree.TSTypeAnnotation {
       return {
         type: 'TSTypeAnnotation',
+        loc: DUMMY_LOC,
         typeAnnotation: transformTypeAnnotationType(node.typeAnnotation),
       };
     },
@@ -2917,12 +3815,14 @@ const getTransforms = (
         case 'Identifier':
           return {
             type: 'TSTypeQuery',
+            loc: DUMMY_LOC,
             exprName: transform.Identifier(node.argument),
             typeParameters: undefined,
           };
         case 'QualifiedTypeofIdentifier':
           return {
             type: 'TSTypeQuery',
+            loc: DUMMY_LOC,
             exprName: transform.QualifiedTypeofIdentifier(node.argument),
             typeParameters: undefined,
           };
@@ -2952,8 +3852,10 @@ const getTransforms = (
       */
       return {
         type: 'TSTypeParameter',
+        loc: DUMMY_LOC,
         name: {
           type: 'Identifier',
+          loc: DUMMY_LOC,
           name: node.name,
         },
         constraint:
@@ -2975,6 +3877,7 @@ const getTransforms = (
     ): TSESTree.TSTypeParameterDeclaration {
       return {
         type: 'TSTypeParameterDeclaration',
+        loc: DUMMY_LOC,
         params: node.params.map(transform.TypeParameter),
       };
     },
@@ -2983,6 +3886,7 @@ const getTransforms = (
     ): TSESTree.TSTypeParameterInstantiation {
       return {
         type: 'TSTypeParameterInstantiation',
+        loc: DUMMY_LOC,
         params: node.params.map(transformTypeAnnotationType),
       };
     },
@@ -2991,6 +3895,7 @@ const getTransforms = (
     ): TSESTree.TSUnionType {
       return {
         type: 'TSUnionType',
+        loc: DUMMY_LOC,
         types: node.types.map(transformTypeAnnotationType),
       };
     },
@@ -2999,6 +3904,118 @@ const getTransforms = (
     ): TSESTree.TSVoidKeyword {
       return {
         type: 'TSVoidKeyword',
+        loc: DUMMY_LOC,
+      };
+    },
+    ConditionalTypeAnnotation(
+      node: FlowESTree.ConditionalTypeAnnotation,
+    ): TSESTree.TSConditionalType {
+      return {
+        type: 'TSConditionalType',
+        loc: DUMMY_LOC,
+        checkType: transformTypeAnnotationType(node.checkType),
+        extendsType: transformTypeAnnotationType(node.extendsType),
+        trueType: transformTypeAnnotationType(node.trueType),
+        falseType: transformTypeAnnotationType(node.falseType),
+      };
+    },
+    TypePredicateAnnotation(
+      node: FlowESTree.TypePredicate,
+    ): TSESTree.TSTypePredicate {
+      return {
+        type: 'TSTypePredicate',
+        loc: DUMMY_LOC,
+        asserts: node.kind != null && node.kind === 'asserts',
+        parameterName: transform.Identifier(node.parameterName, false),
+        typeAnnotation: node.typeAnnotation && {
+          type: 'TSTypeAnnotation',
+          loc: DUMMY_LOC,
+          typeAnnotation: transformTypeAnnotationType(node.typeAnnotation),
+        },
+      };
+    },
+    InferTypeAnnotation(
+      node: FlowESTree.InferTypeAnnotation,
+    ): TSESTree.TSInferType {
+      return {
+        type: 'TSInferType',
+        loc: DUMMY_LOC,
+        typeParameter: transform.TypeParameter(node.typeParameter),
+      };
+    },
+    KeyofTypeAnnotation(
+      node: FlowESTree.KeyofTypeAnnotation,
+    ): TSESTree.TSTypeOperator {
+      return {
+        type: 'TSTypeOperator',
+        loc: DUMMY_LOC,
+        operator: 'keyof',
+        typeAnnotation: transformTypeAnnotationType(node.argument),
+      };
+    },
+    TypeOperator(node: FlowESTree.RendersType): TSESTree.TypeNode {
+      switch (node.operator) {
+        case 'renders':
+        case 'renders?':
+        case 'renders*': {
+          const hasReactImport = isReactImport(node, 'React');
+          return {
+            type: 'TSTypeReference',
+            loc: DUMMY_LOC,
+            typeName: {
+              type: 'TSQualifiedName',
+              loc: DUMMY_LOC,
+              left: getReactIdentifier(hasReactImport),
+              right: {
+                type: 'Identifier',
+                loc: DUMMY_LOC,
+                name: `ReactNode`,
+              },
+            },
+            typeParameters: undefined,
+          };
+        }
+      }
+    },
+    ComponentTypeAnnotation(
+      node: FlowESTree.ComponentTypeAnnotation,
+    ): TSESTree.TSFunctionType {
+      const typeParameters =
+        node.typeParameters == null
+          ? undefined
+          : transform.TypeParameterDeclaration(node.typeParameters);
+
+      const params = transform.ComponentTypeParameters(node.params, node.rest);
+
+      // TS cannot support `renderType` so we always use ReactNode as the return type.
+      const hasReactImport = isReactImport(node, 'React');
+      const returnType = {
+        type: 'TSTypeAnnotation',
+        loc: DUMMY_LOC,
+        // If no rendersType we assume its ReactNode type.
+        typeAnnotation: {
+          type: 'TSTypeReference',
+          loc: DUMMY_LOC,
+          typeName: {
+            type: 'TSQualifiedName',
+            loc: DUMMY_LOC,
+            left: getReactIdentifier(hasReactImport),
+            right: {
+              type: 'Identifier',
+              loc: DUMMY_LOC,
+              name: `ReactNode`,
+            },
+          },
+          typeParameters: undefined,
+        },
+      };
+
+      return {
+        type: 'TSFunctionType',
+        loc: DUMMY_LOC,
+        typeParameters,
+        params,
+        returnType,
       };
     },
   };

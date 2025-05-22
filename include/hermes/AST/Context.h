@@ -225,11 +225,18 @@ class Context {
   /// If true, allow parsing component syntax when also using Flow syntax.
   bool parseFlowComponentSyntax_{false};
 
+  /// If true, allow parsing match statements and expressions when
+  /// also using Flow syntax.
+  bool parseFlowMatch_{false};
+
   /// Whether to parse Flow type syntax.
   ParseFlowSetting parseFlow_{ParseFlowSetting::NONE};
 
   /// Whether to parse TypeScript syntax.
   bool parseTS_{false};
+
+  /// Whether to convert ES6 classes to ES5 functions
+  bool convertES6Classes_{false};
 
   /// If non-null, the resolution table which resolves static require().
   const std::unique_ptr<ResolutionTable> resolutionTable_;
@@ -411,11 +418,30 @@ class Context {
     return parseFlowComponentSyntax_;
   }
 
+  void setParseFlowMatch(bool parseFlowMatch) {
+    parseFlowMatch_ = parseFlowMatch;
+  }
+  bool getParseFlowMatch() const {
+    return parseFlowMatch_;
+  }
+
   void setParseTS(bool parseTS) {
     parseTS_ = parseTS;
   }
   bool getParseTS() const {
     return parseTS_;
+  }
+
+  void setConvertES6Classes(bool convertES6Classes) {
+    convertES6Classes_ = convertES6Classes;
+  }
+
+  bool getConvertES6Classes() const {
+#ifndef HERMES_FACEBOOK_BUILD
+    return convertES6Classes_;
+#else
+    return false;
+#endif
   }
 
   /// \return true if either TS or Flow is being parsed.

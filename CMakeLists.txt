@@ -35,21 +35,14 @@ if(POLICY CMP0022)
   cmake_policy(SET CMP0022 NEW)
 endif()
 
-# Allow reading the LOCATION property of a target to determine the eventual
-# location of build targets. This is needed when building the debugging symbols
-# bundles for Apple platforms.
-if (POLICY CMP0026)
-  cmake_policy(SET CMP0026 OLD)
-endif()
-
 # Has to be set before `project` as per documentation
 # https://cmake.org/cmake/help/latest/variable/CMAKE_OSX_SYSROOT.html
 set(CMAKE_OSX_SYSROOT ${HERMES_APPLE_TARGET_PLATFORM})
 
 if(HERMES_APPLE_TARGET_PLATFORM MATCHES "catalyst")
   set(CMAKE_OSX_SYSROOT "macosx")
-  set(CMAKE_CXX_FLAGS ${CMAKE_CXX_FLAGS} "-target x86_64-arm64-apple-ios14.0-macabi -isystem ${CMAKE_OSX_SYSROOT}/System/iOSSupport/usr/include")
-  set(CMAKE_C_FLAGS ${CMAKE_C_FLAGS} "-target x86_64-arm64-apple-ios14.0-macabi -isystem ${CMAKE_OSX_SYSROOT}/System/iOSSupport/usr/include")
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -target x86_64-arm64-apple-ios14.0-macabi -isystem ${CMAKE_OSX_SYSROOT}/System/iOSSupport/usr/include")
+  set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -target x86_64-arm64-apple-ios14.0-macabi -isystem ${CMAKE_OSX_SYSROOT}/System/iOSSupport/usr/include")
   set(CMAKE_THREAD_LIBS_INIT "-lpthread")
   set(CMAKE_HAVE_THREADS_LIBRARY 1)
   set(CMAKE_USE_WIN32_THREADS_INIT 0)
@@ -217,6 +210,15 @@ set(HERMES_USE_STATIC_ICU OFF CACHE BOOL
 set(HERMES_UNICODE_LITE OFF CACHE BOOL
   "Enable to use internal no-op unicode functionality instead of relying on underlying system libraries")
 
+if(WIN32)
+  set(DEFAULT_HERMES_CHECK_NATIVE_STACK OFF)
+else()
+  set(DEFAULT_HERMES_CHECK_NATIVE_STACK ON)
+endif()
+
+set(HERMES_CHECK_NATIVE_STACK ${DEFAULT_HERMES_CHECK_NATIVE_STACK} CACHE BOOL
+  "Check the native stack for stack overflow")
+
 set(HERMES_ENABLE_DEBUGGER ON CACHE BOOL
   "Build with debugger support")
 
@@ -244,6 +246,9 @@ set(HERMES_USE_FLOWPARSER OFF CACHE BOOL
 set(HERMES_ENABLE_WERROR OFF CACHE BOOL
   "Whether the build should have -Werror enabled")
 
+set(HERMES_THREAD_SAFETY_ANALYSIS ON CACHE BOOL
+  "Whether to compile with clang's -Wthread-safety")
+
 set(HERMES_ENABLE_WIN10_ICU_FALLBACK ON CACHE BOOL
   "Whether to allow falling back on Win10 ICU")
 
@@ -263,27 +268,43 @@ set(EMSCRIPTEN_FASTCOMP OFF CACHE BOOL
 set(HERMES_ENABLE_INTL OFF CACHE BOOL
   "Enable JS Intl support (WIP)")
 
+set(HERMES_ENABLE_UNICODE_REGEXP_PROPERTY_ESCAPES ON CACHE BOOL
+  "Enable RegExp Unicode Property Escapes support")
+
 set(HERMES_ENABLE_TEST_SUITE ON CACHE BOOL
   "Enable the test suite")
 
 set(HERMES_BUILD_APPLE_FRAMEWORK ON CACHE BOOL
   "Whether to build the libhermes target as a framework bundle or dylib on Apple platforms")
 
-set(HERMES_BUILD_APPLE_DSYM OFF CACHE BOOL
-  "Whether to build a DWARF debugging symbols bundle")
+set(IMPORT_HERMESC "" CACHE FILEPATH
+  "Import the hermesc compiler from another build using the given CMake file.")
 
-set(HERMES_BUILD_NODE_HERMES OFF CACHE BOOL "Whether to build node-hermes")
+# On Windows, produce static libraries by default so that tests and tools work
+# without needing to move DLLs around.
+# On Emscripten, there is no concept of a shared library.
+if(WIN32 OR EMSCRIPTEN)
+  set(DEFAULT_BUILD_SHARED_LIBS OFF)
+else()
+  set(DEFAULT_BUILD_SHARED_LIBS ON)
+endif()
 
-set(HERMES_BUILD_LEAN_LIBHERMES OFF CACHE BOOL "Exclude the Hermes compiler from libhermes.")
+set(HERMES_BUILD_SHARED_JSI ${DEFAULT_BUILD_SHARED_LIBS} CACHE BOOL "Build JSI as a shared library.")
 
-set(HERMES_BUILD_SHARED_JSI OFF CACHE BOOL "Build JSI as a shared library.")
+set(BUILD_SHARED_LIBS ${DEFAULT_BUILD_SHARED_LIBS} CACHE BOOL "Prefer producing shared libraries.")
 
 if (HERMES_IS_ANDROID)
   add_definitions(-DHERMES_PLATFORM_UNICODE=HERMES_PLATFORM_UNICODE_JAVA)
 endif()
 
-if(HERMES_BUILD_APPLE_DSYM)
-  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -gdwarf")
+if(HERMES_CHECK_NATIVE_STACK)
+  if (WIN32)
+    message(
+      FATAL_ERROR
+      "Native stack checking not supported on Windows"
+    )
+  endif()
+  add_definitions(-DHERMES_CHECK_NATIVE_STACK)
 endif()
 
 if (HERMES_IS_MOBILE_BUILD)
@@ -299,6 +320,8 @@ if (HERMES_STATIC_LINK)
   append("-static" CMAKE_EXE_LINKER_FLAGS)
   set(HERMES_USE_STATIC_ICU ON)
   set(CMAKE_FIND_LIBRARY_SUFFIXES "${CMAKE_STATIC_LIBRARY_SUFFIX}")
+  set(HERMES_BUILD_SHARED_JSI OFF)
+  set(BUILD_SHARED_LIBS OFF)
 endif()
 
 # Check if the linker supports deleting unused sections and ICF.
@@ -417,7 +440,7 @@ if(HERMES_FACEBOOK_BUILD)
     add_definitions(-DHERMES_FACEBOOK_BUILD)
 endif()
 if(HERMESVM_EXCEPTION_ON_OOM)
-    set(HERMES_ENABLE_EH ON)
+    set(HERMES_ENABLE_EH_RTTI ON)
     add_definitions(-DHERMESVM_EXCEPTION_ON_OOM)
 endif()
 if(HERMESVM_PLATFORM_LOGGING)
@@ -432,6 +455,10 @@ endif()
 
 if (HERMES_ENABLE_INTL)
   add_definitions(-DHERMES_ENABLE_INTL)
+endif()
+
+if (HERMES_ENABLE_UNICODE_REGEXP_PROPERTY_ESCAPES)
+  add_definitions(-DHERMES_ENABLE_UNICODE_REGEXP_PROPERTY_ESCAPES)
 endif()
 
 if (HERMES_ENABLE_WERROR)
@@ -452,12 +479,6 @@ endif()
 
 if (HERMES_HARDENED)
   add_definitions(-DHERMES_HARDENED)
-endif()
-
-if ((NOT GENERATOR_IS_MULTI_CONFIG) AND (CMAKE_BUILD_TYPE STREQUAL Debug))
-    set(HERMES_ASSUMED_BUILD_MODE_IN_LIT_TEST "dbg")
-else()
-    set(HERMES_ASSUMED_BUILD_MODE_IN_LIT_TEST "opt")
 endif()
 
 if (GCC_COMPATIBLE)
@@ -621,6 +642,14 @@ else()
   message(FATAL_ERROR "Unable to find jsi.")
 endif()
 
+if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/../hermes_common)
+  set(HERMES_COMMON_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../hermes_common)
+elseif(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/../../hermes_common)
+  set(HERMES_COMMON_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../hermes_common)
+else()
+  set(HERMES_COMMON_DIR ${CMAKE_CURRENT_SOURCE_DIR})
+endif()
+
 include_directories(
   external/llvh/include
   external/llvh/gen/include
@@ -691,10 +720,6 @@ if(HERMES_ENABLE_TEST_SUITE)
     dependency-extractor
     )
 
-  if(HERMES_BUILD_NODE_HERMES)
-    list(APPEND HERMES_TEST_DEPS node-hermes)
-  endif()
-
   set(coverage_directory "")
   if (HERMES_ENABLE_CODE_COVERAGE)
     set(coverage_directory ${CMAKE_CURRENT_BINARY_DIR}/${CMAKE_CFG_INTDIR}/coverage)
@@ -705,6 +730,7 @@ if(HERMES_ENABLE_TEST_SUITE)
     unittests_dir=${CMAKE_CURRENT_BINARY_DIR}/unittests
     debugger_enabled=${HERMES_ENABLE_DEBUGGER}
     intl_enabled=${HERMES_ENABLE_INTL}
+    regexp_unicode_properties_enabled=${HERMES_ENABLE_UNICODE_REGEXP_PROPERTY_ESCAPES}
     use_flowparser=${HERMES_USE_FLOWPARSER}
     hbc_deltaprep=${HERMES_TOOLS_OUTPUT_DIR}/hbc-deltaprep
     dependency_extractor=${HERMES_TOOLS_OUTPUT_DIR}/dependency-extractor
@@ -715,14 +741,13 @@ if(HERMES_ENABLE_TEST_SUITE)
     hbcdump=${HERMES_TOOLS_OUTPUT_DIR}/hbcdump
     hbc-deltaprep=${HERMES_TOOLS_OUTPUT_DIR}/hbc-deltaprep
     hbc_diff=${HERMES_TOOLS_OUTPUT_DIR}/hbc-diff
-    build_mode=${HERMES_ASSUMED_BUILD_MODE_IN_LIT_TEST}
+    build_mode="$<IF:$<CONFIG:Debug>,dbg,opt>"
     exception_on_oom_enabled=${HERMESVM_EXCEPTION_ON_OOM}
-    node_hermes_enabled_flag=${HERMES_BUILD_NODE_HERMES}
-    node-hermes=${HERMES_TOOLS_OUTPUT_DIR}/node-hermes
     profiler=${HERMES_PROFILER_MODE_IN_LIT_TEST}
     gc=${HERMESVM_GCKIND}
     ubsan=${HERMES_ENABLE_UNDEFINED_BEHAVIOR_SANITIZER}
     coverage=${coverage_directory}
+    check_native_stack=${HERMES_CHECK_NATIVE_STACK}
     )
 
   set(HERMES_LIT_TEST_PARAMS

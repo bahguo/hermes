@@ -30,12 +30,14 @@ import type {RemoveCommentMutation} from './mutations/RemoveComment';
 import type {RemoveNodeMutation} from './mutations/RemoveNode';
 import type {RemoveStatementMutation} from './mutations/RemoveStatement';
 import type {ReplaceNodeMutation} from './mutations/ReplaceNode';
+import type {ModifyNodeInPlaceMutation} from './mutations/ModifyNodeInPlace';
 import type {
   ReplaceStatementWithManyMutation,
   ReplaceStatementWithManyMutationNodes,
 } from './mutations/ReplaceStatementWithMany';
 
 import {asDetachedNode, deepCloneNode, shallowCloneNode} from '../detachedNode';
+import {isNode} from 'hermes-parser';
 import {
   CommentPlacement,
   getCommentsForNode,
@@ -50,6 +52,7 @@ import {createRemoveNodeMutation} from './mutations/RemoveNode';
 import {createRemoveStatementMutation} from './mutations/RemoveStatement';
 import {createReplaceNodeMutation} from './mutations/ReplaceNode';
 import {createReplaceStatementWithManyMutation} from './mutations/ReplaceStatementWithMany';
+import {createModifyNodeInPlaceMutation} from './mutations/ModifyNodeInPlace';
 
 type Mutation = $ReadOnly<
   | AddCommentsMutation
@@ -59,7 +62,8 @@ type Mutation = $ReadOnly<
   | RemoveNodeMutation
   | RemoveStatementMutation
   | ReplaceNodeMutation
-  | ReplaceStatementWithManyMutation,
+  | ReplaceStatementWithManyMutation
+  | ModifyNodeInPlaceMutation,
 >;
 
 type SingleOrArray<+T> = T | $ReadOnlyArray<T>;
@@ -331,72 +335,64 @@ export function getTransformContext(): TransformContextAdditions {
 
   const cloneAPIs: TransformCloneAPIs = {
     // $FlowFixMe[incompatible-exact]
-    shallowCloneNode: ((
-      node: ?ESNode,
-    ): // $FlowExpectedError[incompatible-cast]
-    ?DetachedNode<ESNode> => {
+    shallowCloneNode: (((node: ?ESNode): ?DetachedNode<ESNode> => {
       if (node == null) {
         return null;
       }
 
       return shallowCloneNode(node, {});
-    }: TransformCloneAPIs['shallowCloneNode']),
+    }: $FlowFixMe): TransformCloneAPIs['shallowCloneNode']),
 
-    shallowCloneNodeWithOverrides: ((
+    shallowCloneNodeWithOverrides: (((
       node: ?ESNode,
       newProps?: $ReadOnly<{...}> = {},
-    ): // $FlowExpectedError[incompatible-cast]
-    // $FlowExpectedError[prop-missing]
+    ): // $FlowExpectedError[prop-missing]
     ?DetachedNode<ESNode> => {
       if (node == null) {
         return null;
       }
 
       return shallowCloneNode(node, newProps);
-    }: TransformCloneAPIs['shallowCloneNodeWithOverrides']),
+    }: $FlowFixMe): TransformCloneAPIs['shallowCloneNodeWithOverrides']),
 
     // $FlowFixMe[incompatible-exact]
-    shallowCloneArray: (<T: ESNode>(
+    shallowCloneArray: ((<T: ESNode>(
       nodes: ?$ReadOnlyArray<?T>,
-    ): // $FlowExpectedError[incompatible-cast]
-    ?$ReadOnlyArray<DetachedNode<?ESNode>> => {
+    ): ?$ReadOnlyArray<DetachedNode<?ESNode>> => {
       if (nodes == null) {
         return null;
       }
 
-      return nodes.map((node): DetachedNode<?ESNode> => {
+      return nodes.map((node_: ?T): DetachedNode<?ESNode> => {
+        const node: ?ESNode = node_;
         if (node == null) {
           // $FlowExpectedError[incompatible-return]
           return node;
         }
-        return shallowCloneNode<T>(node, {});
+        return shallowCloneNode<ESNode>(node, {});
       });
-    }: TransformCloneAPIs['shallowCloneArray']),
+    }: $FlowFixMe): TransformCloneAPIs['shallowCloneArray']),
 
     // $FlowFixMe[incompatible-exact]
-    deepCloneNode: ((
-      node: ?ESNode,
-    ): // $FlowExpectedError[incompatible-cast]
-    ?DetachedNode<ESNode> => {
+    deepCloneNode: (((node: ?ESNode): ?DetachedNode<ESNode> => {
       if (node == null) {
         return null;
       }
 
       return deepCloneNode(node, {});
-    }: TransformCloneAPIs['deepCloneNode']),
+    }: $FlowFixMe): TransformCloneAPIs['deepCloneNode']),
 
-    deepCloneNodeWithOverrides: ((
+    deepCloneNodeWithOverrides: (((
       node: ?ESNode,
       newProps?: $ReadOnly<{...}> = {},
-    ): // $FlowExpectedError[incompatible-cast]
-    // $FlowExpectedError[prop-missing]
+    ): // $FlowExpectedError[prop-missing]
     ?DetachedNode<ESNode> => {
       if (node == null) {
         return null;
       }
 
       return deepCloneNode(node, newProps);
-    }: TransformCloneAPIs['deepCloneNodeWithOverrides']),
+    }: $FlowFixMe): TransformCloneAPIs['deepCloneNodeWithOverrides']),
   };
   const commentAPIs: TransformCommentAPIs = {
     getComments: ((node): Array<Comment> => {
@@ -504,8 +500,7 @@ export function getTransformContext(): TransformContextAdditions {
     }: TransformRemoveAPIs['removeStatement']),
   };
   const replaceAPIs: TransformReplaceAPIs = {
-    // $FlowFixMe[incompatible-exact]
-    replaceNode: ((
+    replaceNode: (((
       target: ESNode,
       nodeToReplaceWith: MaybeDetachedNode<ESNode>,
       options?: ReplaceNodeOptions,
@@ -517,7 +512,7 @@ export function getTransformContext(): TransformContextAdditions {
           options,
         ),
       );
-    }: TransformReplaceAPIs['replaceNode']),
+    }: $FlowFixMe): TransformReplaceAPIs['replaceNode']),
 
     replaceStatementWithMany: ((
       target,
@@ -534,18 +529,19 @@ export function getTransformContext(): TransformContextAdditions {
     }: TransformReplaceAPIs['replaceStatementWithMany']),
   };
   const modifyAPIs: TransformModifyAPIs = {
-    modifyNodeInPlace: ((
-      node: ?ESNode,
-      newProps?: $ReadOnly<{...}> = {},
-      options?: ReplaceNodeOptions,
-    ): void => {
-      if (node == null) {
-        return;
+    modifyNodeInPlace: ((target: ESNode, newProps: $ReadOnly<{...}>): void => {
+      const detachedProps = {};
+      for (const [key, value] of Object.entries(newProps)) {
+        if (isNode(value)) {
+          // $FlowFixMe[incompatible-type]
+          const node: ESNode = value;
+          detachedProps[key] = asDetachedNode(node);
+        } else {
+          detachedProps[key] = value;
+        }
       }
 
-      const cloned = shallowCloneNode(node, newProps, {preserveLocation: true});
-      // $FlowExpectedError[incompatible-call]
-      replaceAPIs.replaceNode(node, cloned, options);
+      pushMutation(createModifyNodeInPlaceMutation(target, detachedProps));
     }: TransformModifyAPIs['modifyNodeInPlace']),
   };
 
@@ -568,8 +564,7 @@ export function getTransformContext(): TransformContextAdditions {
 
 function toArray<T>(thing: SingleOrArray<T>): $ReadOnlyArray<T> {
   if (Array.isArray(thing)) {
-    // $FlowExpectedError[incompatible-return]
-    return thing;
+    return (thing: $FlowFixMe);
   }
   return [thing];
 }

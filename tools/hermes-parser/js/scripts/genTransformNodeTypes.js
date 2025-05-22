@@ -12,7 +12,6 @@ import {
   GetHermesESTreeJSON,
   formatAndWriteSrcArtifact,
   LITERAL_TYPES,
-  NODES_WITHOUT_TRANSFORM_NODE_TYPES,
   EXCLUDE_PROPERTIES_FROM_NODE,
 } from './utils/scriptUtils';
 
@@ -28,8 +27,10 @@ const NODES_WITH_SPECIAL_HANDLING = new Set([
   'ClassDeclaration',
   'DeclareExportDeclaration',
   'DeclareFunction',
+  'DeclareHook',
   'ExportNamedDeclaration',
   'Identifier',
+  'MemberExpression',
   'NullLiteral',
   'NumericLiteral',
   'ObjectTypeProperty',
@@ -37,14 +38,10 @@ const NODES_WITH_SPECIAL_HANDLING = new Set([
   'RegExpLiteral',
   'StringLiteral',
   'TemplateElement',
-  'MemberExpression',
 ]);
 
 for (const node of GetHermesESTreeJSON()) {
-  if (
-    NODES_WITH_SPECIAL_HANDLING.has(node.name) ||
-    NODES_WITHOUT_TRANSFORM_NODE_TYPES.has(node.name)
-  ) {
+  if (NODES_WITH_SPECIAL_HANDLING.has(node.name)) {
     continue;
   }
 
@@ -61,7 +58,7 @@ export type ${node.name}Props = {};
 export function ${node.name}(props: {
   +parent?: ESNode,
 } = {...null}): DetachedNode<${node.name}Type> {
-  return detachedProps<${node.name}Type>(props.parent, {
+  return detachedProps<${node.name}Type>((props.parent: $FlowFixMe), {
     type: '${type}',
   });
 }
@@ -97,10 +94,10 @@ export type ${node.name}Props = {
     nodeTypeFunctions.push(
       `\
 export function ${node.name}(props: {
-  ...$ReadOnly<${node.name}Props>,
+  ...${node.name}Props,
   +parent?: ESNode,
 }): DetachedNode<${node.name}Type> {
-  const node = detachedProps<${node.name}Type>(props.parent, {
+  const node = detachedProps<${node.name}Type>((props.parent: $FlowFixMe), {
     type: '${type}',
     ${node.arguments
       .map(arg => {
@@ -121,7 +118,7 @@ export function ${node.name}(props: {
       .filter(Boolean)
       .join(',\n')},
   });
-  setParentPointersInDirectChildren(node);
+  setParentPointersInDirectChildren((node: $FlowFixMe));
   return node;
 }
 `,

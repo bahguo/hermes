@@ -35,7 +35,6 @@ const ObjectVTable JSError::vt{
         CellKind::JSErrorKind,
         cellSize<JSError>(),
         JSError::_finalizeImpl,
-        nullptr,
         JSError::_mallocSizeImpl),
     JSError::_getOwnIndexedRangeImpl,
     JSError::_haveOwnIndexedImpl,
@@ -55,10 +54,18 @@ void JSErrorBuildMeta(const GCCell *cell, Metadata::Builder &mb) {
   mb.addField("domains", &self->domains_);
 }
 
-CallResult<Handle<JSError>> JSError::getErrorFromStackTarget(
+/// Given an object \p targetHandle which may be nullptr:
+/// 1. Look for [[CapturedError]] in the object or its prototype chain and
+///    return it a JSError.
+/// 2. Otherwise, return llvh::None.
+static llvh::Optional<Handle<JSError>> getErrorFromStackTarget(
     Runtime &runtime,
     Handle<JSObject> targetHandle) {
-  if (targetHandle) {
+  MutableHandle<JSObject> mutHnd =
+      runtime.makeMutableHandle<JSObject>(targetHandle.get());
+  targetHandle = mutHnd;
+
+  while (targetHandle) {
     NamedPropertyDescriptor desc;
     bool exists = JSObject::getOwnNamedDescriptor(
         targetHandle,
@@ -72,9 +79,10 @@ CallResult<Handle<JSError>> JSError::getErrorFromStackTarget(
     if (vmisa<JSError>(*targetHandle)) {
       return Handle<JSError>::vmcast(targetHandle);
     }
+
+    mutHnd.set(targetHandle->getParent(runtime));
   }
-  return runtime.raiseTypeError(
-      "Error.stack getter called with an invalid receiver");
+  return llvh::None;
 }
 
 CallResult<HermesValue>
@@ -82,11 +90,11 @@ errorStackGetter(void *, Runtime &runtime, NativeArgs args) {
   GCScope gcScope(runtime);
 
   auto targetHandle = args.dyncastThis<JSObject>();
-  auto errorHandleRes = JSError::getErrorFromStackTarget(runtime, targetHandle);
-  if (errorHandleRes == ExecutionStatus::EXCEPTION) {
-    return ExecutionStatus::EXCEPTION;
+  auto errorHandleOpt = getErrorFromStackTarget(runtime, targetHandle);
+  if (!errorHandleOpt.hasValue()) {
+    return HermesValue::encodeUndefinedValue();
   }
-  auto errorHandle = *errorHandleRes;
+  auto errorHandle = *errorHandleOpt;
   if (!errorHandle->stacktrace_) {
     // Stacktrace has not been set, we simply return empty string.
     // This is different from other VMs where stacktrace is created when
@@ -216,63 +224,6 @@ PseudoHandle<JSError> JSError::create(
           *parentHandle, numOverlapSlots<JSError>()),
       catchable);
   return JSObjectInit::initToPseudoHandle(runtime, cell);
-}
-
-ExecutionStatus JSError::setupStack(
-    Handle<JSObject> selfHandle,
-    Runtime &runtime) {
-  // Lazily allocate the accessor.
-  if (runtime.jsErrorStackAccessor.isUndefined()) {
-    // This code path allocates quite a few handles, so make sure we
-    // don't disturb the parent GCScope and free them.
-    GCScope gcScope{runtime};
-
-    auto getter = NativeFunction::create(
-        runtime,
-        Handle<JSObject>::vmcast(&runtime.functionPrototype),
-        nullptr,
-        errorStackGetter,
-        Predefined::getSymbolID(Predefined::emptyString),
-        0,
-        Runtime::makeNullHandle<JSObject>());
-
-    auto setter = NativeFunction::create(
-        runtime,
-        Handle<JSObject>::vmcast(&runtime.functionPrototype),
-        nullptr,
-        errorStackSetter,
-        Predefined::getSymbolID(Predefined::emptyString),
-        1,
-        Runtime::makeNullHandle<JSObject>());
-
-    runtime.jsErrorStackAccessor =
-        PropertyAccessor::create(runtime, getter, setter);
-  }
-
-  auto accessor =
-      Handle<PropertyAccessor>::vmcast(&runtime.jsErrorStackAccessor);
-
-  DefinePropertyFlags dpf{};
-  dpf.setEnumerable = 1;
-  dpf.setConfigurable = 1;
-  dpf.setGetter = 1;
-  dpf.setSetter = 1;
-  dpf.enumerable = 0;
-  dpf.configurable = 1;
-
-  auto res = JSObject::defineOwnProperty(
-      selfHandle,
-      runtime,
-      Predefined::getSymbolID(Predefined::stack),
-      dpf,
-      accessor);
-
-  // Ignore failures to set the "stack" property as other engines do.
-  if (LLVM_UNLIKELY(res == ExecutionStatus::EXCEPTION)) {
-    runtime.clearThrownValue();
-  }
-
-  return ExecutionStatus::RETURNED;
 }
 
 CallResult<Handle<StringPrimitive>> JSError::toString(

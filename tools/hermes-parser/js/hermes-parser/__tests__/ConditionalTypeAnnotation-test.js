@@ -8,21 +8,12 @@
  * @format
  */
 
-import {parseForSnapshot, printForSnapshot} from '../__test_utils__/parse';
-
-const parserOpts = {enableExperimentalComponentSyntax: true};
-async function printForSnapshotESTree(code: string) {
-  return printForSnapshot(code, parserOpts);
-}
-async function parseForSnapshotESTree(code: string) {
-  return parseForSnapshot(code, parserOpts);
-}
-async function printForSnapshotBabel(code: string) {
-  return printForSnapshot(code, {babel: true, ...parserOpts});
-}
-async function parseForSnapshotBabel(code: string) {
-  return parseForSnapshot(code, {babel: true, ...parserOpts});
-}
+import {
+  printForSnapshotESTree,
+  parseForSnapshotESTree,
+  printForSnapshotBabel,
+  parseForSnapshotBabel,
+} from '../__test_utils__/parse';
 
 describe('ConditionalTypeAnnotation', () => {
   describe('Basic', () => {

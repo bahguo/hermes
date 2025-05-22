@@ -6,7 +6,6 @@
  */
 
 #include "hermes/Public/Buffer.h"
-#include "hermes/Public/CrashManager.h"
 #include "hermes/Public/GCTripwireContext.h"
 #include "hermes/Public/JSOutOfMemoryError.h"
 
@@ -19,8 +18,6 @@ namespace hermes {
 Buffer::~Buffer() {}
 namespace vm {
 GCTripwireContext::~GCTripwireContext() {}
-CrashManager::~CrashManager() {}
-NopCrashManager::~NopCrashManager() {}
 JSOutOfMemoryError::~JSOutOfMemoryError() {}
 } // namespace vm
 } // namespace hermes

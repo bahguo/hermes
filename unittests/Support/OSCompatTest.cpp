@@ -6,6 +6,7 @@
  */
 
 #include "hermes/Support/OSCompat.h"
+
 #include "gtest/gtest.h"
 
 namespace {
@@ -138,4 +139,5 @@ TEST(OSCompatTest, GetProtections) {
   }
 }
 #endif
+
 } // namespace

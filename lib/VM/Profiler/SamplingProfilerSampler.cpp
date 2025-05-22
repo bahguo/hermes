@@ -27,6 +27,13 @@
 #include <random>
 #include <thread>
 
+#if defined(_WINDOWS)
+#include <windows.h>
+// Must be included after windows.h
+#include <mmsystem.h>
+#include "llvh/ADT/ScopeExit.h"
+#endif
+
 namespace hermes {
 namespace vm {
 namespace sampling_profiler {
@@ -131,29 +138,34 @@ void Sampler::walkRuntimeStack(SamplingProfiler *profiler) {
       profiler->walkRuntimeStack(sampleStorage_, SamplingProfiler::InLoom::No);
 }
 
-void Sampler::timerLoop() {
+void Sampler::timerLoop(double meanHzFreq) {
   oscompat::set_thread_name("hermes-sampling-profiler");
 
-  constexpr double kMeanMilliseconds = 10;
-  constexpr double kStdDevMilliseconds = 5;
   std::random_device rd{};
   std::mt19937 gen{rd()};
   // The amount of time that is spent sleeping comes from a normal distribution,
   // to avoid the case where the timer thread samples a stack at a predictable
   // period.
-  std::normal_distribution<> distribution{
-      kMeanMilliseconds, kStdDevMilliseconds};
+  double interval = 1.0 / meanHzFreq;
+  std::normal_distribution<> distribution{interval, interval / 2};
   std::unique_lock<std::mutex> uniqueLock(profilerLock_);
 
+#if defined(_WINDOWS)
+  // By default, timer resolution is approximately 64Hz on Windows, so if the
+  // meanHzFreq parameter is greater than 64, sampling will occur at a lower
+  // frequency than desired. Setting the period to 1 is the minimum useful
+  // value, resulting in timer resolution of roughly 1 millsecond.
+  timeBeginPeriod(1);
+  auto restorePeriod = llvh::make_scope_exit([] { timeEndPeriod(1); });
+#endif
   while (enabled_) {
     if (!sampleStacks()) {
       return;
     }
 
-    const uint64_t millis = round(std::fabs(distribution(gen)));
-    // TODO: make sampling rate configurable.
+    double dur = std::fabs(distribution(gen));
     enabledCondVar_.wait_for(
-        uniqueLock, std::chrono::milliseconds(millis), [this]() {
+        uniqueLock, std::chrono::duration<double>(dur), [this]() {
           return !enabled_;
         });
   }
@@ -164,7 +176,7 @@ bool Sampler::enabled() {
   return enabled_;
 }
 
-bool Sampler::enable() {
+bool Sampler::enable(double meanHzFreq) {
   std::lock_guard<std::mutex> lockGuard(profilerLock_);
   if (enabled_) {
     return true;
@@ -174,7 +186,7 @@ bool Sampler::enable() {
   }
   enabled_ = true;
   // Start timer thread.
-  timerThread_ = std::thread(&Sampler::timerLoop, this);
+  timerThread_ = std::thread(&Sampler::timerLoop, this, meanHzFreq);
   return true;
 }
 

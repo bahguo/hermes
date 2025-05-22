@@ -27,7 +27,6 @@ One popular implementation strategy followed by other engines, is to bundle an i
 - `Intl.DateTimeFormat`*
   - `Intl.DateTimeFormat.supportedLocalesOf`
   - `Intl.DateTimeFormat.prototype.format`
-  - `Intl.DateTimeFormat.prototype.formatToParts`
   - `Intl.DateTimeFormat.prototype.resolvedOptions`
 
 - `Intl.getCanonicalLocales`

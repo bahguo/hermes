@@ -8,75 +8,85 @@
  * @format
  */
 
-import type {AlignmentCase} from '../__test_utils__/alignment-utils';
-
 import {
-  expectBabelAlignment,
-  expectEspreeAlignment,
-} from '../__test_utils__/alignment-utils';
-import {parseForSnapshot} from '../__test_utils__/parse';
-
-const parserOpts = {enableExperimentalComponentSyntax: true};
+  printForSnapshotESTree,
+  parseForSnapshotESTree,
+  printForSnapshotBabel,
+  parseForSnapshotBabel,
+} from '../__test_utils__/parse';
 
 describe('DeclareComponent', () => {
-  const testCase: AlignmentCase = {
-    code: `
+  describe('Basic', () => {
+    const code = `
       declare component Foo();
-    `,
-    espree: {
-      expectToFail: 'espree-exception',
-      expectedExceptionMessage: 'Unexpected token component',
-    },
-    babel: {
-      expectToFail: 'babel-exception',
-      expectedExceptionMessage: 'Unexpected token',
-    },
-  };
+    `;
 
-  test('ESTree', () => {
-    expect(parseForSnapshot(testCase.code, parserOpts)).toMatchInlineSnapshot(`
-      {
-        "body": [
-          {
-            "id": {
-              "name": "Foo",
-              "optional": false,
-              "type": "Identifier",
-              "typeAnnotation": null,
-            },
-            "params": [],
-            "rendersType": null,
-            "rest": null,
-            "type": "DeclareComponent",
-            "typeParameters": null,
-          },
-        ],
-        "type": "Program",
-      }
-    `);
-    expectEspreeAlignment(testCase);
+    test('ESTree', async () => {
+      expect(await parseForSnapshotESTree(code)).toMatchSnapshot();
+      expect(await printForSnapshotESTree(code)).toBe(code.trim());
+    });
+
+    test('Babel', async () => {
+      expect(await parseForSnapshotBabel(code)).toMatchSnapshot();
+      expect(await printForSnapshotBabel(code)).toMatchInlineSnapshot(
+        `"declare var Foo: any;"`,
+      );
+    });
   });
 
-  test('Babel', () => {
-    expect(parseForSnapshot(testCase.code, {babel: true, ...parserOpts}))
-      .toMatchInlineSnapshot(`
-      {
-        "body": [
-          {
-            "id": {
-              "name": "Foo",
-              "optional": false,
-              "type": "Identifier",
-              "typeAnnotation": {
-                "type": "AnyTypeAnnotation",
-              },
-            },
-            "type": "DeclareVariable",
-          },
-        ],
-        "type": "Program",
-      }
-    `);
-    expectBabelAlignment(testCase);
+  describe('Params and renders', () => {
+    const code = `
+      declare component Foo(bar: string) renders Foo;
+    `;
+
+    test('ESTree', async () => {
+      expect(await parseForSnapshotESTree(code)).toMatchSnapshot();
+      expect(await printForSnapshotESTree(code)).toBe(code.trim());
+    });
+
+    test('Babel', async () => {
+      expect(await parseForSnapshotBabel(code)).toMatchSnapshot();
+      expect(await printForSnapshotBabel(code)).toMatchInlineSnapshot(
+        `"declare var Foo: any;"`,
+      );
+    });
+  });
+
+  describe('Rest param', () => {
+    const code = `
+      declare component Foo(...rest: {bar: string});
+    `;
+
+    test('ESTree', async () => {
+      expect(await parseForSnapshotESTree(code)).toMatchSnapshot();
+      expect(await printForSnapshotESTree(code)).toBe(code.trim());
+    });
+
+    test('Babel', async () => {
+      expect(await parseForSnapshotBabel(code)).toMatchSnapshot();
+      expect(await printForSnapshotBabel(code)).toMatchInlineSnapshot(
+        `"declare var Foo: any;"`,
+      );
+    });
+  });
+
+  describe('Export', () => {
+    const code = `
+declare export component Foo();
+declare export default component Bar();
+    `;
+
+    test('ESTree', async () => {
+      expect(await parseForSnapshotESTree(code)).toMatchSnapshot();
+      expect(await printForSnapshotESTree(code)).toBe(code.trim());
+    });
+
+    test('Babel', async () => {
+      expect(await parseForSnapshotBabel(code)).toMatchSnapshot();
+      expect(await printForSnapshotBabel(code)).toMatchInlineSnapshot(`
+        "declare export var Foo: any;
+        declare export default var Bar: any;"
+      `);
+    });
   });
 });

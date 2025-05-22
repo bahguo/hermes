@@ -16,9 +16,11 @@ add_hermes_library(hermesOptimizer
   Optimizer/Scalar/Mem2Reg.cpp
   Optimizer/Scalar/TypeInference.cpp
   Optimizer/Scalar/StackPromotion.cpp
+  Optimizer/Scalar/SimpleStackPromotion.cpp
   Optimizer/Scalar/InstSimplify.cpp
   Optimizer/Scalar/Auditor.cpp
   Optimizer/Wasm/WasmSimplify.cpp
+  Optimizer/Wasm/EmitWasmIntrinsics.cpp
   Optimizer/Scalar/ScopeTransformations.cpp
   Optimizer/Scalar/ResolveStaticRequire.cpp
   Optimizer/Scalar/SimpleCallGraphProvider.cpp
@@ -48,7 +50,6 @@ add_hermes_library(hermesFrontend
   IR/Instrs.cpp
   Utils/Dumper.cpp
   Optimizer/Wasm/WasmIntrinsics.cpp
-  Optimizer/Wasm/EmitWasmIntrinsics.cpp
   LINK_LIBS hermesSupport hermesFrontEndDefs hermesAST hermesParser
 )
 

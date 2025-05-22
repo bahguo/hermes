@@ -260,7 +260,7 @@ throwTypeError(void *ctx, Runtime &runtime, NativeArgs) {
 // NOTE: when declaring more global symbols, don't forget to update
 // "Libhermes.h".
 void initGlobalObject(Runtime &runtime, const JSLibFlags &jsLibFlags) {
-  GCScope gcScope{runtime, "initGlobalObject", 330};
+  GCScope gcScope{runtime, "initGlobalObject", 350};
 
   // Not enumerable, not writable, not configurable.
   DefinePropertyFlags constantDPF =
@@ -564,8 +564,11 @@ void initGlobalObject(Runtime &runtime, const JSLibFlags &jsLibFlags) {
           runtime, Handle<JSObject>::vmcast(&runtime.functionPrototype))
           .getHermesValue();
 
+  // "Forward declaration" of TextEncoder.prototype.
+  runtime.textEncoderPrototype = JSObject::create(runtime).getHermesValue();
+
   // Object constructor.
-  createObjectConstructor(runtime);
+  runtime.objectConstructor = createObjectConstructor(runtime).getHermesValue();
 
   // JSError constructor.
   runtime.errorConstructor = createErrorConstructor(runtime).getHermesValue();
@@ -667,6 +670,9 @@ void initGlobalObject(Runtime &runtime, const JSLibFlags &jsLibFlags) {
   // AsyncFunction constructor (not directly exposed in the global object).
   createAsyncFunctionConstructor(runtime);
 
+  // TextEncoder constructor.
+  createTextEncoderConstructor(runtime);
+
   // %GeneratorPrototype%.
   populateGeneratorPrototype(runtime);
 
@@ -739,6 +745,12 @@ void initGlobalObject(Runtime &runtime, const JSLibFlags &jsLibFlags) {
 
   // Define the 'unescape' function.
   defineGlobalFunc(Predefined::getSymbolID(Predefined::unescape), unescape, 1);
+
+  // Define the 'atob' function.
+  defineGlobalFunc(Predefined::getSymbolID(Predefined::atob), atob, 1);
+
+  // Define the 'btoa' function.
+  defineGlobalFunc(Predefined::getSymbolID(Predefined::btoa), btoa, 1);
 
   // Define the 'decodeURI' function.
   defineGlobalFunc(

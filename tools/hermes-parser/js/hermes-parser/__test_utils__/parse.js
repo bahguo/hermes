@@ -10,7 +10,11 @@
 
 'use strict';
 
+import type {Program as ESTreeProgram} from 'hermes-estree';
 import type {ESNode} from 'hermes-estree';
+import type {ParserOptions} from '../src/ParserOptions';
+import type {BabelFile} from '../src/babel/TransformESTreeToBabel';
+import type {VisitorKeys} from '../src/generated/ESTreeVisitorKeys';
 
 import {SimpleTraverser} from '../src/traverse/SimpleTraverser';
 import {parse as parseOriginal} from '../src/index';
@@ -21,6 +25,11 @@ import {VISITOR_KEYS as babelVisitorKeys} from '@babel/types';
 // $FlowExpectedError[untyped-import]
 import generate from '@babel/generator';
 
+export const BABEL_VISITOR_KEYS: VisitorKeys = {
+  ...babelVisitorKeys,
+  BigIntLiteralTypeAnnotation: [],
+};
+
 const prettierConfig = Object.freeze({
   arrowParens: 'avoid',
   singleQuote: true,
@@ -30,9 +39,25 @@ const prettierConfig = Object.freeze({
   parser: 'hermes',
 });
 
-export const parse: typeof parseOriginal = (source, options) => {
-  return parseOriginal(source, {flow: 'all', ...options});
-};
+declare function parse(
+  code: string,
+  opts: {...ParserOptions, babel: true},
+): BabelFile;
+// eslint-disable-next-line no-redeclare
+declare function parse(
+  code: string,
+  opts?:
+    | {...ParserOptions, babel?: false | void}
+    | {...ParserOptions, babel: false},
+): ESTreeProgram;
+// eslint-disable-next-line no-redeclare
+export function parse(code: string, options: ParserOptions) {
+  if (options?.babel === true) {
+    return parseOriginal(code, {flow: 'all', ...options, babel: true});
+  }
+
+  return parseOriginal(code, {flow: 'all', ...options, babel: false});
+}
 
 export function parseForSnapshot(
   source: string,
@@ -40,15 +65,19 @@ export function parseForSnapshot(
     babel,
     preserveRange,
     enableExperimentalComponentSyntax,
+    enableExperimentalFlowMatchSyntax,
   }: {
     preserveRange?: boolean,
     babel?: boolean,
     enableExperimentalComponentSyntax?: boolean,
+    enableExperimentalFlowMatchSyntax?: boolean,
   } = {},
 ): mixed {
   const parseOpts = {
     enableExperimentalComponentSyntax:
-      enableExperimentalComponentSyntax ?? false,
+      enableExperimentalComponentSyntax ?? true,
+    enableExperimentalFlowMatchSyntax:
+      enableExperimentalFlowMatchSyntax ?? false,
   };
   if (babel === true) {
     return cleanASTForSnapshot(
@@ -56,7 +85,7 @@ export function parseForSnapshot(
         babel: true,
         ...parseOpts,
       }).program,
-      {babel, preserveRange},
+      {babel, preserveRange, enforceLocationInformation: true},
     );
   }
 
@@ -66,19 +95,45 @@ export function parseForSnapshot(
   });
 }
 
+export function printForSnapshotESTree(code: string): Promise<string> {
+  return printForSnapshot(code);
+}
+export function parseForSnapshotESTree(code: string): mixed {
+  return parseForSnapshot(code);
+}
+export function printForSnapshotBabel(
+  code: string,
+  options?: {reactRuntimeTarget?: ParserOptions['reactRuntimeTarget']},
+): Promise<string> {
+  return printForSnapshot(code, {
+    babel: true,
+    reactRuntimeTarget: options?.reactRuntimeTarget,
+  });
+}
+export function parseForSnapshotBabel(code: string): mixed {
+  return parseForSnapshot(code, {babel: true});
+}
+
 export async function printForSnapshot(
   source: string,
   {
     babel,
     enableExperimentalComponentSyntax,
+    enableExperimentalFlowMatchSyntax,
+    reactRuntimeTarget,
   }: {
     babel?: boolean,
     enableExperimentalComponentSyntax?: boolean,
+    enableExperimentalFlowMatchSyntax?: boolean,
+    reactRuntimeTarget?: ParserOptions['reactRuntimeTarget'],
   } = {},
 ): Promise<string> {
   const parseOpts = {
     enableExperimentalComponentSyntax:
-      enableExperimentalComponentSyntax ?? false,
+      enableExperimentalComponentSyntax ?? true,
+    enableExperimentalFlowMatchSyntax:
+      enableExperimentalFlowMatchSyntax ?? false,
+    reactRuntimeTarget,
   };
   if (babel === true) {
     const ast = parse(source, {
@@ -95,31 +150,83 @@ export async function printForSnapshot(
 
 export function cleanASTForSnapshot(
   ast: ESNode,
-  options?: {preserveRange?: boolean, babel?: boolean},
+  options?: {
+    preserveRange?: boolean,
+    babel?: boolean,
+    enforceLocationInformation?: boolean,
+  },
 ): mixed {
   SimpleTraverser.traverse(ast, {
     enter(node) {
+      if (options?.enforceLocationInformation === true && node.loc == null) {
+        console.log(node);
+        throw new Error(
+          `AST node of type "${node.type}" is missing "loc" property`,
+        );
+      }
       // $FlowExpectedError[cannot-write]
       delete node.loc;
-      // $FlowExpectedError[cannot-write]
-      delete node.parent;
-      if (options?.preserveRange !== true) {
-        // $FlowExpectedError[cannot-write]
-        delete node.range;
-      }
 
       if (options?.babel === true) {
+        if (
+          options?.enforceLocationInformation === true &&
+          // $FlowExpectedError[prop-missing]
+          node.start == null
+        ) {
+          throw new Error(
+            `AST node of type "${node.type}" is missing "start" property`,
+          );
+        }
         // $FlowExpectedError[prop-missing]
         delete node.start;
+
+        // $FlowExpectedError[prop-missing]
+        if (options?.enforceLocationInformation === true && node.end == null) {
+          throw new Error(
+            `AST node of type "${node.type}" is missing "end" property`,
+          );
+        }
         // $FlowExpectedError[prop-missing]
         delete node.end;
+
+        if (
+          options?.enforceLocationInformation === true &&
+          node.parent != null
+        ) {
+          throw new Error(
+            `AST node of type "${node.type}" has "parent" property`,
+          );
+        }
+
+        if (
+          options?.enforceLocationInformation === true &&
+          node.range != null
+        ) {
+          throw new Error(
+            `AST node of type "${node.type}" has "range" property`,
+          );
+        }
+      } else {
+        if (
+          options?.enforceLocationInformation === true &&
+          node.range == null
+        ) {
+          throw new Error(
+            `AST node of type "${node.type}" is missing "range" property`,
+          );
+        }
+
+        if (options?.preserveRange !== true) {
+          // $FlowExpectedError[cannot-write]
+          delete node.range;
+        }
+
+        // $FlowExpectedError[cannot-write]
+        delete node.parent;
       }
     },
     leave() {},
-    visitorKeys:
-      options?.babel === true
-        ? {...babelVisitorKeys, BigIntLiteralTypeAnnotation: []}
-        : null,
+    visitorKeys: options?.babel === true ? BABEL_VISITOR_KEYS : null,
   });
 
   if (ast.type === 'Program') {

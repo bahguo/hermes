@@ -28,7 +28,9 @@ function parse(code: string, options?: ParseForESLintOptions): Program {
     sourceType: options?.sourceType ?? 'module',
     tokens: true,
     enableExperimentalComponentSyntax:
-      options?.enableExperimentalComponentSyntax ?? false,
+      options?.enableExperimentalComponentSyntax ?? true,
+    enableExperimentalFlowMatchSyntax:
+      options?.enableExperimentalFlowMatchSyntax ?? false,
   };
 
   try {

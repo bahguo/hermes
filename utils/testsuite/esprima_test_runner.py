@@ -127,6 +127,8 @@ class EsprimaTestRunner:
                 del ast["directive"]
         if ast["type"] == "Identifier" and ast["name"] == "this":
             del ast["optional"]
+        if ast["type"] == "DeclareNamespace":
+            del ast["id"]["optional"]
         if ast["type"] == "PrivateName":
             ast = ast["id"]
             ast["type"] = "PrivateIdentifier"
@@ -338,8 +340,10 @@ class EsprimaTestRunner:
         extra_args = []
         if "flow" in suite:
             extra_args.append("-parse-flow")
+            extra_args.append("-Xparse-component-syntax")
             extra_args.append("-parse-jsx")
             extra_args.append("-Xinclude-empty-ast-nodes")
+            extra_args.append("-Xparse-flow-match")
         elif "JSX" in filename:
             extra_args.append("-parse-jsx")
         extra_args.append("-dump-transformed-ast" if transformed else "-dump-ast")

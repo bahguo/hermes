@@ -200,12 +200,13 @@ describe('Literal', () => {
           {
             "id": {
               "name": "T1",
-              "optional": false,
               "type": "Identifier",
-              "typeAnnotation": null,
             },
             "right": {
-              "raw": "10",
+              "extra": {
+                "raw": "10",
+                "rawValue": 10,
+              },
               "type": "NumberLiteralTypeAnnotation",
               "value": 10,
             },
@@ -215,12 +216,13 @@ describe('Literal', () => {
           {
             "id": {
               "name": "T2",
-              "optional": false,
               "type": "Identifier",
-              "typeAnnotation": null,
             },
             "right": {
-              "raw": "0.56283",
+              "extra": {
+                "raw": "0.56283",
+                "rawValue": 0.56283,
+              },
               "type": "NumberLiteralTypeAnnotation",
               "value": 0.56283,
             },
@@ -230,12 +232,13 @@ describe('Literal', () => {
           {
             "id": {
               "name": "T3",
-              "optional": false,
               "type": "Identifier",
-              "typeAnnotation": null,
             },
             "right": {
-              "raw": ""test"",
+              "extra": {
+                "raw": ""test"",
+                "rawValue": "test",
+              },
               "type": "StringLiteralTypeAnnotation",
               "value": "test",
             },
@@ -245,12 +248,9 @@ describe('Literal', () => {
           {
             "id": {
               "name": "T4",
-              "optional": false,
               "type": "Identifier",
-              "typeAnnotation": null,
             },
             "right": {
-              "raw": "true",
               "type": "BooleanLiteralTypeAnnotation",
               "value": true,
             },
@@ -260,12 +260,13 @@ describe('Literal', () => {
           {
             "id": {
               "name": "T5",
-              "optional": false,
               "type": "Identifier",
-              "typeAnnotation": null,
             },
             "right": {
-              "raw": "4321n",
+              "extra": {
+                "raw": "4321n",
+                "rawValue": "4321",
+              },
               "type": "BigIntLiteralTypeAnnotation",
               "value": 4321n,
             },
@@ -275,12 +276,13 @@ describe('Literal', () => {
           {
             "id": {
               "name": "T6",
-              "optional": false,
               "type": "Identifier",
-              "typeAnnotation": null,
             },
             "right": {
-              "raw": "12_34n",
+              "extra": {
+                "raw": "12_34n",
+                "rawValue": "1234",
+              },
               "type": "BigIntLiteralTypeAnnotation",
               "value": 1234n,
             },
@@ -558,6 +560,7 @@ describe('TypeofTypeAnnotation', () => {
                   "typeAnnotation": null,
                 },
                 "type": "TypeofTypeAnnotation",
+                "typeArguments": null,
               },
               "type": "TypeAlias",
               "typeParameters": null,
@@ -577,17 +580,13 @@ describe('TypeofTypeAnnotation', () => {
             {
               "id": {
                 "name": "T1",
-                "optional": false,
                 "type": "Identifier",
-                "typeAnnotation": null,
               },
               "right": {
                 "argument": {
                   "id": {
                     "name": "a",
-                    "optional": false,
                     "type": "Identifier",
-                    "typeAnnotation": null,
                   },
                   "type": "GenericTypeAnnotation",
                   "typeParameters": null,
@@ -645,6 +644,7 @@ describe('TypeofTypeAnnotation', () => {
                   "type": "QualifiedTypeofIdentifier",
                 },
                 "type": "TypeofTypeAnnotation",
+                "typeArguments": null,
               },
               "type": "TypeAlias",
               "typeParameters": null,
@@ -664,24 +664,18 @@ describe('TypeofTypeAnnotation', () => {
             {
               "id": {
                 "name": "T1",
-                "optional": false,
                 "type": "Identifier",
-                "typeAnnotation": null,
               },
               "right": {
                 "argument": {
                   "id": {
                     "id": {
                       "name": "a",
-                      "optional": false,
                       "type": "Identifier",
-                      "typeAnnotation": null,
                     },
                     "qualification": {
                       "name": "a",
-                      "optional": false,
                       "type": "Identifier",
-                      "typeAnnotation": null,
                     },
                     "type": "QualifiedTypeIdentifier",
                   },
@@ -729,6 +723,7 @@ describe('TupleTypeAnnotation', () => {
                 "typeAnnotation": null,
               },
               "right": {
+                "inexact": false,
                 "type": "TupleTypeAnnotation",
                 "types": [
                   {
@@ -754,9 +749,7 @@ describe('TupleTypeAnnotation', () => {
             {
               "id": {
                 "name": "T1",
-                "optional": false,
                 "type": "Identifier",
-                "typeAnnotation": null,
               },
               "right": {
                 "type": "TupleTypeAnnotation",
@@ -804,6 +797,7 @@ describe('TupleTypeAnnotation', () => {
                 "typeAnnotation": null,
               },
               "right": {
+                "inexact": false,
                 "type": "TupleTypeAnnotation",
                 "types": [
                   {
@@ -840,9 +834,7 @@ describe('TupleTypeAnnotation', () => {
             {
               "id": {
                 "name": "T1",
-                "optional": false,
                 "type": "Identifier",
-                "typeAnnotation": null,
               },
               "right": {
                 "type": "TupleTypeAnnotation",
@@ -890,6 +882,7 @@ describe('TupleTypeAnnotation', () => {
                 "typeAnnotation": null,
               },
               "right": {
+                "inexact": false,
                 "type": "TupleTypeAnnotation",
                 "types": [
                   {
@@ -929,9 +922,7 @@ describe('TupleTypeAnnotation', () => {
             {
               "id": {
                 "name": "T1",
-                "optional": false,
                 "type": "Identifier",
-                "typeAnnotation": null,
               },
               "right": {
                 "type": "TupleTypeAnnotation",
@@ -940,6 +931,72 @@ describe('TupleTypeAnnotation', () => {
                     "type": "AnyTypeAnnotation",
                   },
                 ],
+              },
+              "type": "TypeAlias",
+              "typeParameters": null,
+            },
+          ],
+          "type": "Program",
+        }
+      `);
+      expectBabelAlignment(testCase);
+    });
+  });
+
+  describe('inexact TupleTypeAnnotation', () => {
+    const testCase: AlignmentCase = {
+      code: `
+        type T1 = [...];
+      `,
+      espree: {
+        expectToFail: 'espree-exception',
+        expectedExceptionMessage: 'Unexpected token T1',
+      },
+      babel: {
+        expectToFail: 'babel-exception',
+        expectedExceptionMessage: 'Unexpected token',
+      },
+    };
+
+    test('ESTree', () => {
+      expect(parseForSnapshot(testCase.code)).toMatchInlineSnapshot(`
+        {
+          "body": [
+            {
+              "id": {
+                "name": "T1",
+                "optional": false,
+                "type": "Identifier",
+                "typeAnnotation": null,
+              },
+              "right": {
+                "inexact": true,
+                "type": "TupleTypeAnnotation",
+                "types": [],
+              },
+              "type": "TypeAlias",
+              "typeParameters": null,
+            },
+          ],
+          "type": "Program",
+        }
+      `);
+      expectEspreeAlignment(testCase);
+    });
+
+    test('Babel', () => {
+      expect(parseForSnapshot(testCase.code, {babel: true}))
+        .toMatchInlineSnapshot(`
+        {
+          "body": [
+            {
+              "id": {
+                "name": "T1",
+                "type": "Identifier",
+              },
+              "right": {
+                "type": "TupleTypeAnnotation",
+                "types": [],
               },
               "type": "TypeAlias",
               "typeParameters": null,
@@ -1015,7 +1072,7 @@ describe('TypePredicate', () => {
             "returnType": {
               "type": "TypeAnnotation",
               "typeAnnotation": {
-                "asserts": false,
+                "kind": null,
                 "parameterName": {
                   "name": "x",
                   "optional": false,
@@ -1057,9 +1114,7 @@ describe('TypePredicate', () => {
                 {
                   "argument": {
                     "name": "x",
-                    "optional": false,
                     "type": "Identifier",
-                    "typeAnnotation": null,
                   },
                   "type": "ReturnStatement",
                 },
@@ -1070,14 +1125,11 @@ describe('TypePredicate', () => {
             "generator": false,
             "id": {
               "name": "predicate",
-              "optional": false,
               "type": "Identifier",
-              "typeAnnotation": null,
             },
             "params": [
               {
                 "name": "x",
-                "optional": false,
                 "type": "Identifier",
                 "typeAnnotation": {
                   "type": "TypeAnnotation",
@@ -1087,7 +1139,6 @@ describe('TypePredicate', () => {
                 },
               },
             ],
-            "predicate": null,
             "returnType": {
               "type": "TypeAnnotation",
               "typeAnnotation": {
@@ -1095,7 +1146,79 @@ describe('TypePredicate', () => {
               },
             },
             "type": "FunctionDeclaration",
-            "typeParameters": null,
+          },
+        ],
+        "type": "Program",
+      }
+    `);
+    expectBabelAlignment(testCase);
+  });
+});
+
+describe('TypeCastExpression', () => {
+  const testCase: AlignmentCase = {
+    code: `
+      (a: string);
+    `,
+    espree: {
+      expectToFail: 'espree-exception',
+      expectedExceptionMessage: 'Unexpected token :',
+    },
+    babel: {
+      expectToFail: false,
+    },
+  };
+
+  test('ESTree', () => {
+    expect(parseForSnapshot(testCase.code)).toMatchInlineSnapshot(`
+      {
+        "body": [
+          {
+            "directive": null,
+            "expression": {
+              "expression": {
+                "name": "a",
+                "optional": false,
+                "type": "Identifier",
+                "typeAnnotation": null,
+              },
+              "type": "TypeCastExpression",
+              "typeAnnotation": {
+                "type": "TypeAnnotation",
+                "typeAnnotation": {
+                  "type": "StringTypeAnnotation",
+                },
+              },
+            },
+            "type": "ExpressionStatement",
+          },
+        ],
+        "type": "Program",
+      }
+    `);
+    expectEspreeAlignment(testCase);
+  });
+
+  test('Babel', () => {
+    expect(parseForSnapshot(testCase.code, {babel: true}))
+      .toMatchInlineSnapshot(`
+      {
+        "body": [
+          {
+            "expression": {
+              "expression": {
+                "name": "a",
+                "type": "Identifier",
+              },
+              "type": "TypeCastExpression",
+              "typeAnnotation": {
+                "type": "TypeAnnotation",
+                "typeAnnotation": {
+                  "type": "StringTypeAnnotation",
+                },
+              },
+            },
+            "type": "ExpressionStatement",
           },
         ],
         "type": "Program",

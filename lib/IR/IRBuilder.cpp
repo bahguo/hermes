@@ -171,11 +171,15 @@ GlobalObjectProperty *IRBuilder::createGlobalObjectProperty(
 }
 
 Parameter *IRBuilder::createParameter(Function *Parent, Identifier Name) {
-  return new Parameter(Parent, Name);
+  return new Parameter(Parent, Name, false);
 }
 
 Parameter *IRBuilder::createParameter(Function *Parent, llvh::StringRef Name) {
   return createParameter(Parent, createIdentifier(Name));
+}
+
+Parameter *IRBuilder::createThisParameter(Function *Parent) {
+  return new Parameter(Parent, createIdentifier("this"), true);
 }
 
 Variable *IRBuilder::createVariable(
@@ -982,13 +986,6 @@ HBCAllocObjectFromBufferInst *IRBuilder::createHBCAllocObjectFromBufferInst(
     uint32_t size) {
   auto *inst =
       new HBCAllocObjectFromBufferInst(M->getLiteralNumber(size), prop_map);
-  insert(inst);
-  return inst;
-}
-
-AllocObjectLiteralInst *IRBuilder::createAllocObjectLiteralInst(
-    const AllocObjectLiteralInst::ObjectPropertyMap &propMap) {
-  auto *inst = new AllocObjectLiteralInst(propMap);
   insert(inst);
   return inst;
 }

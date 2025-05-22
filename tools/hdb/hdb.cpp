@@ -646,7 +646,10 @@ struct HDBDebugger : public debugger::EventObserver {
       case PauseReason::Exception:
         std::cout << "Break on exception in ";
         break;
-      case PauseReason::AsyncTrigger:
+      case PauseReason::AsyncTriggerImplicit:
+        assert(false && "hdb doesn't ever triggerAsyncPause with Implicit");
+        break;
+      case PauseReason::AsyncTriggerExplicit:
         std::cout << "Interrupted in ";
         break;
       case PauseReason::StepFinish:
@@ -782,6 +785,7 @@ int main(int argc, char **argv) {
       std::istreambuf_iterator<char>());
 
   hermes::vm::RuntimeConfig::Builder optsBuilder;
+  optsBuilder.withCompilationMode(options.compilationMode);
   if (options.enableBlockScoping) {
     optsBuilder.withEnableBlockScoping(*options.enableBlockScoping);
   }

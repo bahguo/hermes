@@ -13,18 +13,35 @@
 namespace facebook {
 namespace hermes {
 
-std::unique_ptr<jsi::Runtime> makeTracingHermesRuntime(
-    std::unique_ptr<HermesRuntime> hermesRuntime,
-    const ::hermes::vm::RuntimeConfig &runtimeConfig) {
-  if (runtimeConfig.getTraceEnabled()) {
+std::shared_ptr<jsi::Runtime> makeTracingHermesRuntime(
+    std::shared_ptr<HermesRuntime> hermesRuntime,
+    const ::hermes::vm::RuntimeConfig &runtimeConfig,
+    const std::string &traceScratchPath,
+    const std::string &traceResultPath,
+    std::function<bool()> traceCompletionCallback) {
+  auto mode = runtimeConfig.getSynthTraceMode();
+  if (mode == ::hermes::vm::SynthTraceMode::Tracing ||
+      mode == ::hermes::vm::SynthTraceMode::TracingAndReplaying) {
     return tracing::makeTracingHermesRuntime(
         std::move(hermesRuntime),
         runtimeConfig,
-        runtimeConfig.getTraceScratchPath(),
-        runtimeConfig.getTraceResultPath(),
-        runtimeConfig.getTraceRegisterCallback());
+        traceScratchPath,
+        traceResultPath,
+        std::move(traceCompletionCallback));
   }
   return hermesRuntime;
+}
+
+std::shared_ptr<jsi::Runtime> makeTracingHermesRuntime(
+    std::shared_ptr<HermesRuntime> hermesRuntime,
+    const ::hermes::vm::RuntimeConfig &runtimeConfig,
+    std::unique_ptr<llvh::raw_ostream> traceStream,
+    bool forReplay) {
+  return tracing::makeTracingHermesRuntime(
+      std::move(hermesRuntime),
+      runtimeConfig,
+      std::move(traceStream),
+      forReplay);
 }
 
 } // namespace hermes

@@ -18,6 +18,7 @@
 #endif
 
 RUNTIME_HV_FIELD_PROTOTYPE(objectPrototype)
+RUNTIME_HV_FIELD_PROTOTYPE(objectConstructor)
 RUNTIME_HV_FIELD_PROTOTYPE(errorConstructor)
 
 /// JSError and JSError.prototype, and constructor and prototype of all native
@@ -79,6 +80,7 @@ RUNTIME_HV_FIELD_PROTOTYPE(parseFloatFunction)
 RUNTIME_HV_FIELD_PROTOTYPE(requireFunction)
 RUNTIME_HV_FIELD_PROTOTYPE(jsErrorStackAccessor)
 RUNTIME_HV_FIELD_PROTOTYPE(callSitePrototype)
+RUNTIME_HV_FIELD_PROTOTYPE(textEncoderPrototype)
 
 // TODO: for Serialization/Deserialization  after global object initialization
 // we record specialCodeBlockDomain_ and create runtimemodule later need to

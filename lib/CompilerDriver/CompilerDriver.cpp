@@ -297,6 +297,13 @@ static llvh::cl::alias _EnableBlockScoping(
     Hidden,
     llvh::cl::aliasopt(EnableBlockScoping));
 
+opt<bool> ES6Class(
+    "Xes6-class",
+    init(false),
+    desc("Enable support for ES6 Class"),
+    Hidden,
+    cat(CompilerCategory));
+
 opt<bool>
     EnableEval("enable-eval", init(true), desc("Enable support for eval()"));
 
@@ -509,6 +516,13 @@ static opt<bool> ParseFlowComponentSyntax(
     init(false),
     Hidden,
     cat(CompilerCategory));
+
+static opt<bool> ParseFlowMatch(
+    "Xparse-flow-match",
+    desc("Parse Flow match statements and expressions"),
+    init(false),
+    Hidden,
+    cat(CompilerCategory));
 #endif
 
 #if HERMES_PARSE_TS
@@ -536,6 +550,7 @@ static ValuesClass warningValues{
 #define WARNING_CATEGORY_HIDDEN(name, specifier, description) \
   clEnumValN(Warning::name, specifier, description),
 #include "hermes/Support/Warnings.def"
+
 };
 
 static list<hermes::Warning> Werror(
@@ -790,6 +805,7 @@ bool loadGlobalDefinition(
   auto parsedJs = jsParser.parse();
   if (!parsedJs)
     return false;
+  jsParser.registerMagicURLs();
 
   declFileList.push_back(parsedJs.getValue());
   return true;
@@ -844,10 +860,11 @@ ESTree::NodePtr parseJS(
   auto mode = parser::FullParse;
 
   if (context->isLazyCompilation() && isLargeFile) {
-    if (!parser::JSParser::preParseBuffer(
-            *context, fileBufId, useStaticBuiltinDetected)) {
+    auto preParser = parser::JSParser::preParseBuffer(*context, fileBufId);
+    if (!preParser)
       return nullptr;
-    }
+    useStaticBuiltinDetected = preParser->getUseStaticBuiltin();
+    preParser->registerMagicURLs();
     mode = parser::LazyParse;
   }
 
@@ -861,10 +878,11 @@ ESTree::NodePtr parseJS(
   {
     parser::JSParser jsParser(*context, fileBufId, mode);
     parsedJs = jsParser.parse();
-    // If we are using lazy parse mode, we should have already detected the 'use
-    // static builtin' directive in the pre-parsing stage.
-    if (mode != parser::LazyParse) {
+    // If we are using lazy parse mode, we should have already detected the
+    // 'use static builtin' directive and magic URLs in the pre-parsing stage.
+    if (parsedJs && mode != parser::LazyParse) {
       useStaticBuiltinDetected = jsParser.getUseStaticBuiltin();
+      jsParser.registerMagicURLs();
     }
   }
   if (!parsedJs)
@@ -981,6 +999,8 @@ bool validateFlags() {
   if (cl::LazyCompilation) {
     if (cl::BytecodeFormat != cl::BytecodeFormatKind::HBC)
       err("-lazy only works with -target=HBC");
+    if (cl::DumpTarget != Execute)
+      err("-lazy only works when executing");
     if (cl::OptimizationLevel > cl::OptLevel::Og)
       err("-lazy does not work with -O");
     if (cl::BytecodeMode) {
@@ -1144,6 +1164,7 @@ std::shared_ptr<Context> createContext(
   // Default is non-strict mode.
   context->setStrictMode(!cl::NonStrictMode && cl::StrictMode);
   context->setEnableEval(cl::EnableEval);
+  context->setConvertES6Classes(cl::ES6Class);
   context->getSourceErrorManager().setOutputOptions(guessErrorOutputOptions());
 
   setWarningsAreErrorsFromFlags(context->getSourceErrorManager());
@@ -1167,7 +1188,7 @@ std::shared_ptr<Context> createContext(
         defaultFlags.preemptiveFunctionCompilationThreshold);
   }
 
-  if (cl::EagerCompilation || cl::DumpTarget == EmitBundle ||
+  if (cl::EagerCompilation || cl::DumpTarget != Execute ||
       cl::OptimizationLevel > cl::OptLevel::Og) {
     // Make sure nothing is lazy
     context->setLazyCompilation(false);
@@ -1196,6 +1217,7 @@ std::shared_ptr<Context> createContext(
     context->setParseFlow(ParseFlowSetting::ALL);
   }
   context->setParseFlowComponentSyntax(cl::ParseFlowComponentSyntax);
+  context->setParseFlowMatch(cl::ParseFlowMatch);
 #endif
 
 #if HERMES_PARSE_TS
@@ -2170,6 +2192,9 @@ void printHermesVersion(
 #endif
 #ifdef HERMESVM_CONTIGUOUS_HEAP
       << "    Contiguous Heap\n"
+#endif
+#ifdef HERMES_ENABLE_UNICODE_REGEXP_PROPERTY_ESCAPES
+      << "    Unicode RegExp Property Escapes\n"
 #endif
       << "    Zip file input\n";
   }

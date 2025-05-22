@@ -102,17 +102,6 @@ void Callable::defineLazyProperties(Handle<Callable> fn, Runtime &runtime) {
     assert(
         cr != ExecutionStatus::EXCEPTION && "failed to define length and name");
     (void)cr;
-  } else if (vmisa<BoundFunction>(fn.get())) {
-    Handle<BoundFunction> boundfn = Handle<BoundFunction>::vmcast(fn);
-    Handle<Callable> target = runtime.makeHandle(boundfn->getTarget(runtime));
-    unsigned int argsWithThis = boundfn->getArgCountWithThis(runtime);
-
-    auto res = BoundFunction::initializeLengthAndName_RJS(
-        boundfn, runtime, target, argsWithThis == 0 ? 0 : argsWithThis - 1);
-    assert(
-        res != ExecutionStatus::EXCEPTION &&
-        "failed to define length and name of bound function");
-    (void)res;
   } else {
     // no other kind of function can be lazy currently
     assert(false && "invalid lazy function");
@@ -471,14 +460,15 @@ const CallableVTable BoundFunction::vt{
             cellSize<BoundFunction>(),
             nullptr,
             nullptr,
-            nullptr,
             nullptr
 #ifdef HERMES_MEMORY_INSTRUMENTATION
             ,
-            VTable::HeapSnapshotMetadata {
-              HeapSnapshot::NodeType::Closure, BoundFunction::_snapshotNameImpl,
-                  BoundFunction::_snapshotAddEdgesImpl, nullptr, nullptr
-            }
+            VTable::HeapSnapshotMetadata{
+                HeapSnapshot::NodeType::Closure,
+                BoundFunction::_snapshotNameImpl,
+                BoundFunction::_snapshotAddEdgesImpl,
+                nullptr,
+                nullptr}
 #endif
             ),
         BoundFunction::_getOwnIndexedRangeImpl,
@@ -535,16 +525,9 @@ CallResult<HermesValue> BoundFunction::create(
       arrHandle);
   auto selfHandle = JSObjectInit::initToHandle(runtime, cell);
 
-  if (target->isLazy()) {
-    // If the target is lazy we can make the bound function lazy.
-    // If the target is NOT lazy, it might have getter/setters on length that
-    // throws and we also need to throw.
-    selfHandle->flags_.lazyObject = 1;
-  } else {
-    if (initializeLengthAndName_RJS(selfHandle, runtime, target, argCount) ==
-        ExecutionStatus::EXCEPTION) {
-      return ExecutionStatus::EXCEPTION;
-    }
+  if (initializeLengthAndName_RJS(selfHandle, runtime, target, argCount) ==
+      ExecutionStatus::EXCEPTION) {
+    return ExecutionStatus::EXCEPTION;
   }
   return selfHandle.getHermesValue();
 }
@@ -825,15 +808,15 @@ const CallableVTable NativeFunction::vt{
             cellSize<NativeFunction>(),
             nullptr,
             nullptr,
-            nullptr,
             nullptr
 #ifdef HERMES_MEMORY_INSTRUMENTATION
             ,
-            VTable::HeapSnapshotMetadata {
-              HeapSnapshot::NodeType::Closure,
-                  NativeFunction::_snapshotNameImpl,
-                  NativeFunction::_snapshotAddEdgesImpl, nullptr, nullptr
-            }
+            VTable::HeapSnapshotMetadata{
+                HeapSnapshot::NodeType::Closure,
+                NativeFunction::_snapshotNameImpl,
+                NativeFunction::_snapshotAddEdgesImpl,
+                nullptr,
+                nullptr}
 #endif
             ),
         NativeFunction::_getOwnIndexedRangeImpl,
@@ -1000,15 +983,15 @@ const CallableVTable NativeConstructor::vt{
             cellSize<NativeConstructor>(),
             nullptr,
             nullptr,
-            nullptr,
             nullptr
 #ifdef HERMES_MEMORY_INSTRUMENTATION
             ,
-            VTable::HeapSnapshotMetadata {
-              HeapSnapshot::NodeType::Closure,
-                  NativeConstructor::_snapshotNameImpl,
-                  NativeConstructor::_snapshotAddEdgesImpl, nullptr, nullptr
-            }
+            VTable::HeapSnapshotMetadata{
+                HeapSnapshot::NodeType::Closure,
+                NativeConstructor::_snapshotNameImpl,
+                NativeConstructor::_snapshotAddEdgesImpl,
+                nullptr,
+                nullptr}
 #endif
             ),
         NativeConstructor::_getOwnIndexedRangeImpl,
@@ -1055,15 +1038,15 @@ const CallableVTable JSFunction::vt{
             cellSize<JSFunction>(),
             nullptr,
             nullptr,
-            nullptr,
             nullptr
 #ifdef HERMES_MEMORY_INSTRUMENTATION
             ,
-            VTable::HeapSnapshotMetadata {
-              HeapSnapshot::NodeType::Closure, JSFunction::_snapshotNameImpl,
-                  JSFunction::_snapshotAddEdgesImpl, nullptr,
-                  JSFunction::_snapshotAddLocationsImpl
-            }
+            VTable::HeapSnapshotMetadata{
+                HeapSnapshot::NodeType::Closure,
+                JSFunction::_snapshotNameImpl,
+                JSFunction::_snapshotAddEdgesImpl,
+                nullptr,
+                JSFunction::_snapshotAddLocationsImpl}
 #endif
             ),
         JSFunction::_getOwnIndexedRangeImpl,
@@ -1175,15 +1158,15 @@ const CallableVTable JSAsyncFunction::vt{
             cellSize<JSAsyncFunction>(),
             nullptr,
             nullptr,
-            nullptr,
             nullptr
 #ifdef HERMES_MEMORY_INSTRUMENTATION
             ,
-            VTable::HeapSnapshotMetadata {
-              HeapSnapshot::NodeType::Closure,
-                  JSAsyncFunction::_snapshotNameImpl,
-                  JSAsyncFunction::_snapshotAddEdgesImpl, nullptr, nullptr
-            }
+            VTable::HeapSnapshotMetadata{
+                HeapSnapshot::NodeType::Closure,
+                JSAsyncFunction::_snapshotNameImpl,
+                JSAsyncFunction::_snapshotAddEdgesImpl,
+                nullptr,
+                nullptr}
 #endif
             ),
         JSAsyncFunction::_getOwnIndexedRangeImpl,
@@ -1232,15 +1215,15 @@ const CallableVTable JSGeneratorFunction::vt{
             cellSize<JSGeneratorFunction>(),
             nullptr,
             nullptr,
-            nullptr,
             nullptr
 #ifdef HERMES_MEMORY_INSTRUMENTATION
             ,
-            VTable::HeapSnapshotMetadata {
-              HeapSnapshot::NodeType::Closure,
-                  JSGeneratorFunction::_snapshotNameImpl,
-                  JSGeneratorFunction::_snapshotAddEdgesImpl, nullptr, nullptr
-            }
+            VTable::HeapSnapshotMetadata{
+                HeapSnapshot::NodeType::Closure,
+                JSGeneratorFunction::_snapshotNameImpl,
+                JSGeneratorFunction::_snapshotAddEdgesImpl,
+                nullptr,
+                nullptr}
 #endif
             ),
         JSGeneratorFunction::_getOwnIndexedRangeImpl,
@@ -1289,16 +1272,15 @@ const CallableVTable GeneratorInnerFunction::vt{
             cellSize<GeneratorInnerFunction>(),
             nullptr,
             nullptr,
-            nullptr,
             nullptr
 #ifdef HERMES_MEMORY_INSTRUMENTATION
             ,
-            VTable::HeapSnapshotMetadata {
-              HeapSnapshot::NodeType::Closure,
-                  GeneratorInnerFunction::_snapshotNameImpl,
-                  GeneratorInnerFunction::_snapshotAddEdgesImpl, nullptr,
-                  nullptr
-            }
+            VTable::HeapSnapshotMetadata{
+                HeapSnapshot::NodeType::Closure,
+                GeneratorInnerFunction::_snapshotNameImpl,
+                GeneratorInnerFunction::_snapshotAddEdgesImpl,
+                nullptr,
+                nullptr}
 #endif
             ),
         GeneratorInnerFunction::_getOwnIndexedRangeImpl,

@@ -7,7 +7,6 @@
 
 // RUN: %hermes --target=HBC -dump-lir -O %s | %FileCheckOrRegen %s --match-full-lines --check-prefix=IRGEN
 
-// LowerNumericProperties should handle AllocObjectLiteral.
 function emitAllocObjectLiteral(func) {
   return {a: 1, b: 2, c: 3, d: 4, 5: 5, '6': 6};
 }
@@ -91,7 +90,7 @@ function accessorObjectLiteral(func) {
 // IRGEN-NEXT:%BB0:
 // IRGEN-NEXT:  %0 = HBCAllocObjectFromBufferInst 4 : number, "a" : string, 10 : number, "c" : string, "hello" : string, "d" : string, null : null
 // IRGEN-NEXT:  %1 = HBCAllocObjectFromBufferInst 2 : number, 1 : number, 100 : number, 2 : number, 200 : number
-// IRGEN-NEXT:  %2 = StoreOwnPropertyInst %1 : object, %0 : object, 42 : number, true : boolean
+// IRGEN-NEXT:  %2 = StoreNewOwnPropertyInst %1 : object, %0 : object, 42 : number, true : boolean
 // IRGEN-NEXT:  %3 = ReturnInst %0 : object
 // IRGEN-NEXT:function_end
 

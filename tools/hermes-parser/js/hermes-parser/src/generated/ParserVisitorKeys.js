@@ -17,7 +17,7 @@
 
 // lint directives to let us do some basic validation of generated files
 /* eslint no-undef: 'error', no-unused-vars: ['error', {vars: "local"}], no-redeclare: 'error' */
-/* global $NonMaybeType, Partial, $ReadOnly, $ReadOnlyArray */
+/* global $NonMaybeType, Partial, $ReadOnly, $ReadOnlyArray, $FlowFixMe */
 
 'use strict';
 
@@ -42,6 +42,13 @@ export const HERMES_AST_VISITOR_KEYS = {
     typeParameters: 'Node',
     returnType: 'Node',
     predicate: 'Node',
+  },
+  AsConstExpression: {
+    expression: 'Node',
+  },
+  AsExpression: {
+    expression: 'Node',
+    typeAnnotation: 'Node',
   },
   AssignmentExpression: {
     left: 'Node',
@@ -177,6 +184,9 @@ export const HERMES_AST_VISITOR_KEYS = {
     id: 'Node',
     predicate: 'Node',
   },
+  DeclareHook: {
+    id: 'Node',
+  },
   DeclareInterface: {
     id: 'Node',
     typeParameters: 'Node',
@@ -189,6 +199,10 @@ export const HERMES_AST_VISITOR_KEYS = {
   },
   DeclareModuleExports: {
     typeAnnotation: 'Node',
+  },
+  DeclareNamespace: {
+    id: 'Node',
+    body: 'Node',
   },
   DeclareOpaqueType: {
     id: 'Node',
@@ -210,6 +224,13 @@ export const HERMES_AST_VISITOR_KEYS = {
   },
   EmptyStatement: {},
   EmptyTypeAnnotation: {},
+  EnumBigIntBody: {
+    members: 'NodeList',
+  },
+  EnumBigIntMember: {
+    id: 'Node',
+    init: 'Node',
+  },
   EnumBooleanBody: {
     members: 'NodeList',
   },
@@ -306,6 +327,19 @@ export const HERMES_AST_VISITOR_KEYS = {
   },
   GenericTypeAnnotation: {
     id: 'Node',
+    typeParameters: 'Node',
+  },
+  HookDeclaration: {
+    id: 'Node',
+    params: 'NodeList',
+    body: 'Node',
+    typeParameters: 'Node',
+    returnType: 'Node',
+  },
+  HookTypeAnnotation: {
+    params: 'NodeList',
+    returnType: 'Node',
+    rest: 'Node',
     typeParameters: 'Node',
   },
   Identifier: {
@@ -419,6 +453,63 @@ export const HERMES_AST_VISITOR_KEYS = {
     left: 'Node',
     right: 'Node',
   },
+  MatchArrayPattern: {
+    elements: 'NodeList',
+    rest: 'Node',
+  },
+  MatchAsPattern: {
+    pattern: 'Node',
+    target: 'Node',
+  },
+  MatchBindingPattern: {
+    id: 'Node',
+  },
+  MatchExpression: {
+    argument: 'Node',
+    cases: 'NodeList',
+  },
+  MatchExpressionCase: {
+    pattern: 'Node',
+    body: 'Node',
+    guard: 'Node',
+  },
+  MatchIdentifierPattern: {
+    id: 'Node',
+  },
+  MatchLiteralPattern: {
+    literal: 'Node',
+  },
+  MatchMemberPattern: {
+    base: 'Node',
+    property: 'Node',
+  },
+  MatchObjectPattern: {
+    properties: 'NodeList',
+    rest: 'Node',
+  },
+  MatchObjectPatternProperty: {
+    key: 'Node',
+    pattern: 'Node',
+  },
+  MatchOrPattern: {
+    patterns: 'NodeList',
+  },
+  MatchRestPattern: {
+    argument: 'Node',
+  },
+  MatchStatement: {
+    argument: 'Node',
+    cases: 'NodeList',
+  },
+  MatchStatementCase: {
+    pattern: 'Node',
+    body: 'Node',
+    guard: 'Node',
+  },
+  MatchUnaryPattern: {
+    argument: 'Node',
+  },
+  MatchWildcardPattern: {},
   MemberExpression: {
     object: 'Node',
     property: 'Node',
@@ -530,6 +621,9 @@ export const HERMES_AST_VISITOR_KEYS = {
   SpreadElement: {
     argument: 'Node',
   },
+  StaticBlock: {
+    body: 'NodeList',
+  },
   StringLiteral: {},
   StringLiteralTypeAnnotation: {},
   StringTypeAnnotation: {},
@@ -588,6 +682,10 @@ export const HERMES_AST_VISITOR_KEYS = {
   },
   TypeofTypeAnnotation: {
     argument: 'Node',
+    typeArguments: 'Node',
+  },
+  TypeOperator: {
+    typeAnnotation: 'Node',
   },
   TypeParameter: {
     bound: 'Node',
@@ -678,5 +776,8 @@ export const HERMES_AST_VISITOR_KEYS = {
   OptionalMemberExpression: {
     object: 'Node',
     property: 'Node',
+  },
+  ExportNamespaceSpecifier: {
+    exported: 'Node',
   },
 };

@@ -13,8 +13,10 @@
 import type {CatchClauseDefinition} from './CatchClauseDefinition';
 import type {ClassNameDefinition} from './ClassNameDefinition';
 import type {ComponentNameDefinition} from './ComponentNameDefinition';
+import type {NamespaceNameDefinition} from './NamespaceNameDefinition';
 import type {EnumDefinition} from './EnumDefinition';
 import type {FunctionNameDefinition} from './FunctionNameDefinition';
+import type {HookNameDefinition} from './HookNameDefinition';
 import type {ImplicitGlobalVariableDefinition} from './ImplicitGlobalVariableDefinition';
 import type {ImportBindingDefinition} from './ImportBindingDefinition';
 import type {ParameterDefinition} from './ParameterDefinition';
@@ -27,8 +29,10 @@ type Definition =
   | ClassNameDefinition
   | FunctionNameDefinition
   | ComponentNameDefinition
+  | HookNameDefinition
   | ImplicitGlobalVariableDefinition
   | ImportBindingDefinition
+  | NamespaceNameDefinition
   | ParameterDefinition
   | EnumDefinition
   | TypeDefinition

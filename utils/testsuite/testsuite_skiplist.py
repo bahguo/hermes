@@ -29,6 +29,7 @@ SKIP_LIST = [
     "test262/test/language/white-space/mongolian-vowel-separator.js",
     "test262/test/language/literals/regexp/mongolian-vowel-separator.js",
     "test262/test/language/literals/string/mongolian-vowel-separator.js",
+    "esprima/test_fixtures/expression/primary/keyword/invalid-escaped-if.js",
     "esprima/test_fixtures/ES6/identifier/estimated.js",
     "esprima/test_fixtures/ES6/identifier/weierstrass.js",
     "esprima/test_fixtures/ES6/identifier/invalid_function_await.module.js",
@@ -323,6 +324,9 @@ SKIP_LIST = [
     "mjsunit/harmony/async-debug-caught-exception-cases1.js",
     "mjsunit/harmony/async-debug-caught-exception-cases2.js",
     "mjsunit/harmony/async-debug-caught-exception-cases3.js",
+    # Reflect.setPrototypeOf isn't supposed to throw on failure TODO(T158542351)
+    "mjsunit/es6/reflect-set-prototype-of.js",
+    "test262/test/built-ins/Object/prototype/setPrototypeOf-with-different-values.js",
     # async function missing errors: TODO(T80014951)
     "test262/test/language/statements/async-function/escaped-async.js",
     "test262/test/language/statements/async-function/early-errors-declaration-formals-body-duplicate.js",
@@ -1088,8 +1092,6 @@ SKIP_LIST = [
     "test262/test/intl402/BigInt/prototype/toLocaleString/returns-same-results-as-NumberFormat.js",
     "test262/test/intl402/BigInt/prototype/toLocaleString/throws-same-exceptions-as-NumberFormat.js",
     "test262/test/intl402/Collator/subclassing.js",
-    "test262/test/intl402/Collator/unicode-ext-value-collation.js",
-    "test262/test/intl402/Collator/ignore-invalid-unicode-ext-values.js",
     "test262/test/intl402/Collator/proto-from-ctor-realm.js",
     "test262/test/intl402/Collator/prototype/resolvedOptions/order.js",
     "test262/test/intl402/String/prototype/toLocaleLowerCase/special_casing_Lithuanian.js",
@@ -1129,6 +1131,10 @@ SKIP_LIST = [
     "test262/test/intl402/DateTimeFormat/prototype/format/proleptic-gregorian-calendar.js",
     "test262/test/intl402/DateTimeFormat/prototype/formatRange",
     "test262/test/intl402/DateTimeFormat/prototype/formatRangeToParts",
+    "test262/test/intl402/DateTimeFormat/prototype/resolvedOptions/offset-timezone-basic.js",
+    "test262/test/intl402/DateTimeFormat/prototype/resolvedOptions/offset-timezone-change.js",
+    "test262/test/intl402/DateTimeFormat/prototype/resolvedOptions/hourCycle-default.js",
+    "test262/test/intl402/DateTimeFormat/prototype/format/offset-timezone-gmt-same.js",
     "test262/test/intl402/Date/prototype/throws-same-exceptions-as-DateTimeFormat.js",
     "test262/test/intl402/NumberFormat/prototype/formaToParts",
     "test262/test/intl402/NumberFormat/subclassing.js",
@@ -1168,6 +1174,8 @@ SKIP_LIST = [
     "test262/test/intl402/NumberFormat/prototype/format/notation-compact-de-DE.js",
     "test262/test/intl402/NumberFormat/prototype/format/signDisplay-currency-zh-TW.js",
     "test262/test/intl402/NumberFormat/prototype/formatToParts",
+    "test262/test/intl402/NumberFormat/throws-for-minimumFractionDigits-over-limit.js",
+    "test262/test/intl402/NumberFormat/throws-for-maximumFractionDigits-over-limit.js",
     # Unicode 13.0
     "test262/test/language/identifiers/part-unicode-13.0.0-escaped.js",
     "test262/test/language/identifiers/part-unicode-13.0.0.js",
@@ -1175,6 +1183,100 @@ SKIP_LIST = [
     "test262/test/language/identifiers/part-unicode-5.2.0.js",
     "test262/test/language/identifiers/start-unicode-13.0.0-escaped.js",
     "test262/test/language/identifiers/start-unicode-13.0.0.js",
+    # Unicode 15.0
+    "test262/test/language/identifiers/part-unicode-15.0.0-escaped.js",
+    "test262/test/language/identifiers/part-unicode-15.0.0.js",
+    "test262/test/language/identifiers/start-unicode-15.0.0.js",
+    "test262/test/language/identifiers/start-unicode-15.0.0-escaped.js",
+    # Literals with unicode
+    "test262/test/language/literals/boolean/true-with-unicode.js",
+    "test262/test/language/literals/null/null-with-unicode.js",
+    "test262/test/language/literals/boolean/false-with-unicode.js",
+    # annex B language
+    "test262/test/annexB/language/comments/single-line-html-close-first-line-1.js",
+    "test262/test/annexB/language/comments/single-line-html-close-first-line-3.js",
+    "test262/test/annexB/language/comments/single-line-html-close-first-line-2.js",
+    "test262/test/annexB/language/global-code/script-decl-lex-collision.js",
+    # Array: new ES2023 change array by copy methods
+    "test262/test/built-ins/Array/prototype/with/no-get-replaced-index.js",
+    "test262/test/built-ins/Array/prototype/with/length-increased-while-iterating.js",
+    "test262/test/built-ins/Array/prototype/with/length-decreased-while-iterating.js",
+    "test262/test/built-ins/Array/prototype/with/holes-not-preserved.js",
+    "test262/test/built-ins/Array/prototype/toSpliced/elements-read-in-order.js",
+    "test262/test/built-ins/Array/prototype/toSpliced/length-increased-while-iterating.js",
+    "test262/test/built-ins/Array/prototype/toSpliced/length-decreased-while-iterating.js",
+    "test262/test/built-ins/Array/prototype/toSpliced/length-clamped-to-2pow53minus1.js",
+    "test262/test/built-ins/Array/prototype/toSpliced/holes-not-preserved.js",
+    "test262/test/built-ins/Array/prototype/toSpliced/mutate-while-iterating.js",
+    "test262/test/built-ins/Array/prototype/toSpliced/length-exceeding-array-length-limit.js",
+    "test262/test/built-ins/Array/prototype/toSorted/not-a-constructor.js",
+    "test262/test/built-ins/Array/prototype/toSorted/comparefn-stop-after-error.js",
+    "test262/test/built-ins/Array/prototype/toSorted/immutable.js",
+    "test262/test/built-ins/Array/prototype/toSorted/length-increased-while-iterating.js",
+    "test262/test/built-ins/Array/prototype/toSorted/comparefn-called-after-get-elements.js",
+    "test262/test/built-ins/Array/prototype/toSorted/length-casted-to-zero.js",
+    "test262/test/built-ins/Array/prototype/toSorted/zero-or-one-element.js",
+    "test262/test/built-ins/Array/prototype/toSorted/length-decreased-while-iterating.js",
+    "test262/test/built-ins/Array/prototype/toSorted/ignores-species.js",
+    "test262/test/built-ins/Array/prototype/toSorted/frozen-this-value.js",
+    "test262/test/built-ins/Array/prototype/toSorted/holes-not-preserved.js",
+    "test262/test/built-ins/Array/prototype/toSorted/length-tolength.js",
+    "test262/test/built-ins/Array/prototype/toSorted/length-exceeding-array-length-limit.js",
+    "test262/test/built-ins/Array/prototype/toSorted/this-value-boolean.js",
+    "test262/test/built-ins/Array/prototype/toSorted/metadata/length.js",
+    "test262/test/built-ins/Array/prototype/toSorted/metadata/name.js",
+    "test262/test/built-ins/Array/prototype/toSorted/metadata/property-descriptor.js",
+    "test262/test/built-ins/Array/prototype/toReversed/length-increased-while-iterating.js",
+    "test262/test/built-ins/Array/prototype/toReversed/get-descending-order.js",
+    "test262/test/built-ins/Array/prototype/toReversed/length-decreased-while-iterating.js",
+    "test262/test/built-ins/Array/prototype/toReversed/holes-not-preserved.js",
+    "test262/test/built-ins/Array/prototype/toReversed/length-exceeding-array-length-limit.js",
+    # TypedArray: new ES2023 change array by copy methods
+    "test262/test/built-ins/TypedArray/prototype/with/not-a-constructor.js",
+    "test262/test/built-ins/TypedArray/prototype/with/index-negative.js",
+    "test262/test/built-ins/TypedArray/prototype/with/length-property-ignored.js",
+    "test262/test/built-ins/TypedArray/prototype/with/immutable.js",
+    "test262/test/built-ins/TypedArray/prototype/with/ignores-species.js",
+    "test262/test/built-ins/TypedArray/prototype/with/index-smaller-than-minus-length.js",
+    "test262/test/built-ins/TypedArray/prototype/with/early-type-coercion.js",
+    "test262/test/built-ins/TypedArray/prototype/with/index-bigger-or-eq-than-length.js",
+    "test262/test/built-ins/TypedArray/prototype/with/BigInt/early-type-coercion-bigint.js",
+    "test262/test/built-ins/TypedArray/prototype/with/index-casted-to-number.js",
+    "test262/test/built-ins/TypedArray/prototype/with/metadata/length.js",
+    "test262/test/built-ins/TypedArray/prototype/with/metadata/name.js",
+    "test262/test/built-ins/TypedArray/prototype/with/metadata/property-descriptor.js",
+    "test262/test/built-ins/TypedArray/prototype/sort/sort-tonumber.js",
+    "test262/test/built-ins/TypedArray/prototype/toSorted/not-a-constructor.js",
+    "test262/test/built-ins/TypedArray/prototype/toSorted/length-property-ignored.js",
+    "test262/test/built-ins/TypedArray/prototype/toSorted/immutable.js",
+    "test262/test/built-ins/TypedArray/prototype/toSorted/ignores-species.js",
+    "test262/test/built-ins/TypedArray/prototype/toSorted/metadata/length.js",
+    "test262/test/built-ins/TypedArray/prototype/toSorted/metadata/name.js",
+    "test262/test/built-ins/TypedArray/prototype/toSorted/metadata/property-descriptor.js",
+    "test262/test/built-ins/TypedArray/prototype/toReversed/not-a-constructor.js",
+    "test262/test/built-ins/TypedArray/prototype/toReversed/length-property-ignored.js",
+    "test262/test/built-ins/TypedArray/prototype/toReversed/ignores-species.js",
+    "test262/test/built-ins/TypedArray/prototype/toReversed/immutable.js",
+    "test262/test/built-ins/TypedArray/prototype/toReversed/metadata/length.js",
+    "test262/test/built-ins/TypedArray/prototype/toReversed/metadata/name.js",
+    "test262/test/built-ins/TypedArray/prototype/toReversed/metadata/property-descriptor.js",
+    # RegExp: Symbol.match and Symbol.replace broken tests
+    "test262/test/built-ins/RegExp/prototype/Symbol.match/flags-tostring-error.js",
+    "test262/test/built-ins/RegExp/prototype/Symbol.match/get-flags-err.js",
+    "test262/test/built-ins/RegExp/prototype/Symbol.match/get-unicode-error.js",
+    "test262/test/built-ins/RegExp/prototype/Symbol.replace/flags-tostring-error.js",
+    "test262/test/built-ins/RegExp/prototype/Symbol.replace/get-flags-err.js",
+    "test262/test/built-ins/RegExp/prototype/Symbol.replace/get-unicode-error.js",
+    # BigInt constructor-coercion
+    "test262/test/built-ins/BigInt/constructor-coercion.js",
+    # RegExp unicode_full_case_folding
+    "test262/test/built-ins/RegExp/unicode_full_case_folding.js",
+    # Array define-own-prop-length-error
+    "test262/test/built-ins/Array/length/define-own-prop-length-error.js",
+    # Object.prototype.toString symbol-tag-promise-builtin
+    "test262/test/built-ins/Object/prototype/toString/symbol-tag-promise-builtin.js",
+    # TypedArray array-arg-targetbuffer-detached-on-get-src-value-no-throw
+    "test262/test/built-ins/TypedArray/prototype/set/array-arg-targetbuffer-detached-on-get-src-value-no-throw.js",
     # Stack overflow catching.
     "mjsunit/regress/regress-1132.js",
     "mjsunit/regress/regress-446389.js",
@@ -1188,6 +1290,8 @@ SKIP_LIST = [
     "mjsunit/regress/regress-prepare-break-while-recompile.js",
     # Fails when ASAN/UBSAN are limiting the max native stack depth.
     "mjsunit/compiler/regress-lazy-deopt.js",
+    # Error stack getter is on Error.prototype in Hermes.
+    "mjsunit/regress/regress-3404.js",
     # Uncategorized mjsunit failures
     "mjsunit/accessor-map-sharing.js",
     "mjsunit/accessors-on-global-object.js",
@@ -1774,6 +1878,16 @@ SKIP_LIST = [
     ### Failing Flow tests ###
     # Legacy octal literals in string literals
     "flow/types/string_literal_invalid/migrated_0000.js",
+    # Negative literals with whitespaces
+    "flow/types/bigint_literal/hex_negative_whitespace.js",
+    "flow/types/bigint_literal/normal_negative_whitespace.js",
+    "flow/types/bigint_literal/binary_negative_whitespace.js",
+    "flow/types/bigint_literal/octal_negative_whitespace.js",
+    "flow/types/number_literal/octal_negative_whitespace.js",
+    "flow/types/number_literal/binary_negative_whitespace.js",
+    "flow/types/number_literal/normal_int_negative_whitespace.js",
+    "flow/types/number_literal/hex_negative_whitespace.js",
+    "flow/types/number_literal/sci_negative_whitespace.js",
     # JSX HTML entities
     "flow/JSX/html_entity_at_start_of_child.js",
     # Destructuring identifier validation
@@ -1784,6 +1898,9 @@ SKIP_LIST = [
     "flow/class_properties/migrated_0003.js",
     "flow/class_properties/migrated_0008.js",
     "flow/class_properties/migrated_0026.js",
+    "flow/class_properties/static_annotated_no_types.js",
+    "flow/class_properties/static_with_params_no_types.js",
+    "flow/components/component_error.js",
     "flow/enums/declare-enum-option-off.js",
     "flow/nullish_coalescing/missing-plugin.js",
     "flow/optional_chaining/missing-plugin.js",
@@ -1798,8 +1915,6 @@ SKIP_LIST = [
     "flow/class_properties/super-call-in-arrow.js",
     "flow/enums/enum-duplicate-member-name.js",
     "flow/enums/enum-invalid-member-name.js",
-    "flow/types/declare_module_exports_invalid/migrated_0001.js",
-    "flow/types/declare_module_invalid/migrated_0002.js",
     "flow/types/parameter_defaults/migrated_0023.js",
     "flow/uninitialized_const_bindings/migrated_0000.js",
     "flow/uninitialized_const_bindings_invalid/migrated_0000.js",
@@ -1827,11 +1942,48 @@ SKIP_LIST = [
     # Potentially invalid JSX that is inconsistent across implementations.
     "flow/JSX/invalid_unpaired_gt.js",
     "flow/JSX/invalid_unpaired_rcurly.js",
+    # TODO: component syntax, hook syntax and render type failures
+    "types/render_types/renders_maybe.js",
     # Import attributes
     "flow/dynamic_import/migrated_0005.js",
+    # Tuples
+    "flow/types/tuples/variance.js",
+    "flow/types/tuples/labeled.js",
+    # TODO comment attachment
+    "flow/match/expression-no-final-case-separator.js",
+    "flow/match/statement.js",
+    # Type parameter tests
+    # TODO in/out modifiers not supported
+    "flow/types/type_params/class_const_params.js",
+    # TODO comment attachment differences in function_const_params.js
+    "flow/types/type_params/function_const_params.js",
+    # BigInt
+    "flow/bigint/valid-hex.js",
+    "flow/bigint/valid-octal-new.js",
+    "flow/bigint/numeric-separators.js",
+    "flow/bigint/valid-binary.js",
     ### Failing Flow tests end ###
 ]
 
+# Tests to skip on specific platforms. Keys are sys.platform values.
+PLATFORM_SKIP_LISTS = {
+    "linux": [
+        # Intl features that are not yet supported on Linux.
+        "test262/test/built-ins/String/prototype/toLocaleLowerCase",
+        "test262/test/built-ins/String/prototype/toLocaleUpperCase",
+        "test262/test/intl402/Number/prototype/toLocaleString",
+        "test262/test/intl402/NumberFormat",
+        "test262/test/intl402/String/prototype/toLocaleLowerCase",
+        "test262/test/intl402/String/prototype/toLocaleUpperCase",
+        "test262/test/intl402/DateTimeFormat/prototype/formatToParts",
+    ],
+    "darwin": [
+        # Intl implementation issues on Apple.
+        "test262/test/intl402/Collator/ignore-invalid-unicode-ext-values.js",
+        "test262/test/intl402/Collator/unicode-ext-value-collation.js",
+        "test262/test/intl402/DateTimeFormat/prototype/formatToParts/offset-timezone-correct.js",
+    ],
+}
 
 # Tests that we want to skip only when testing lazy compilation.
 LAZY_SKIP_LIST = [
@@ -1873,6 +2025,9 @@ PERMANENT_SKIP_LIST = [
     "mjsunit/regress/regress-585775.js",
     "test262/test/annexB/built-ins/RegExp/prototype/compile/",
     "test262/test/annexB/built-ins/RegExp/prototype/flags/order-after-compile",
+    # Tests long regexes that exceed our regex stack limit
+    "mjsunit/regress/regress-231.js",
+    "mjsunit/third_party/regexp-pcre/regexp-pcre.js",
     # annexB
     "mjsunit/es6/string-html.js",
     "mjsunit/function-names.js",
@@ -2042,8 +2197,7 @@ UNSUPPORTED_FEATURES = [
     "json-superset",
     "let",
     "new.target",
-    "regexp-match-indices",
-    "regexp-unicode-property-escapes",
+    "regexp-v-flag",
     "resizable-arraybuffer",
     "string-trimming",
     "super",
@@ -2051,7 +2205,25 @@ UNSUPPORTED_FEATURES = [
     "tail-call-optimization",
     "Temporal",
     "u180e",
+    "iterator-helpers",
+    "set-methods",
+    "regexp-v-flag",
+    "Intl.NumberFormat-v3",
+    "Intl.DurationFormat",
+    "regexp-duplicate-named-groups",
+    "arraybuffer-transfer",
+    "Array.fromAsync",
+    "String.prototype.toWellFormed",
+    "String.prototype.isWellFormed",
+    "array-grouping",
+    "symbols-as-weakmap-keys",
 ]
+
+# Mapping of Hermes features to test262 features, for use in dynamic feature
+# skipping.
+CONFIGURABLE_HERMES_FEATURES = {
+    "Unicode RegExp Property Escapes": "regexp-unicode-property-escapes",
+}
 
 PERMANENT_UNSUPPORTED_FEATURES = [
     "Atomics",

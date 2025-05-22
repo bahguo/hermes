@@ -194,11 +194,9 @@ struct Interval {
 
   /// \return true if this interval intersects \p other.
   bool intersects(const Interval &other) const {
-    for (auto &s : segments_) {
-      if (other.intersects(s))
-        return true;
-    }
-    return false;
+    Segment a(start(), end());
+    Segment b(other.start(), other.end());
+    return a.intersects(b);
   }
 
   /// Join the range of the other interval into the current interval.
@@ -386,9 +384,9 @@ class RegisterAllocator {
   /// predecessor blocks.
   void lowerPhis(ArrayRef<BasicBlock *> order);
 
-  /// Allocate the registers for the instructions in the function. The order of
-  /// the block needs to match the order which we'll use for instruction
-  /// selection.
+  /// Allocate the registers for the instructions in the function. The blocks
+  /// must be in reverse-post-order, and must match the order which we'll use
+  /// for instruction selection.
   void allocate(ArrayRef<BasicBlock *> order);
 
   /// Reserves consecutive registers that will be manually managed by the user.

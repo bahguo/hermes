@@ -18,21 +18,25 @@ import type {
   DeclareExportDeclaration,
   DeclareComponent,
   DeclareFunction,
+  DeclareHook,
   DeclareInterface,
   DeclareModule,
   DeclareModuleExports,
+  DeclareNamespace,
   DeclareOpaqueType,
   DeclareTypeAlias,
   DeclareVariable,
   ESNode,
   FunctionTypeAnnotation,
   FunctionTypeParam,
+  HookTypeAnnotation,
   GenericTypeAnnotation,
   Identifier,
   InterfaceDeclaration,
   ObjectTypeIndexer,
   ObjectTypeInternalSlot,
   ObjectTypeProperty,
+  ObjectTypeMappedTypeProperty,
   OpaqueType,
   QualifiedTypeIdentifier,
   QualifiedTypeofIdentifier,
@@ -47,6 +51,8 @@ import {
   ComponentNameDefinition,
   ClassNameDefinition,
   FunctionNameDefinition,
+  HookNameDefinition,
+  NamespaceNameDefinition,
   TypeDefinition,
   TypeParameterDefinition,
   VariableDefinition,
@@ -92,6 +98,7 @@ class TypeVisitor extends Visitor {
       | DeclareClass
       | DeclareComponent
       | FunctionTypeAnnotation
+      | HookTypeAnnotation
       | TypeAlias
       | OpaqueType
       | InterfaceDeclaration,
@@ -233,6 +240,15 @@ class TypeVisitor extends Visitor {
     this.visit(node.predicate);
   }
 
+  DeclareHook(node: DeclareHook): void {
+    this._referencer
+      .currentScope()
+      .defineIdentifier(node.id, new HookNameDefinition(node.id, node));
+
+    // the function type is stored as an annotation on the ID
+    this.visit(node.id.typeAnnotation);
+  }
+
   DeclareInterface(node: DeclareInterface): void {
     this.visitInterfaceDeclaration(node);
   }
@@ -244,6 +260,16 @@ class TypeVisitor extends Visitor {
     // definition that can be referenced.
     this.visit(node.body);
 
+    this._referencer.close(node);
+  }
+
+  DeclareNamespace(node: DeclareNamespace): void {
+    this._referencer
+      .currentScope()
+      .defineIdentifier(node.id, new NamespaceNameDefinition(node.id, node));
+
+    this._referencer.scopeManager.nestDeclareNamespaceScope(node);
+    this.visit(node.body);
     this._referencer.close(node);
   }
 
@@ -282,6 +308,19 @@ class TypeVisitor extends Visitor {
     // e.g. 'foo' is a parameter name in a type that should not be treated like a
     // definition or reference in `type T = (foo: string) => void`.
     this.visit(node.typeAnnotation);
+  }
+
+  HookTypeAnnotation(node: HookTypeAnnotation): void {
+    const hasTypeScope = this.maybeCreateTypeScope(node);
+
+    this.visit(node.typeParameters);
+    this.visitArray(node.params);
+    this.visit(node.returnType);
+    this.visit(node.rest);
+
+    if (hasTypeScope) {
+      this._referencer.close(node);
+    }
   }
 
   ComponentTypeAnnotation(node: ComponentTypeAnnotation): void {
@@ -343,6 +382,20 @@ class TypeVisitor extends Visitor {
     this.visit(node.variance);
   }
 
+  ObjectTypeMappedTypeProperty(node: ObjectTypeMappedTypeProperty): void {
+    this._referencer.scopeManager.nestTypeScope(node);
+
+    // This will create a type defintion for the `key` property.
+    this.visit(node.keyTparam);
+
+    // Visit remaining properties.
+    this.visit(node.propType);
+    this.visit(node.sourceType);
+    this.visit(node.variance);
+
+    this._referencer.close(node);
+  }
+
   OpaqueType(node: OpaqueType): void {
     this.visitOpaqueType(node);
   }
@@ -393,6 +446,7 @@ class TypeVisitor extends Visitor {
 
     // typeof annotations can only reference values!
     this._referencer.currentScope().referenceValue(identifier);
+    this.visit(node.typeArguments);
   }
 
   TypeParameter(node: TypeParameter): void {

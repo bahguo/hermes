@@ -16,6 +16,21 @@
 namespace hermes {
 namespace vm {
 
+static std::string getSuspendFrameName(
+    const SamplingProfiler::SuspendFrameInfo &info) {
+  const char *suspendFrameName;
+  if (info.kind == SamplingProfiler::SuspendFrameInfo::Kind::GC) {
+    suspendFrameName = info.gcFrame->c_str();
+  } else if (info.kind == SamplingProfiler::SuspendFrameInfo::Kind::Debugger) {
+    suspendFrameName = "debugger";
+  } else if (info.kind == SamplingProfiler::SuspendFrameInfo::Kind::Multiple) {
+    suspendFrameName = "multiple";
+  } else {
+    assert(false && "suspendFrame name should never be null");
+  }
+  return std::string("[") + suspendFrameName + "]";
+}
+
 std::shared_ptr<ChromeStackFrameNode> ChromeStackFrameNode::findOrAddNewChild(
     ChromeFrameIdGenerator &frameIdGen,
     const SamplingProfiler::StackFrame &target) {
@@ -249,8 +264,7 @@ void ChromeTraceSerializer::serializeStackFrames(JSONEmitter &json) const {
       }
 
       case SamplingProfiler::StackFrame::FrameKind::SuspendFrame: {
-        assert(frame.suspendFrame && "suspendFrame name should never be null");
-        frameName = "[" + *frame.suspendFrame + "]";
+        frameName = getSuspendFrameName(frame.suspendFrame);
         categoryName = "Metadata";
         break;
       }
@@ -376,7 +390,7 @@ static void emitProfileNode(
 
   json.openDict();
   json.emitKeyValue("functionName", name);
-  json.emitKeyValue("scriptId", scriptId);
+  json.emitKeyValue("scriptId", std::to_string(scriptId));
   json.emitKeyValue("url", url);
   json.emitKeyValue("lineNumber", lineNumber);
   json.emitKeyValue("columnNumber", columnNumber);
@@ -415,8 +429,7 @@ void ProfilerProfileSerializer::processNode(
       RuntimeModule *module = frame.jsFrame.module;
       hbc::BCProvider *bcProvider = module->getBytecode();
 
-      llvh::raw_string_ostream os(name);
-      os << getJSFunctionName(bcProvider, frame.jsFrame.functionId);
+      name = getJSFunctionName(bcProvider, frame.jsFrame.functionId);
 
       url = "unknown";
       OptValue<hbc::DebugSourceLocation> sourceLocOpt = getSourceLocation(
@@ -428,8 +441,6 @@ void ProfilerProfileSerializer::processNode(
 
         lineNumber = sourceLocOpt.getValue().line;
         columnNumber = sourceLocOpt.getValue().column;
-        // format: frame_name(file:line:column)
-        os << "(" << url << ":" << lineNumber << ":" << columnNumber << ")";
       }
       break;
     }
@@ -449,8 +460,7 @@ void ProfilerProfileSerializer::processNode(
     }
 
     case SamplingProfiler::StackFrame::FrameKind::SuspendFrame: {
-      assert(frame.suspendFrame && "suspendFrame should never be nullptr");
-      name = "[" + *frame.suspendFrame + "]";
+      name = getSuspendFrameName(frame.suspendFrame);
       url = "[suspended]";
       break;
     }

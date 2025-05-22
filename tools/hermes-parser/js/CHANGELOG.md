@@ -1,3 +1,231 @@
+## 0.26.0
+
+### `hermes-parser`
+* Support for class static blocks.
+* Forbid `await`/`yield`/`arguments` in class field inits.
+* Support for `const` type parameters in Flow (also in `hermes-estree`, `prettier-plugin-hermes-parser`).
+* Experimental support for Flow pattern matching (also in `hermes-estree`, `hermes-eslint`, `hermes-transform`, `prettier-plugin-hermes-parser`).
+
+## 0.25.1
+
+### `babel-plugin-syntax-hermes-parser`
+* Add `parseLangTypes` option to enable skipping plugin for non-Flow files
+
+## 0.25.0
+
+### `flow-api-translator`
+* Support `React.RefSetter` translation and remove support for incorrect `React.Ref` translation.
+
+## 0.24.0
+
+### `hermes-parser`
+* Allow trailing comma after rest param in component declaration
+* Allow trailing comma after rest param for component types
+* Don't allow newline after async in method proper
+
+## 0.23.1
+
+### `hermes-transform`
+* Fixed an issue that caused an error when trying to print a `Program` with an empty `body` array and a docblock comment.
+
+### `flow-api-translator`
+* Added support for `as` expressions in parent classes like `class A extends (Foo as Bar)`.
+
+## 0.23.0
+
+### `hermes-estree`
+* Adopted one-sided type guards in predicate functions (`implies x is T`)
+
+### `hermes-parser`
+* Added `reactRuntimeTarget` config option (defaulting to `'18'`) that when set to `'19'` no longer adds the forwardRef wrapper as React 19 treats refs on function components as regular props.
+
+### `hermes-transform`
+* Allow `context.modifyInPlace` API to modify the Program node. Previously, this relied upon `context.replaceNode` internally which meant modifications to the Program node itself were not possible.
+
+### `flow-api-translator`
+* Added support for parsing member expressions in parent classes like `class A extends Foo.Bar` and type casts such as `class A extends (Foo: Bar)`.
+* Added support for the `StringPrefix` and `StringSuffix` Flow types, turning them into a TS string literal type. For example, `StringPrefix<foo>` is turned into `foo${string}` and `StringPrefix<foo, T> is turned into foo${T}`.
+* Added support for inexact tuple types in TS by spreading an array of unknown (mixed) to the end of the array. This will allow for additional arbitrary elements in the tuple.
+
+## 0.22.0
+
+### `hermes-eslint`
+* Fixed analysis of mapped types' scopes
+
+### `prettier-plugin-hermes-parser`
+* Added support for printing inexact tuple type annotations `[...]`
+* Added support for printing Flow Enums with bigint members
+* Added support for printing the one-sided variant of type guards `implies x is T`
+
+## 0.21.1
+
+### `flow-api-translator`
+* Added support for translating `React.AbstractComponent` with 3 type arguments into TS. The third type argument containing render type information will be ignored.
+
+## 0.21.0
+
+### `hermes-parser`
+* Added support for `as const` expressions
+* Added support for inexact tuple type annotations `[...]`
+* Added support for parsing Flow Enums with bigint members
+* Added support for a one-sided variant to type guards `implies x is T`
+
+## 0.20.1
+
+### `hermes-eslint`
+* Scope analysis support for typeof nodes with type arguments
+
+### `babel-plugin-syntax-hermes-parser`
+* Support for use in beta releases of Babel 8
+
+## 0.20.0
+
+### `prettier-plugin-hermes-parser`
+* Added support for newer unreleased Flow syntax
+
+## 0.19.2
+
+### `hermes-parser`
+
+* Bug fixes in preparation of new feature rollout
+
+## 0.19.1
+
+### `hermes-eslint`
+* Scope analysis support for `DeclareNamespace` nodes
+
+## 0.19.0
+
+### `flow-api-translator`
+* `$ReadOnlyMap` and `$ReadOnlySet` have been updated to expect two type arguments instead of one, aligning with the flow API.
+
+## 0.18.2
+
+### `hermes-parser`
+
+* Retain more type annotations when lowering to babel AST.
+
+## 0.18.1
+
+### `flow-api-translator`
+
+* Update codegen to output type guards instead of `%checks`
+* handle Literal properties in flow-to-flowdef conversion
+
+### `babel-plugin-syntax-hermes-parser`
+
+* Do not apply the plugin for TS files
+
+## 0.18.0
+
+### `hermes-eslint`
+* Include JSX closing elements in scope/bindings references
+
+## 0.17.1
+
+### `hermes-estree`
+* Fix type of `typeAnnotation` property of `AsExpression`
+
+### `hermes-parser`
+
+### `hermes-eslint`
+* Ensure types cast to in `AsExpression`s are considered as referenced
+
+### `hermes-transform`
+* Fix an issue with preserving comments of optional chaining nodes
+
+### `flow-api-translator`
+* Add support for `AsExpression`s in Flow to Flow def
+
+### `prettier-plugin-hermes-parser`
+* Patch prettier#15514, fixing edge case of `AsExpression` printing
+
+### `babel-plugin-syntax-hermes-parser`
+
+## 0.17.0
+
+### `hermes-estree`
+
+### `hermes-parser`
+* Parse `AsExpressions` in Flow.
+* Fix `ObjectTypeMappedTypeProperty` babel lowering to output valid code.
+
+### `hermes-eslint`
+
+### `hermes-transform`
+
+### `flow-api-translator`
+
+### `prettier-plugin-hermes-parser`
+* Update internal version of prettier to version `3.0.3`.
+
+### `babel-plugin-syntax-hermes-parser`
+
+## 0.16.0
+
+### `hermes-estree`
+* Improve types of `DestructuringObjectPropertyWithShorthandStaticName`, `ExportNamedDeclarationWithSpecifiers`, `ObjectTypeAnnotation` and `BigIntLiteral`.
+
+### `hermes-parser`
+* Major refactor of hermes parser babel support infra to allow safer/easier transforms and more closely match babel output.
+* Correct `FunctionExpression` property range.
+* Correct `DeclareEnum` babel output to correctly wrap the `TypeAnnotationType` in a `TypeAnnotation`.
+* Upgrade to latest `emscripten` (3.1.44 from 3.1.3).
+
+### `hermes-eslint`
+
+### `hermes-transform`
+
+### `flow-api-translator`
+* Correctly handle converting identifier references via `typeof identifier`.
+* Support conditional types, type guards, `infer`, mapped object types, `$ReadOnlyMap` and `$ReadOnlySet`.
+
+### `prettier-plugin-hermes-parser`
+* Update internal version of prettier to version `3.0.2`.
+
+### `babel-plugin-syntax-hermes-parser`
+
+## 0.15.1
+
+### `hermes-estree`
+
+### `hermes-parser`
+* Ensure `ExportNamespaceSpecifier` has location information.
+
+### `hermes-eslint`
+
+### `hermes-transform`
+* Update `prettier-plugin-hermes-parser` peer dependency version.
+
+### `flow-api-translator`
+
+### `prettier-plugin-hermes-parser`
+
+### `babel-plugin-syntax-hermes-parser`
+
+## 0.15.0
+
+### `hermes-estree`
+
+### `hermes-parser`
+* Correctly convert `MethodDefinition` to `ClassPrivateMethod` when `babel: true` is set and the key is `PrivateName`.
+
+### `hermes-eslint`
+
+### `hermes-transform`
+* Ensure the prettier `print` cache key is unique even if there is more than one instance of `hermes-transform`.
+* Add peer dependency on `prettier-plugin-hermes-parser`.
+
+### `flow-api-translator`
+* Remove support for now removed `$Shape` and `$Partial` Flow utilities.
+* Add support for tuple labeled and spread elements.
+* Support translating `React.ElementProps` from Flow to TS.
+* Support `ExportAllDeclaration` in TS translation.
+
+### `prettier-plugin-hermes-parser`
+
+### `babel-plugin-syntax-hermes-parser`
+
 ## 0.14.0
 
 ### `hermes-estree`

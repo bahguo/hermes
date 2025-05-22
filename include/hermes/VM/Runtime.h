@@ -12,6 +12,7 @@
 #include "hermes/Public/RuntimeConfig.h"
 #include "hermes/Support/Compiler.h"
 #include "hermes/Support/ErrorHandling.h"
+#include "hermes/Support/StackOverflowGuard.h"
 #include "hermes/VM/AllocOptions.h"
 #include "hermes/VM/AllocResult.h"
 #include "hermes/VM/BasicBlockExecutionInfo.h"
@@ -55,6 +56,14 @@
 #include <type_traits>
 #include <vector>
 
+#ifdef __EMSCRIPTEN__
+/// In Emscripten builds, allow the integrator to provide a callback to
+/// synchronously notify the VM that a timeout has occurred. This should be
+/// checked whenever we check for timeouts.
+extern "C" bool test_wasm_host_timeout();
+extern "C" bool test_and_clear_wasm_host_timeout();
+#endif
+
 namespace hermes {
 // Forward declaration.
 class JSONEmitter;
@@ -77,13 +86,12 @@ class Environment;
 class Interpreter;
 class JSObject;
 class PropertyAccessor;
-struct RuntimeCommonStorage;
+struct JSLibStorage;
 struct RuntimeOffsets;
 class ScopedNativeDepthReducer;
 class ScopedNativeDepthTracker;
 class ScopedNativeCallFrame;
 class CodeCoverageProfiler;
-struct MockedEnvironment;
 struct StackTracesTree;
 
 #if HERMESVM_SAMPLING_PROFILER_AVAILABLE
@@ -225,10 +233,6 @@ class HERMES_EMPTY_BASES Runtime : public PointerBase,
   void addCustomSnapshotFunction(
       std::function<void(HeapSnapshot &)> nodes,
       std::function<void(HeapSnapshot &)> edges);
-
-  /// Make the runtime read from \p env to replay its environment-dependent
-  /// behavior.
-  void setMockedEnvironment(const MockedEnvironment &env);
 
   /// Runs the given UTF-8 \p code in a new RuntimeModule as top-level code.
   /// Note that if compileFlags.lazy is set, the code string will be copied.
@@ -544,6 +548,15 @@ class HERMES_EMPTY_BASES Runtime : public PointerBase,
   /// helper method intended to be called from a debugger.
   void dumpCallFrames();
 
+  /// \return true if the native stack is overflowing the bounds of the
+  ///   current thread. Updates the stack bounds if the thread which Runtime
+  ///   is executing on changes. Will use simple depth counter if Runtime
+  ///   has been compiled without \c HERMES_CHECK_NATIVE_STACK.
+  inline bool isStackOverflowing();
+
+  /// \return the overflow guard to be used in the regex engine.
+  inline StackOverflowGuard getOverflowGuardForRegex();
+
   /// \return `thrownValue`.
   HermesValue getThrownValue() const {
     return thrownValue_;
@@ -582,9 +595,9 @@ class HERMES_EMPTY_BASES Runtime : public PointerBase,
   void printArrayCensus(llvh::raw_ostream &os);
 #endif
 
-  /// Returns the common storage object.
-  RuntimeCommonStorage *getCommonStorage() {
-    return commonStorage_.get();
+  /// Returns the storage object for JSLib.
+  JSLibStorage *getJSLibStorage() {
+    return jsLibStorage_.get();
   }
 
   const GCExecTrace &getGCExecTrace() {
@@ -780,6 +793,8 @@ class HERMES_EMPTY_BASES Runtime : public PointerBase,
   /// Whether to enable block scoping in eval().
   const bool enableBlockScopingInEval : 1;
 
+  const SynthTraceMode traceMode;
+
 #ifdef HERMESVM_PROFILER_OPCODE
   /// Track the frequency of each opcode in the interpreter.
   uint32_t opcodeExecuteFrequency[256] = {0};
@@ -861,6 +876,14 @@ class HERMES_EMPTY_BASES Runtime : public PointerBase,
     return hasES6Proxy_;
   }
 
+  bool hasES6Class() const {
+#ifndef HERMES_FACEBOOK_BUILD
+    return hasES6Class_;
+#else
+    return false;
+#endif
+  }
+
   bool hasIntl() const {
     return hasIntl_;
   }
@@ -876,8 +899,6 @@ class HERMES_EMPTY_BASES Runtime : public PointerBase,
   bool builtinsAreFrozen() const {
     return builtinsFrozen_;
   }
-
-  bool shouldStabilizeInstructionCount();
 
   experiments::VMExperimentFlags getVMExperimentFlags() const {
     return vmExperimentFlags_;
@@ -926,6 +947,8 @@ class HERMES_EMPTY_BASES Runtime : public PointerBase,
 #elif defined(_MSC_VER) && defined(HERMES_SLOW_DEBUG)
       // On windows in dbg mode builds, stack frames are bigger, and a depth
       // limit of 384 results in a C++ stack overflow in testing.
+      128
+#elif defined(_MSC_VER) && defined(__clang__) && !defined(NDEBUG)
       128
 #elif defined(_MSC_VER) && !NDEBUG
       192
@@ -989,6 +1012,11 @@ class HERMES_EMPTY_BASES Runtime : public PointerBase,
   /// method informs the GC of all runtime weak roots.
   void markWeakRoots(WeakRootAcceptor &weakAcceptor, bool markLongLived)
       override;
+
+  /// Iterate over runtimeModuleList_ and mark each RuntimeModule's WeakRoot to
+  /// its owning Domain. If the domain is dead, destroy the RuntimeModule and
+  /// remove it from runtimeModuleList_.
+  void markDomainRefInRuntimeModules(WeakRootAcceptor &weakRootAcceptor);
 
   /// See documentation on \c GCBase::GCCallbacks.
   void markRootsForCompleteMarking(
@@ -1068,6 +1096,10 @@ class HERMES_EMPTY_BASES Runtime : public PointerBase,
 
   /// Enumerate all public native builtin methods, and invoke the callback on
   /// each method.
+  /// If the properties on the global object which are supposed to contain the
+  /// public native builtin methods no longer are objects, throws TypeError
+  /// instead of calling the callback.
+  /// e.g. if globalThis.Object is not an object, it'll throw.
   ExecutionStatus forEachPublicNativeBuiltin(
       const std::function<ForEachPublicNativeBuiltinCallback> &callback);
 
@@ -1126,6 +1158,9 @@ class HERMES_EMPTY_BASES Runtime : public PointerBase,
 
   /// Set to true if we should enable ES6 Proxy.
   const bool hasES6Proxy_;
+
+  /// Set to true if we should enable ES6 Class
+  const bool hasES6Class_;
 
   /// Set to true if we should enable ECMA-402 Intl APIs.
   const bool hasIntl_;
@@ -1189,7 +1224,7 @@ class HERMES_EMPTY_BASES Runtime : public PointerBase,
   SymbolRegistry symbolRegistry_{};
 
   /// Shared location to place native objects required by JSLib
-  std::shared_ptr<RuntimeCommonStorage> commonStorage_;
+  std::unique_ptr<JSLibStorage> jsLibStorage_;
 
   /// Empty code block that returns undefined.
   /// Owned by specialCodeBlockRuntimeModule_.
@@ -1205,7 +1240,9 @@ class HERMES_EMPTY_BASES Runtime : public PointerBase,
   RuntimeModule *specialCodeBlockRuntimeModule_{};
 
   /// A list of all active runtime modules. Each \c RuntimeModule adds itself
-  /// on construction and removes itself on destruction.
+  /// on construction and removes itself on destruction. When marking weak
+  /// roots, scan each RuntimeModule and destroy it if the owning Domain is
+  /// dead (each RuntimeModule has a WeakRoot to its owning Domain).
   RuntimeModuleList runtimeModuleList_{};
 
   /// Optional record of the last few executed bytecodes in case of a crash.
@@ -1227,9 +1264,9 @@ class HERMES_EMPTY_BASES Runtime : public PointerBase,
   /// including \c stackPointer_.
   StackFramePtr currentFrame_{nullptr};
 
-  /// Current depth of native call frames, including recursive interpreter
-  /// calls.
-  unsigned nativeCallFrameDepth_{0};
+  /// Used to guard against stack overflow. Either uses real stack checking or
+  /// call depth counter checking.
+  StackOverflowGuard overflowGuard_;
 
   /// rootClazzes_[i] is a PinnedHermesValue pointing to a hidden class with
   /// its i first slots pre-reserved.
@@ -1333,7 +1370,11 @@ class HERMES_EMPTY_BASES Runtime : public PointerBase,
 
   /// \return whether any async break is requested or not.
   bool hasAsyncBreak() const {
-    return asyncBreakRequestFlag_.load(std::memory_order_relaxed) != 0;
+    return asyncBreakRequestFlag_.load(std::memory_order_relaxed) != 0
+#ifdef __EMSCRIPTEN__
+        || test_wasm_host_timeout()
+#endif
+        ;
   }
 
   /// \return whether async break was requested or not for \p reasonBits. Clear
@@ -1357,8 +1398,12 @@ class HERMES_EMPTY_BASES Runtime : public PointerBase,
   /// \return whether timeout async break was requested or not. Clear the
   /// timeout request bit afterward.
   bool testAndClearTimeoutAsyncBreakRequest() {
-    return testAndClearAsyncBreakRequest(
-        (uint8_t)AsyncBreakReasonBits::Timeout);
+    return testAndClearAsyncBreakRequest((uint8_t)AsyncBreakReasonBits::Timeout)
+#ifdef __EMSCRIPTEN__
+        // Avoid the short-circuiting logic to make sure we clear both.
+        | test_and_clear_wasm_host_timeout()
+#endif
+        ;
   }
 
   /// Request the interpreter loop to take an asynchronous break
@@ -1549,19 +1594,26 @@ static_assert(
 /// An RAII class for automatically tracking the native call frame depth.
 class ScopedNativeDepthTracker {
   Runtime &runtime_;
+  /// Whether the stack overflowed when the tracker was constructed.
+  bool overflowed_;
 
  public:
   explicit ScopedNativeDepthTracker(Runtime &runtime) : runtime_(runtime) {
-    ++runtime.nativeCallFrameDepth_;
+    (void)runtime_;
+#ifndef HERMES_CHECK_NATIVE_STACK
+    ++runtime.overflowGuard_.callDepth;
+#endif
+    overflowed_ = runtime.isStackOverflowing();
   }
   ~ScopedNativeDepthTracker() {
-    --runtime_.nativeCallFrameDepth_;
+#ifndef HERMES_CHECK_NATIVE_STACK
+    --runtime_.overflowGuard_.callDepth;
+#endif
   }
 
   /// \return whether we overflowed the native call frame depth.
   bool overflowed() const {
-    return runtime_.nativeCallFrameDepth_ >
-        Runtime::MAX_NATIVE_CALL_FRAME_DEPTH;
+    return overflowed_;
   }
 };
 
@@ -1571,22 +1623,57 @@ class ScopedNativeDepthTracker {
 /// cascade of exceptions could occur, overflowing the C++ stack.
 class ScopedNativeDepthReducer {
   Runtime &runtime_;
+#ifdef HERMES_CHECK_NATIVE_STACK
+  unsigned nativeStackGapOld;
+  // This is empirically good enough.
+  static constexpr int kReducedNativeStackGap =
+#if LLVM_ADDRESS_SANITIZER_BUILD
+      128 * 1024;
+#else
+      32 * 1024;
+#endif
+#else
   bool undo = false;
   // This is empirically good enough.
   static constexpr int kDepthAdjustment = 3;
+#endif
 
  public:
+#ifdef HERMES_CHECK_NATIVE_STACK
+  explicit ScopedNativeDepthReducer(Runtime &runtime)
+      : runtime_(runtime),
+        nativeStackGapOld(runtime.overflowGuard_.nativeStackGap) {
+    // Temporarily reduce the gap to use that headroom for gathering the error.
+    // If overflow is detected, the recomputation of the stack bounds will
+    // result in no gap for the duration of the ScopedNativeDepthReducer's
+    // lifetime.
+    runtime_.overflowGuard_.nativeStackGap = kReducedNativeStackGap;
+  }
+  ~ScopedNativeDepthReducer() {
+    assert(
+        runtime_.overflowGuard_.nativeStackGap == kReducedNativeStackGap &&
+        "ScopedNativeDepthReducer gap was overridden");
+    runtime_.overflowGuard_.nativeStackGap = nativeStackGapOld;
+    // Force the bounds to be recomputed the next time.
+    runtime_.overflowGuard_.clearStackBounds();
+  }
+#else
   explicit ScopedNativeDepthReducer(Runtime &runtime) : runtime_(runtime) {
-    if (runtime.nativeCallFrameDepth_ >= kDepthAdjustment) {
-      runtime.nativeCallFrameDepth_ -= kDepthAdjustment;
+    if (runtime.overflowGuard_.callDepth >= kDepthAdjustment) {
+      runtime.overflowGuard_.callDepth -= kDepthAdjustment;
       undo = true;
     }
   }
   ~ScopedNativeDepthReducer() {
     if (undo) {
-      runtime_.nativeCallFrameDepth_ += kDepthAdjustment;
+      runtime_.overflowGuard_.callDepth += kDepthAdjustment;
     }
   }
+#endif
+
+ private:
+  /// Unused function for static asserts that use internal information.
+  static void staticAsserts();
 };
 
 /// A ScopedNativeCallFrame is an RAII class that manipulates the Runtime
@@ -1623,7 +1710,7 @@ class ScopedNativeCallFrame {
       Runtime &runtime,
       uint32_t registersNeeded) {
     return runtime.checkAvailableStack(registersNeeded) &&
-        runtime.nativeCallFrameDepth_ <= Runtime::MAX_NATIVE_CALL_FRAME_DEPTH;
+        !runtime.isStackOverflowing();
   }
 
  public:
@@ -1644,7 +1731,9 @@ class ScopedNativeCallFrame {
       HermesValue newTarget,
       HermesValue thisArg)
       : runtime_(runtime), savedSP_(runtime.getStackPointer()) {
-    runtime.nativeCallFrameDepth_++;
+#ifndef HERMES_CHECK_NATIVE_STACK
+    runtime.overflowGuard_.callDepth++;
+#endif
     uint32_t registersNeeded =
         StackFrameLayout::callerOutgoingRegisters(argCount);
     overflowed_ = !runtimeCanAllocateFrame(runtime, registersNeeded);
@@ -1698,7 +1787,9 @@ class ScopedNativeCallFrame {
   ~ScopedNativeCallFrame() {
     // Note that we unconditionally increment the native call frame depth and
     // save the SP to avoid branching in the dtor.
-    runtime_.nativeCallFrameDepth_--;
+#ifndef HERMES_CHECK_NATIVE_STACK
+    runtime_.overflowGuard_.callDepth--;
+#endif
     runtime_.popToSavedStackPointer(savedSP_);
 #ifndef NDEBUG
     // Clear the frame to detect use-after-free.
@@ -2027,6 +2118,25 @@ inline llvh::iterator_range<ConstStackFrameIterator> Runtime::getStackFrames()
       ConstStackFrameIterator{currentFrame_},
       ConstStackFrameIterator{registerStackStart_}};
 };
+
+inline StackOverflowGuard Runtime::getOverflowGuardForRegex() {
+  StackOverflowGuard copy = overflowGuard_;
+#ifndef HERMES_CHECK_NATIVE_STACK
+  // We should take into account the approximate difference in sizes between the
+  // stack size of the interpreter vs the regex executor. The max call depth in
+  // use here was calculated using call stack sizes of the interpreter. Since
+  // the executor has a smaller stack size, it should be allowed to recurse more
+  // than the interpreter could have. So we multiply the max allowed depth by
+  // some number larger than 1.
+  constexpr uint32_t kRegexMaxDepthMult = 5;
+  copy.maxCallDepth *= kRegexMaxDepthMult;
+#endif
+  return copy;
+}
+
+inline bool Runtime::isStackOverflowing() {
+  return overflowGuard_.isOverflowing();
+}
 
 inline ExecutionStatus Runtime::setThrownValue(HermesValue value) {
   thrownValue_ = value;

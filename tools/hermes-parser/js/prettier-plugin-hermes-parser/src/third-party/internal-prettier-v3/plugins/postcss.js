@@ -13,14 +13,14 @@
       typeof globalThis !== "undefined"
         ? globalThis
         : typeof global !== "undefined"
-        ? global
-        : typeof self !== "undefined"
-        ? self
-        : this || {};
+          ? global
+          : typeof self !== "undefined"
+            ? self
+            : this || {};
     root.prettierPlugins = root.prettierPlugins || {};
     root.prettierPlugins.postcss = interopModuleDefault();
   }
-})(function() {
+})(function () {
   "use strict";
   var __create = Object.create;
   var __defProp = Object.defineProperty;
@@ -116,7 +116,7 @@
         const start = " *";
         const tail = " */";
         const keys = Object.keys(pragmas);
-        const printedObject = keys.map((key) => printKeyValues(key, pragmas[key])).reduce((arr, next) => arr.concat(next), []).map((keyValue) => `${start} ${keyValue}${line2}`).join("");
+        const printedObject = keys.flatMap((key) => printKeyValues(key, pragmas[key])).map((keyValue) => `${start} ${keyValue}${line2}`).join("");
         if (!comments) {
           if (keys.length === 0) {
             return "";
@@ -170,7 +170,7 @@
       "use strict";
       var pico = require_picocolors_browser();
       var terminalHighlight = require_terminal_highlight();
-      var CssSyntaxError = class extends Error {
+      var CssSyntaxError = class _CssSyntaxError extends Error {
         constructor(message, line2, column, source, file, plugin) {
           super(message);
           this.name = "CssSyntaxError";
@@ -197,7 +197,7 @@
           }
           this.setMessage();
           if (Error.captureStackTrace) {
-            Error.captureStackTrace(this, CssSyntaxError);
+            Error.captureStackTrace(this, _CssSyntaxError);
           }
         }
         setMessage() {
@@ -224,7 +224,7 @@
           let maxWidth = String(end).length;
           let mark, aside;
           if (color) {
-            let { bold, red, gray } = pico.createColors(true);
+            let { bold, gray, red } = pico.createColors(true);
             mark = (text) => bold(red(text));
             aside = (text) => gray(text);
           } else {
@@ -258,17 +258,17 @@
     "node_modules/postcss/lib/stringifier.js"(exports, module) {
       "use strict";
       var DEFAULT_RAW = {
-        colon: ": ",
-        indent: "    ",
-        beforeDecl: "\n",
-        beforeRule: "\n",
-        beforeOpen: " ",
+        after: "\n",
         beforeClose: "\n",
         beforeComment: "\n",
-        after: "\n",
-        emptyBody: "",
+        beforeDecl: "\n",
+        beforeOpen: " ",
+        beforeRule: "\n",
+        colon: ": ",
         commentLeft: " ",
         commentRight: " ",
+        emptyBody: "",
+        indent: "    ",
         semicolon: false
       };
       function capitalize(str) {
@@ -277,43 +277,6 @@
       var Stringifier = class {
         constructor(builder) {
           this.builder = builder;
-        }
-        stringify(node, semicolon) {
-          if (!this[node.type]) {
-            throw new Error(
-              "Unknown AST node type " + node.type + ". Maybe you need to change PostCSS stringifier."
-            );
-          }
-          this[node.type](node, semicolon);
-        }
-        document(node) {
-          this.body(node);
-        }
-        root(node) {
-          this.body(node);
-          if (node.raws.after)
-            this.builder(node.raws.after);
-        }
-        comment(node) {
-          let left = this.raw(node, "left", "commentLeft");
-          let right = this.raw(node, "right", "commentRight");
-          this.builder("/*" + left + node.text + right + "*/", node);
-        }
-        decl(node, semicolon) {
-          let between = this.raw(node, "between", "colon");
-          let string = node.prop + between + this.rawValue(node, "value");
-          if (node.important) {
-            string += node.raws.important || " !important";
-          }
-          if (semicolon)
-            string += ";";
-          this.builder(string, node);
-        }
-        rule(node) {
-          this.block(node, this.rawValue(node, "selector"));
-          if (node.raws.ownSemicolon) {
-            this.builder(node.raws.ownSemicolon, node, "end");
-          }
         }
         atrule(node, semicolon) {
           let name = "@" + node.name;
@@ -329,6 +292,46 @@
             let end = (node.raws.between || "") + (semicolon ? ";" : "");
             this.builder(name + params + end, node);
           }
+        }
+        beforeAfter(node, detect) {
+          let value;
+          if (node.type === "decl") {
+            value = this.raw(node, null, "beforeDecl");
+          } else if (node.type === "comment") {
+            value = this.raw(node, null, "beforeComment");
+          } else if (detect === "before") {
+            value = this.raw(node, null, "beforeRule");
+          } else {
+            value = this.raw(node, null, "beforeClose");
+          }
+          let buf = node.parent;
+          let depth = 0;
+          while (buf && buf.type !== "root") {
+            depth += 1;
+            buf = buf.parent;
+          }
+          if (value.includes("\n")) {
+            let indent2 = this.raw(node, null, "indent");
+            if (indent2.length) {
+              for (let step = 0; step < depth; step++)
+                value += indent2;
+            }
+          }
+          return value;
+        }
+        block(node, start) {
+          let between = this.raw(node, "between", "beforeOpen");
+          this.builder(start + between + "{", node, "start");
+          let after;
+          if (node.nodes && node.nodes.length) {
+            this.body(node);
+            after = this.raw(node, "after");
+          } else {
+            after = this.raw(node, "after", "emptyBody");
+          }
+          if (after)
+            this.builder(after);
+          this.builder("}", node, "end");
         }
         body(node) {
           let last = node.nodes.length - 1;
@@ -346,19 +349,23 @@
             this.stringify(child, last !== i || semicolon);
           }
         }
-        block(node, start) {
-          let between = this.raw(node, "between", "beforeOpen");
-          this.builder(start + between + "{", node, "start");
-          let after;
-          if (node.nodes && node.nodes.length) {
-            this.body(node);
-            after = this.raw(node, "after");
-          } else {
-            after = this.raw(node, "after", "emptyBody");
+        comment(node) {
+          let left = this.raw(node, "left", "commentLeft");
+          let right = this.raw(node, "right", "commentRight");
+          this.builder("/*" + left + node.text + right + "*/", node);
+        }
+        decl(node, semicolon) {
+          let between = this.raw(node, "between", "colon");
+          let string = node.prop + between + this.rawValue(node, "value");
+          if (node.important) {
+            string += node.raws.important || " !important";
           }
-          if (after)
-            this.builder(after);
-          this.builder("}", node, "end");
+          if (semicolon)
+            string += ";";
+          this.builder(string, node);
+        }
+        document(node) {
+          this.body(node);
         }
         raw(node, own, detect) {
           let value;
@@ -405,43 +412,21 @@
           root.rawCache[detect] = value;
           return value;
         }
-        rawSemicolon(root) {
+        rawBeforeClose(root) {
           let value;
           root.walk((i) => {
-            if (i.nodes && i.nodes.length && i.last.type === "decl") {
-              value = i.raws.semicolon;
-              if (typeof value !== "undefined")
-                return false;
-            }
-          });
-          return value;
-        }
-        rawEmptyBody(root) {
-          let value;
-          root.walk((i) => {
-            if (i.nodes && i.nodes.length === 0) {
-              value = i.raws.after;
-              if (typeof value !== "undefined")
-                return false;
-            }
-          });
-          return value;
-        }
-        rawIndent(root) {
-          if (root.raws.indent)
-            return root.raws.indent;
-          let value;
-          root.walk((i) => {
-            let p = i.parent;
-            if (p && p !== root && p.parent && p.parent === root) {
-              if (typeof i.raws.before !== "undefined") {
-                let parts = i.raws.before.split("\n");
-                value = parts[parts.length - 1];
-                value = value.replace(/\S/g, "");
+            if (i.nodes && i.nodes.length > 0) {
+              if (typeof i.raws.after !== "undefined") {
+                value = i.raws.after;
+                if (value.includes("\n")) {
+                  value = value.replace(/[^\n]+$/, "");
+                }
                 return false;
               }
             }
           });
+          if (value)
+            value = value.replace(/\S/g, "");
           return value;
         }
         rawBeforeComment(root, node) {
@@ -480,6 +465,17 @@
           }
           return value;
         }
+        rawBeforeOpen(root) {
+          let value;
+          root.walk((i) => {
+            if (i.type !== "decl") {
+              value = i.raws.between;
+              if (typeof value !== "undefined")
+                return false;
+            }
+          });
+          return value;
+        }
         rawBeforeRule(root) {
           let value;
           root.walk((i) => {
@@ -497,34 +493,6 @@
             value = value.replace(/\S/g, "");
           return value;
         }
-        rawBeforeClose(root) {
-          let value;
-          root.walk((i) => {
-            if (i.nodes && i.nodes.length > 0) {
-              if (typeof i.raws.after !== "undefined") {
-                value = i.raws.after;
-                if (value.includes("\n")) {
-                  value = value.replace(/[^\n]+$/, "");
-                }
-                return false;
-              }
-            }
-          });
-          if (value)
-            value = value.replace(/\S/g, "");
-          return value;
-        }
-        rawBeforeOpen(root) {
-          let value;
-          root.walk((i) => {
-            if (i.type !== "decl") {
-              value = i.raws.between;
-              if (typeof value !== "undefined")
-                return false;
-            }
-          });
-          return value;
-        }
         rawColon(root) {
           let value;
           root.walkDecls((i) => {
@@ -535,30 +503,43 @@
           });
           return value;
         }
-        beforeAfter(node, detect) {
+        rawEmptyBody(root) {
           let value;
-          if (node.type === "decl") {
-            value = this.raw(node, null, "beforeDecl");
-          } else if (node.type === "comment") {
-            value = this.raw(node, null, "beforeComment");
-          } else if (detect === "before") {
-            value = this.raw(node, null, "beforeRule");
-          } else {
-            value = this.raw(node, null, "beforeClose");
-          }
-          let buf = node.parent;
-          let depth = 0;
-          while (buf && buf.type !== "root") {
-            depth += 1;
-            buf = buf.parent;
-          }
-          if (value.includes("\n")) {
-            let indent2 = this.raw(node, null, "indent");
-            if (indent2.length) {
-              for (let step = 0; step < depth; step++)
-                value += indent2;
+          root.walk((i) => {
+            if (i.nodes && i.nodes.length === 0) {
+              value = i.raws.after;
+              if (typeof value !== "undefined")
+                return false;
             }
-          }
+          });
+          return value;
+        }
+        rawIndent(root) {
+          if (root.raws.indent)
+            return root.raws.indent;
+          let value;
+          root.walk((i) => {
+            let p = i.parent;
+            if (p && p !== root && p.parent && p.parent === root) {
+              if (typeof i.raws.before !== "undefined") {
+                let parts = i.raws.before.split("\n");
+                value = parts[parts.length - 1];
+                value = value.replace(/\S/g, "");
+                return false;
+              }
+            }
+          });
+          return value;
+        }
+        rawSemicolon(root) {
+          let value;
+          root.walk((i) => {
+            if (i.nodes && i.nodes.length && i.last.type === "decl") {
+              value = i.raws.semicolon;
+              if (typeof value !== "undefined")
+                return false;
+            }
+          });
           return value;
         }
         rawValue(node, prop) {
@@ -568,6 +549,25 @@
             return raw.raw;
           }
           return value;
+        }
+        root(node) {
+          this.body(node);
+          if (node.raws.after)
+            this.builder(node.raws.after);
+        }
+        rule(node) {
+          this.block(node, this.rawValue(node, "selector"));
+          if (node.raws.ownSemicolon) {
+            this.builder(node.raws.ownSemicolon, node, "end");
+          }
+        }
+        stringify(node, semicolon) {
+          if (!this[node.type]) {
+            throw new Error(
+              "Unknown AST node type " + node.type + ". Maybe you need to change PostCSS stringifier."
+            );
+          }
+          this[node.type](node, semicolon);
         }
       };
       module.exports = Stringifier;
@@ -642,45 +642,36 @@
             }
           }
         }
-        error(message, opts = {}) {
-          if (this.source) {
-            let { start, end } = this.rangeBy(opts);
-            return this.source.input.error(
-              message,
-              { line: start.line, column: start.column },
-              { line: end.line, column: end.column },
-              opts
+        addToError(error) {
+          error.postcssNode = this;
+          if (error.stack && this.source && /\n\s{4}at /.test(error.stack)) {
+            let s = this.source;
+            error.stack = error.stack.replace(
+              /\n\s{4}at /,
+              `$&${s.input.from}:${s.start.line}:${s.start.column}$&`
             );
           }
-          return new CssSyntaxError(message);
+          return error;
         }
-        warn(result, text, opts) {
-          let data = { node: this };
-          for (let i in opts)
-            data[i] = opts[i];
-          return result.warn(text, data);
-        }
-        remove() {
-          if (this.parent) {
-            this.parent.removeChild(this);
-          }
-          this.parent = void 0;
+        after(add) {
+          this.parent.insertAfter(this, add);
           return this;
-        }
-        toString(stringifier = stringify) {
-          if (stringifier.stringify)
-            stringifier = stringifier.stringify;
-          let result = "";
-          stringifier(this, (i) => {
-            result += i;
-          });
-          return result;
         }
         assign(overrides = {}) {
           for (let name in overrides) {
             this[name] = overrides[name];
           }
           return this;
+        }
+        before(add) {
+          this.parent.insertBefore(this, add);
+          return this;
+        }
+        cleanRaws(keepBetween) {
+          delete this.raws.before;
+          delete this.raws.after;
+          if (!keepBetween)
+            delete this.raws.between;
         }
         clone(overrides = {}) {
           let cloned = cloneNode(this);
@@ -689,15 +680,152 @@
           }
           return cloned;
         }
+        cloneAfter(overrides = {}) {
+          let cloned = this.clone(overrides);
+          this.parent.insertAfter(this, cloned);
+          return cloned;
+        }
         cloneBefore(overrides = {}) {
           let cloned = this.clone(overrides);
           this.parent.insertBefore(this, cloned);
           return cloned;
         }
-        cloneAfter(overrides = {}) {
-          let cloned = this.clone(overrides);
-          this.parent.insertAfter(this, cloned);
-          return cloned;
+        error(message, opts = {}) {
+          if (this.source) {
+            let { end, start } = this.rangeBy(opts);
+            return this.source.input.error(
+              message,
+              { column: start.column, line: start.line },
+              { column: end.column, line: end.line },
+              opts
+            );
+          }
+          return new CssSyntaxError(message);
+        }
+        getProxyProcessor() {
+          return {
+            get(node, prop) {
+              if (prop === "proxyOf") {
+                return node;
+              } else if (prop === "root") {
+                return () => node.root().toProxy();
+              } else {
+                return node[prop];
+              }
+            },
+            set(node, prop, value) {
+              if (node[prop] === value)
+                return true;
+              node[prop] = value;
+              if (prop === "prop" || prop === "value" || prop === "name" || prop === "params" || prop === "important" || /* c8 ignore next */
+              prop === "text") {
+                node.markDirty();
+              }
+              return true;
+            }
+          };
+        }
+        markDirty() {
+          if (this[isClean]) {
+            this[isClean] = false;
+            let next = this;
+            while (next = next.parent) {
+              next[isClean] = false;
+            }
+          }
+        }
+        next() {
+          if (!this.parent)
+            return void 0;
+          let index = this.parent.index(this);
+          return this.parent.nodes[index + 1];
+        }
+        positionBy(opts, stringRepresentation) {
+          let pos = this.source.start;
+          if (opts.index) {
+            pos = this.positionInside(opts.index, stringRepresentation);
+          } else if (opts.word) {
+            stringRepresentation = this.toString();
+            let index = stringRepresentation.indexOf(opts.word);
+            if (index !== -1)
+              pos = this.positionInside(index, stringRepresentation);
+          }
+          return pos;
+        }
+        positionInside(index, stringRepresentation) {
+          let string = stringRepresentation || this.toString();
+          let column = this.source.start.column;
+          let line2 = this.source.start.line;
+          for (let i = 0; i < index; i++) {
+            if (string[i] === "\n") {
+              column = 1;
+              line2 += 1;
+            } else {
+              column += 1;
+            }
+          }
+          return { column, line: line2 };
+        }
+        prev() {
+          if (!this.parent)
+            return void 0;
+          let index = this.parent.index(this);
+          return this.parent.nodes[index - 1];
+        }
+        rangeBy(opts) {
+          let start = {
+            column: this.source.start.column,
+            line: this.source.start.line
+          };
+          let end = this.source.end ? {
+            column: this.source.end.column + 1,
+            line: this.source.end.line
+          } : {
+            column: start.column + 1,
+            line: start.line
+          };
+          if (opts.word) {
+            let stringRepresentation = this.toString();
+            let index = stringRepresentation.indexOf(opts.word);
+            if (index !== -1) {
+              start = this.positionInside(index, stringRepresentation);
+              end = this.positionInside(index + opts.word.length, stringRepresentation);
+            }
+          } else {
+            if (opts.start) {
+              start = {
+                column: opts.start.column,
+                line: opts.start.line
+              };
+            } else if (opts.index) {
+              start = this.positionInside(opts.index);
+            }
+            if (opts.end) {
+              end = {
+                column: opts.end.column,
+                line: opts.end.line
+              };
+            } else if (opts.endIndex) {
+              end = this.positionInside(opts.endIndex);
+            } else if (opts.index) {
+              end = this.positionInside(opts.index + 1);
+            }
+          }
+          if (end.line < start.line || end.line === start.line && end.column <= start.column) {
+            end = { column: start.column + 1, line: start.line };
+          }
+          return { end, start };
+        }
+        raw(prop, defaultType) {
+          let str = new Stringifier();
+          return str.raw(this, prop, defaultType);
+        }
+        remove() {
+          if (this.parent) {
+            this.parent.removeChild(this);
+          }
+          this.parent = void 0;
+          return this;
         }
         replaceWith(...nodes) {
           if (this.parent) {
@@ -719,42 +847,12 @@
           }
           return this;
         }
-        next() {
-          if (!this.parent)
-            return void 0;
-          let index = this.parent.index(this);
-          return this.parent.nodes[index + 1];
-        }
-        prev() {
-          if (!this.parent)
-            return void 0;
-          let index = this.parent.index(this);
-          return this.parent.nodes[index - 1];
-        }
-        before(add) {
-          this.parent.insertBefore(this, add);
-          return this;
-        }
-        after(add) {
-          this.parent.insertAfter(this, add);
-          return this;
-        }
         root() {
           let result = this;
           while (result.parent && result.parent.type !== "document") {
             result = result.parent;
           }
           return result;
-        }
-        raw(prop, defaultType) {
-          let str = new Stringifier();
-          return str.raw(this, prop, defaultType);
-        }
-        cleanRaws(keepBetween) {
-          delete this.raws.before;
-          delete this.raws.after;
-          if (!keepBetween)
-            delete this.raws.between;
         }
         toJSON(_, inputs) {
           let fixed = {};
@@ -786,9 +884,9 @@
                 inputsNextIndex++;
               }
               fixed[name] = {
+                end: value.end,
                 inputId,
-                start: value.start,
-                end: value.end
+                start: value.start
               };
             } else {
               fixed[name] = value;
@@ -799,122 +897,26 @@
           }
           return fixed;
         }
-        positionInside(index) {
-          let string = this.toString();
-          let column = this.source.start.column;
-          let line2 = this.source.start.line;
-          for (let i = 0; i < index; i++) {
-            if (string[i] === "\n") {
-              column = 1;
-              line2 += 1;
-            } else {
-              column += 1;
-            }
-          }
-          return { line: line2, column };
-        }
-        positionBy(opts) {
-          let pos = this.source.start;
-          if (opts.index) {
-            pos = this.positionInside(opts.index);
-          } else if (opts.word) {
-            let index = this.toString().indexOf(opts.word);
-            if (index !== -1)
-              pos = this.positionInside(index);
-          }
-          return pos;
-        }
-        rangeBy(opts) {
-          let start = {
-            line: this.source.start.line,
-            column: this.source.start.column
-          };
-          let end = this.source.end ? {
-            line: this.source.end.line,
-            column: this.source.end.column + 1
-          } : {
-            line: start.line,
-            column: start.column + 1
-          };
-          if (opts.word) {
-            let index = this.toString().indexOf(opts.word);
-            if (index !== -1) {
-              start = this.positionInside(index);
-              end = this.positionInside(index + opts.word.length);
-            }
-          } else {
-            if (opts.start) {
-              start = {
-                line: opts.start.line,
-                column: opts.start.column
-              };
-            } else if (opts.index) {
-              start = this.positionInside(opts.index);
-            }
-            if (opts.end) {
-              end = {
-                line: opts.end.line,
-                column: opts.end.column
-              };
-            } else if (opts.endIndex) {
-              end = this.positionInside(opts.endIndex);
-            } else if (opts.index) {
-              end = this.positionInside(opts.index + 1);
-            }
-          }
-          if (end.line < start.line || end.line === start.line && end.column <= start.column) {
-            end = { line: start.line, column: start.column + 1 };
-          }
-          return { start, end };
-        }
-        getProxyProcessor() {
-          return {
-            set(node, prop, value) {
-              if (node[prop] === value)
-                return true;
-              node[prop] = value;
-              if (prop === "prop" || prop === "value" || prop === "name" || prop === "params" || prop === "important" || /* c8 ignore next */
-              prop === "text") {
-                node.markDirty();
-              }
-              return true;
-            },
-            get(node, prop) {
-              if (prop === "proxyOf") {
-                return node;
-              } else if (prop === "root") {
-                return () => node.root().toProxy();
-              } else {
-                return node[prop];
-              }
-            }
-          };
-        }
         toProxy() {
           if (!this.proxyCache) {
             this.proxyCache = new Proxy(this, this.getProxyProcessor());
           }
           return this.proxyCache;
         }
-        addToError(error) {
-          error.postcssNode = this;
-          if (error.stack && this.source && /\n\s{4}at /.test(error.stack)) {
-            let s = this.source;
-            error.stack = error.stack.replace(
-              /\n\s{4}at /,
-              `$&${s.input.from}:${s.start.line}:${s.start.column}$&`
-            );
-          }
-          return error;
+        toString(stringifier = stringify) {
+          if (stringifier.stringify)
+            stringifier = stringifier.stringify;
+          let result = "";
+          stringifier(this, (i) => {
+            result += i;
+          });
+          return result;
         }
-        markDirty() {
-          if (this[isClean]) {
-            this[isClean] = false;
-            let next = this;
-            while (next = next.parent) {
-              next[isClean] = false;
-            }
-          }
+        warn(result, text, opts) {
+          let data = { node: this };
+          for (let i in opts)
+            data[i] = opts[i];
+          return result.warn(text, data);
         }
         get proxyOf() {
           return this;
@@ -991,11 +993,22 @@
           }
         }
       }
-      var Container = class extends Node {
-        push(child) {
-          child.parent = this;
-          this.proxyOf.nodes.push(child);
+      var Container = class _Container extends Node {
+        append(...children) {
+          for (let child of children) {
+            let nodes = this.normalize(child, this.last);
+            for (let node of nodes)
+              this.proxyOf.nodes.push(node);
+          }
+          this.markDirty();
           return this;
+        }
+        cleanRaws(keepBetween) {
+          super.cleanRaws(keepBetween);
+          if (this.nodes) {
+            for (let node of this.nodes)
+              node.cleanRaws(keepBetween);
+          }
         }
         each(callback) {
           if (!this.proxyOf.nodes)
@@ -1012,6 +1025,215 @@
           delete this.indexes[iterator];
           return result;
         }
+        every(condition) {
+          return this.nodes.every(condition);
+        }
+        getIterator() {
+          if (!this.lastEach)
+            this.lastEach = 0;
+          if (!this.indexes)
+            this.indexes = {};
+          this.lastEach += 1;
+          let iterator = this.lastEach;
+          this.indexes[iterator] = 0;
+          return iterator;
+        }
+        getProxyProcessor() {
+          return {
+            get(node, prop) {
+              if (prop === "proxyOf") {
+                return node;
+              } else if (!node[prop]) {
+                return node[prop];
+              } else if (prop === "each" || typeof prop === "string" && prop.startsWith("walk")) {
+                return (...args) => {
+                  return node[prop](
+                    ...args.map((i) => {
+                      if (typeof i === "function") {
+                        return (child, index) => i(child.toProxy(), index);
+                      } else {
+                        return i;
+                      }
+                    })
+                  );
+                };
+              } else if (prop === "every" || prop === "some") {
+                return (cb) => {
+                  return node[prop](
+                    (child, ...other) => cb(child.toProxy(), ...other)
+                  );
+                };
+              } else if (prop === "root") {
+                return () => node.root().toProxy();
+              } else if (prop === "nodes") {
+                return node.nodes.map((i) => i.toProxy());
+              } else if (prop === "first" || prop === "last") {
+                return node[prop].toProxy();
+              } else {
+                return node[prop];
+              }
+            },
+            set(node, prop, value) {
+              if (node[prop] === value)
+                return true;
+              node[prop] = value;
+              if (prop === "name" || prop === "params" || prop === "selector") {
+                node.markDirty();
+              }
+              return true;
+            }
+          };
+        }
+        index(child) {
+          if (typeof child === "number")
+            return child;
+          if (child.proxyOf)
+            child = child.proxyOf;
+          return this.proxyOf.nodes.indexOf(child);
+        }
+        insertAfter(exist, add) {
+          let existIndex = this.index(exist);
+          let nodes = this.normalize(add, this.proxyOf.nodes[existIndex]).reverse();
+          existIndex = this.index(exist);
+          for (let node of nodes)
+            this.proxyOf.nodes.splice(existIndex + 1, 0, node);
+          let index;
+          for (let id in this.indexes) {
+            index = this.indexes[id];
+            if (existIndex < index) {
+              this.indexes[id] = index + nodes.length;
+            }
+          }
+          this.markDirty();
+          return this;
+        }
+        insertBefore(exist, add) {
+          let existIndex = this.index(exist);
+          let type = existIndex === 0 ? "prepend" : false;
+          let nodes = this.normalize(add, this.proxyOf.nodes[existIndex], type).reverse();
+          existIndex = this.index(exist);
+          for (let node of nodes)
+            this.proxyOf.nodes.splice(existIndex, 0, node);
+          let index;
+          for (let id in this.indexes) {
+            index = this.indexes[id];
+            if (existIndex <= index) {
+              this.indexes[id] = index + nodes.length;
+            }
+          }
+          this.markDirty();
+          return this;
+        }
+        normalize(nodes, sample) {
+          if (typeof nodes === "string") {
+            nodes = cleanSource(parse3(nodes).nodes);
+          } else if (typeof nodes === "undefined") {
+            nodes = [];
+          } else if (Array.isArray(nodes)) {
+            nodes = nodes.slice(0);
+            for (let i of nodes) {
+              if (i.parent)
+                i.parent.removeChild(i, "ignore");
+            }
+          } else if (nodes.type === "root" && this.type !== "document") {
+            nodes = nodes.nodes.slice(0);
+            for (let i of nodes) {
+              if (i.parent)
+                i.parent.removeChild(i, "ignore");
+            }
+          } else if (nodes.type) {
+            nodes = [nodes];
+          } else if (nodes.prop) {
+            if (typeof nodes.value === "undefined") {
+              throw new Error("Value field is missed in node creation");
+            } else if (typeof nodes.value !== "string") {
+              nodes.value = String(nodes.value);
+            }
+            nodes = [new Declaration(nodes)];
+          } else if (nodes.selector) {
+            nodes = [new Rule(nodes)];
+          } else if (nodes.name) {
+            nodes = [new AtRule(nodes)];
+          } else if (nodes.text) {
+            nodes = [new Comment(nodes)];
+          } else {
+            throw new Error("Unknown node type in node creation");
+          }
+          let processed = nodes.map((i) => {
+            if (!i[my])
+              _Container.rebuild(i);
+            i = i.proxyOf;
+            if (i.parent)
+              i.parent.removeChild(i);
+            if (i[isClean])
+              markDirtyUp(i);
+            if (typeof i.raws.before === "undefined") {
+              if (sample && typeof sample.raws.before !== "undefined") {
+                i.raws.before = sample.raws.before.replace(/\S/g, "");
+              }
+            }
+            i.parent = this.proxyOf;
+            return i;
+          });
+          return processed;
+        }
+        prepend(...children) {
+          children = children.reverse();
+          for (let child of children) {
+            let nodes = this.normalize(child, this.first, "prepend").reverse();
+            for (let node of nodes)
+              this.proxyOf.nodes.unshift(node);
+            for (let id in this.indexes) {
+              this.indexes[id] = this.indexes[id] + nodes.length;
+            }
+          }
+          this.markDirty();
+          return this;
+        }
+        push(child) {
+          child.parent = this;
+          this.proxyOf.nodes.push(child);
+          return this;
+        }
+        removeAll() {
+          for (let node of this.proxyOf.nodes)
+            node.parent = void 0;
+          this.proxyOf.nodes = [];
+          this.markDirty();
+          return this;
+        }
+        removeChild(child) {
+          child = this.index(child);
+          this.proxyOf.nodes[child].parent = void 0;
+          this.proxyOf.nodes.splice(child, 1);
+          let index;
+          for (let id in this.indexes) {
+            index = this.indexes[id];
+            if (index >= child) {
+              this.indexes[id] = index - 1;
+            }
+          }
+          this.markDirty();
+          return this;
+        }
+        replaceValues(pattern, opts, callback) {
+          if (!callback) {
+            callback = opts;
+            opts = {};
+          }
+          this.walkDecls((decl) => {
+            if (opts.props && !opts.props.includes(decl.prop))
+              return;
+            if (opts.fast && !decl.value.includes(opts.fast))
+              return;
+            decl.value = decl.value.replace(pattern, callback);
+          });
+          this.markDirty();
+          return this;
+        }
+        some(condition) {
+          return this.nodes.some(condition);
+        }
         walk(callback) {
           return this.each((child, i) => {
             let result;
@@ -1024,6 +1246,35 @@
               result = child.walk(callback);
             }
             return result;
+          });
+        }
+        walkAtRules(name, callback) {
+          if (!callback) {
+            callback = name;
+            return this.walk((child, i) => {
+              if (child.type === "atrule") {
+                return callback(child, i);
+              }
+            });
+          }
+          if (name instanceof RegExp) {
+            return this.walk((child, i) => {
+              if (child.type === "atrule" && name.test(child.name)) {
+                return callback(child, i);
+              }
+            });
+          }
+          return this.walk((child, i) => {
+            if (child.type === "atrule" && child.name === name) {
+              return callback(child, i);
+            }
+          });
+        }
+        walkComments(callback) {
+          return this.walk((child, i) => {
+            if (child.type === "comment") {
+              return callback(child, i);
+            }
           });
         }
         walkDecls(prop, callback) {
@@ -1070,146 +1321,6 @@
             }
           });
         }
-        walkAtRules(name, callback) {
-          if (!callback) {
-            callback = name;
-            return this.walk((child, i) => {
-              if (child.type === "atrule") {
-                return callback(child, i);
-              }
-            });
-          }
-          if (name instanceof RegExp) {
-            return this.walk((child, i) => {
-              if (child.type === "atrule" && name.test(child.name)) {
-                return callback(child, i);
-              }
-            });
-          }
-          return this.walk((child, i) => {
-            if (child.type === "atrule" && child.name === name) {
-              return callback(child, i);
-            }
-          });
-        }
-        walkComments(callback) {
-          return this.walk((child, i) => {
-            if (child.type === "comment") {
-              return callback(child, i);
-            }
-          });
-        }
-        append(...children) {
-          for (let child of children) {
-            let nodes = this.normalize(child, this.last);
-            for (let node of nodes)
-              this.proxyOf.nodes.push(node);
-          }
-          this.markDirty();
-          return this;
-        }
-        prepend(...children) {
-          children = children.reverse();
-          for (let child of children) {
-            let nodes = this.normalize(child, this.first, "prepend").reverse();
-            for (let node of nodes)
-              this.proxyOf.nodes.unshift(node);
-            for (let id in this.indexes) {
-              this.indexes[id] = this.indexes[id] + nodes.length;
-            }
-          }
-          this.markDirty();
-          return this;
-        }
-        cleanRaws(keepBetween) {
-          super.cleanRaws(keepBetween);
-          if (this.nodes) {
-            for (let node of this.nodes)
-              node.cleanRaws(keepBetween);
-          }
-        }
-        insertBefore(exist, add) {
-          let existIndex = this.index(exist);
-          let type = existIndex === 0 ? "prepend" : false;
-          let nodes = this.normalize(add, this.proxyOf.nodes[existIndex], type).reverse();
-          existIndex = this.index(exist);
-          for (let node of nodes)
-            this.proxyOf.nodes.splice(existIndex, 0, node);
-          let index;
-          for (let id in this.indexes) {
-            index = this.indexes[id];
-            if (existIndex <= index) {
-              this.indexes[id] = index + nodes.length;
-            }
-          }
-          this.markDirty();
-          return this;
-        }
-        insertAfter(exist, add) {
-          let existIndex = this.index(exist);
-          let nodes = this.normalize(add, this.proxyOf.nodes[existIndex]).reverse();
-          existIndex = this.index(exist);
-          for (let node of nodes)
-            this.proxyOf.nodes.splice(existIndex + 1, 0, node);
-          let index;
-          for (let id in this.indexes) {
-            index = this.indexes[id];
-            if (existIndex < index) {
-              this.indexes[id] = index + nodes.length;
-            }
-          }
-          this.markDirty();
-          return this;
-        }
-        removeChild(child) {
-          child = this.index(child);
-          this.proxyOf.nodes[child].parent = void 0;
-          this.proxyOf.nodes.splice(child, 1);
-          let index;
-          for (let id in this.indexes) {
-            index = this.indexes[id];
-            if (index >= child) {
-              this.indexes[id] = index - 1;
-            }
-          }
-          this.markDirty();
-          return this;
-        }
-        removeAll() {
-          for (let node of this.proxyOf.nodes)
-            node.parent = void 0;
-          this.proxyOf.nodes = [];
-          this.markDirty();
-          return this;
-        }
-        replaceValues(pattern, opts, callback) {
-          if (!callback) {
-            callback = opts;
-            opts = {};
-          }
-          this.walkDecls((decl) => {
-            if (opts.props && !opts.props.includes(decl.prop))
-              return;
-            if (opts.fast && !decl.value.includes(opts.fast))
-              return;
-            decl.value = decl.value.replace(pattern, callback);
-          });
-          this.markDirty();
-          return this;
-        }
-        every(condition) {
-          return this.nodes.every(condition);
-        }
-        some(condition) {
-          return this.nodes.some(condition);
-        }
-        index(child) {
-          if (typeof child === "number")
-            return child;
-          if (child.proxyOf)
-            child = child.proxyOf;
-          return this.proxyOf.nodes.indexOf(child);
-        }
         get first() {
           if (!this.proxyOf.nodes)
             return void 0;
@@ -1219,113 +1330,6 @@
           if (!this.proxyOf.nodes)
             return void 0;
           return this.proxyOf.nodes[this.proxyOf.nodes.length - 1];
-        }
-        normalize(nodes, sample) {
-          if (typeof nodes === "string") {
-            nodes = cleanSource(parse3(nodes).nodes);
-          } else if (Array.isArray(nodes)) {
-            nodes = nodes.slice(0);
-            for (let i of nodes) {
-              if (i.parent)
-                i.parent.removeChild(i, "ignore");
-            }
-          } else if (nodes.type === "root" && this.type !== "document") {
-            nodes = nodes.nodes.slice(0);
-            for (let i of nodes) {
-              if (i.parent)
-                i.parent.removeChild(i, "ignore");
-            }
-          } else if (nodes.type) {
-            nodes = [nodes];
-          } else if (nodes.prop) {
-            if (typeof nodes.value === "undefined") {
-              throw new Error("Value field is missed in node creation");
-            } else if (typeof nodes.value !== "string") {
-              nodes.value = String(nodes.value);
-            }
-            nodes = [new Declaration(nodes)];
-          } else if (nodes.selector) {
-            nodes = [new Rule(nodes)];
-          } else if (nodes.name) {
-            nodes = [new AtRule(nodes)];
-          } else if (nodes.text) {
-            nodes = [new Comment(nodes)];
-          } else {
-            throw new Error("Unknown node type in node creation");
-          }
-          let processed = nodes.map((i) => {
-            if (!i[my])
-              Container.rebuild(i);
-            i = i.proxyOf;
-            if (i.parent)
-              i.parent.removeChild(i);
-            if (i[isClean])
-              markDirtyUp(i);
-            if (typeof i.raws.before === "undefined") {
-              if (sample && typeof sample.raws.before !== "undefined") {
-                i.raws.before = sample.raws.before.replace(/\S/g, "");
-              }
-            }
-            i.parent = this.proxyOf;
-            return i;
-          });
-          return processed;
-        }
-        getProxyProcessor() {
-          return {
-            set(node, prop, value) {
-              if (node[prop] === value)
-                return true;
-              node[prop] = value;
-              if (prop === "name" || prop === "params" || prop === "selector") {
-                node.markDirty();
-              }
-              return true;
-            },
-            get(node, prop) {
-              if (prop === "proxyOf") {
-                return node;
-              } else if (!node[prop]) {
-                return node[prop];
-              } else if (prop === "each" || typeof prop === "string" && prop.startsWith("walk")) {
-                return (...args) => {
-                  return node[prop](
-                    ...args.map((i) => {
-                      if (typeof i === "function") {
-                        return (child, index) => i(child.toProxy(), index);
-                      } else {
-                        return i;
-                      }
-                    })
-                  );
-                };
-              } else if (prop === "every" || prop === "some") {
-                return (cb) => {
-                  return node[prop](
-                    (child, ...other) => cb(child.toProxy(), ...other)
-                  );
-                };
-              } else if (prop === "root") {
-                return () => node.root().toProxy();
-              } else if (prop === "nodes") {
-                return node.nodes.map((i) => i.toProxy());
-              } else if (prop === "first" || prop === "last") {
-                return node[prop].toProxy();
-              } else {
-                return node[prop];
-              }
-            }
-          };
-        }
-        getIterator() {
-          if (!this.lastEach)
-            this.lastEach = 0;
-          if (!this.indexes)
-            this.indexes = {};
-          this.lastEach += 1;
-          let iterator = this.lastEach;
-          this.indexes[iterator] = 0;
-          return iterator;
         }
       };
       Container.registerParse = (dependant) => {
@@ -1389,7 +1393,7 @@
       var AT = "@".charCodeAt(0);
       var RE_AT_END = /[\t\n\f\r "#'()/;[\\\]{}]/g;
       var RE_WORD_END = /[\t\n\f\r !"#'():;@[\\\]{}]|\/(?=\*)/g;
-      var RE_BAD_BRACKET = /.[\n"'(/\\]/;
+      var RE_BAD_BRACKET = /.[\r\n"'(/\\]/;
       var RE_HEX_ESCAPE = /[\da-f]/i;
       module.exports = function tokenizer(input, options2 = {}) {
         let css2 = input.css.valueOf();
@@ -1573,8 +1577,8 @@
         }
         return {
           back,
-          nextToken,
           endOfFile,
+          nextToken,
           position
         };
       };
@@ -1622,13 +1626,6 @@
           if (!this.nodes)
             this.nodes = [];
         }
-        removeChild(child, ignore) {
-          let index = this.index(child);
-          if (!ignore && index === 0 && this.nodes.length > 1) {
-            this.nodes[1].raws.before = this.nodes[index].raws.before;
-          }
-          return super.removeChild(child);
-        }
         normalize(child, sample, type) {
           let nodes = super.normalize(child);
           if (sample) {
@@ -1645,6 +1642,13 @@
             }
           }
           return nodes;
+        }
+        removeChild(child, ignore) {
+          let index = this.index(child);
+          if (!ignore && index === 0 && this.nodes.length > 1) {
+            this.nodes[1].raws.before = this.nodes[index].raws.before;
+          }
+          return super.removeChild(child);
         }
         toResult(opts = {}) {
           let lazy = new LazyResult(new Processor(), this, opts);
@@ -1668,6 +1672,13 @@
     "node_modules/postcss/lib/list.js"(exports, module) {
       "use strict";
       var list = {
+        comma(string) {
+          return list.split(string, [","], true);
+        },
+        space(string) {
+          let spaces = [" ", "\n", "	"];
+          return list.split(string, spaces);
+        },
         split(string, separators, last) {
           let array = [];
           let current = "";
@@ -1709,13 +1720,6 @@
           if (last || current !== "")
             array.push(current.trim());
           return array;
-        },
-        space(string) {
-          let spaces = [" ", "\n", "	"];
-          return list.split(string, spaces);
-        },
-        comma(string) {
-          return list.split(string, [","], true);
         }
       };
       module.exports = list;
@@ -1780,47 +1784,136 @@
           this.current = this.root;
           this.spaces = "";
           this.semicolon = false;
-          this.customProperty = false;
           this.createTokenizer();
-          this.root.source = { input, start: { offset: 0, line: 1, column: 1 } };
+          this.root.source = { input, start: { column: 1, line: 1, offset: 0 } };
         }
-        createTokenizer() {
-          this.tokenizer = tokenizer(this.input);
-        }
-        parse() {
-          let token;
+        atrule(token) {
+          let node = new AtRule();
+          node.name = token[1].slice(1);
+          if (node.name === "") {
+            this.unnamedAtrule(node, token);
+          }
+          this.init(node, token[2]);
+          let type;
+          let prev;
+          let shift;
+          let last = false;
+          let open = false;
+          let params = [];
+          let brackets = [];
           while (!this.tokenizer.endOfFile()) {
             token = this.tokenizer.nextToken();
-            switch (token[0]) {
-              case "space":
-                this.spaces += token[1];
+            type = token[0];
+            if (type === "(" || type === "[") {
+              brackets.push(type === "(" ? ")" : "]");
+            } else if (type === "{" && brackets.length > 0) {
+              brackets.push("}");
+            } else if (type === brackets[brackets.length - 1]) {
+              brackets.pop();
+            }
+            if (brackets.length === 0) {
+              if (type === ";") {
+                node.source.end = this.getPosition(token[2]);
+                node.source.end.offset++;
+                this.semicolon = true;
                 break;
-              case ";":
-                this.freeSemicolon(token);
+              } else if (type === "{") {
+                open = true;
                 break;
-              case "}":
+              } else if (type === "}") {
+                if (params.length > 0) {
+                  shift = params.length - 1;
+                  prev = params[shift];
+                  while (prev && prev[0] === "space") {
+                    prev = params[--shift];
+                  }
+                  if (prev) {
+                    node.source.end = this.getPosition(prev[3] || prev[2]);
+                    node.source.end.offset++;
+                  }
+                }
                 this.end(token);
                 break;
-              case "comment":
-                this.comment(token);
-                break;
-              case "at-word":
-                this.atrule(token);
-                break;
-              case "{":
-                this.emptyRule(token);
-                break;
-              default:
-                this.other(token);
+              } else {
+                params.push(token);
+              }
+            } else {
+              params.push(token);
+            }
+            if (this.tokenizer.endOfFile()) {
+              last = true;
+              break;
+            }
+          }
+          node.raws.between = this.spacesAndCommentsFromEnd(params);
+          if (params.length) {
+            node.raws.afterName = this.spacesAndCommentsFromStart(params);
+            this.raw(node, "params", params);
+            if (last) {
+              token = params[params.length - 1];
+              node.source.end = this.getPosition(token[3] || token[2]);
+              node.source.end.offset++;
+              this.spaces = node.raws.between;
+              node.raws.between = "";
+            }
+          } else {
+            node.raws.afterName = "";
+            node.params = "";
+          }
+          if (open) {
+            node.nodes = [];
+            this.current = node;
+          }
+        }
+        checkMissedSemicolon(tokens) {
+          let colon = this.colon(tokens);
+          if (colon === false)
+            return;
+          let founded = 0;
+          let token;
+          for (let j = colon - 1; j >= 0; j--) {
+            token = tokens[j];
+            if (token[0] !== "space") {
+              founded += 1;
+              if (founded === 2)
                 break;
             }
           }
-          this.endFile();
+          throw this.input.error(
+            "Missed semicolon",
+            token[0] === "word" ? token[3] + 1 : token[2]
+          );
+        }
+        colon(tokens) {
+          let brackets = 0;
+          let token, type, prev;
+          for (let [i, element] of tokens.entries()) {
+            token = element;
+            type = token[0];
+            if (type === "(") {
+              brackets += 1;
+            }
+            if (type === ")") {
+              brackets -= 1;
+            }
+            if (brackets === 0 && type === ":") {
+              if (!prev) {
+                this.doubleColon(token);
+              } else if (prev[0] === "word" && prev[1] === "progid") {
+                continue;
+              } else {
+                return i;
+              }
+            }
+            prev = token;
+          }
+          return false;
         }
         comment(token) {
           let node = new Comment();
           this.init(node, token[2]);
           node.source.end = this.getPosition(token[3] || token[2]);
+          node.source.end.offset++;
           let text = token[1].slice(2, -2);
           if (/^\s*$/.test(text)) {
             node.text = "";
@@ -1833,83 +1926,8 @@
             node.raws.right = match[3];
           }
         }
-        emptyRule(token) {
-          let node = new Rule();
-          this.init(node, token[2]);
-          node.selector = "";
-          node.raws.between = "";
-          this.current = node;
-        }
-        other(start) {
-          let end = false;
-          let type = null;
-          let colon = false;
-          let bracket = null;
-          let brackets = [];
-          let customProperty = start[1].startsWith("--");
-          let tokens = [];
-          let token = start;
-          while (token) {
-            type = token[0];
-            tokens.push(token);
-            if (type === "(" || type === "[") {
-              if (!bracket)
-                bracket = token;
-              brackets.push(type === "(" ? ")" : "]");
-            } else if (customProperty && colon && type === "{") {
-              if (!bracket)
-                bracket = token;
-              brackets.push("}");
-            } else if (brackets.length === 0) {
-              if (type === ";") {
-                if (colon) {
-                  this.decl(tokens, customProperty);
-                  return;
-                } else {
-                  break;
-                }
-              } else if (type === "{") {
-                this.rule(tokens);
-                return;
-              } else if (type === "}") {
-                this.tokenizer.back(tokens.pop());
-                end = true;
-                break;
-              } else if (type === ":") {
-                colon = true;
-              }
-            } else if (type === brackets[brackets.length - 1]) {
-              brackets.pop();
-              if (brackets.length === 0)
-                bracket = null;
-            }
-            token = this.tokenizer.nextToken();
-          }
-          if (this.tokenizer.endOfFile())
-            end = true;
-          if (brackets.length > 0)
-            this.unclosedBracket(bracket);
-          if (end && colon) {
-            if (!customProperty) {
-              while (tokens.length) {
-                token = tokens[tokens.length - 1][0];
-                if (token !== "space" && token !== "comment")
-                  break;
-                this.tokenizer.back(tokens.pop());
-              }
-            }
-            this.decl(tokens, customProperty);
-          } else {
-            this.unknownWord(tokens);
-          }
-        }
-        rule(tokens) {
-          tokens.pop();
-          let node = new Rule();
-          this.init(node, tokens[0][2]);
-          node.raws.between = this.spacesAndCommentsFromEnd(tokens);
-          this.raw(node, "selector", tokens);
-          this.current = node;
+        createTokenizer() {
+          this.tokenizer = tokenizer(this.input);
         }
         decl(tokens, customProperty) {
           let node = new Declaration();
@@ -1922,6 +1940,7 @@
           node.source.end = this.getPosition(
             last[3] || last[2] || findLastWithPosition(tokens)
           );
+          node.source.end.offset++;
           while (tokens[0][0] !== "word") {
             if (tokens.length === 1)
               this.unknownWord(tokens);
@@ -2002,80 +2021,19 @@
             this.checkMissedSemicolon(tokens);
           }
         }
-        atrule(token) {
-          let node = new AtRule();
-          node.name = token[1].slice(1);
-          if (node.name === "") {
-            this.unnamedAtrule(node, token);
-          }
+        doubleColon(token) {
+          throw this.input.error(
+            "Double colon",
+            { offset: token[2] },
+            { offset: token[2] + token[1].length }
+          );
+        }
+        emptyRule(token) {
+          let node = new Rule();
           this.init(node, token[2]);
-          let type;
-          let prev;
-          let shift;
-          let last = false;
-          let open = false;
-          let params = [];
-          let brackets = [];
-          while (!this.tokenizer.endOfFile()) {
-            token = this.tokenizer.nextToken();
-            type = token[0];
-            if (type === "(" || type === "[") {
-              brackets.push(type === "(" ? ")" : "]");
-            } else if (type === "{" && brackets.length > 0) {
-              brackets.push("}");
-            } else if (type === brackets[brackets.length - 1]) {
-              brackets.pop();
-            }
-            if (brackets.length === 0) {
-              if (type === ";") {
-                node.source.end = this.getPosition(token[2]);
-                this.semicolon = true;
-                break;
-              } else if (type === "{") {
-                open = true;
-                break;
-              } else if (type === "}") {
-                if (params.length > 0) {
-                  shift = params.length - 1;
-                  prev = params[shift];
-                  while (prev && prev[0] === "space") {
-                    prev = params[--shift];
-                  }
-                  if (prev) {
-                    node.source.end = this.getPosition(prev[3] || prev[2]);
-                  }
-                }
-                this.end(token);
-                break;
-              } else {
-                params.push(token);
-              }
-            } else {
-              params.push(token);
-            }
-            if (this.tokenizer.endOfFile()) {
-              last = true;
-              break;
-            }
-          }
-          node.raws.between = this.spacesAndCommentsFromEnd(params);
-          if (params.length) {
-            node.raws.afterName = this.spacesAndCommentsFromStart(params);
-            this.raw(node, "params", params);
-            if (last) {
-              token = params[params.length - 1];
-              node.source.end = this.getPosition(token[3] || token[2]);
-              this.spaces = node.raws.between;
-              node.raws.between = "";
-            }
-          } else {
-            node.raws.afterName = "";
-            node.params = "";
-          }
-          if (open) {
-            node.nodes = [];
-            this.current = node;
-          }
+          node.selector = "";
+          node.raws.between = "";
+          this.current = node;
         }
         end(token) {
           if (this.current.nodes && this.current.nodes.length) {
@@ -2086,6 +2044,7 @@
           this.spaces = "";
           if (this.current.parent) {
             this.current.source.end = this.getPosition(token[2]);
+            this.current.source.end.offset++;
             this.current = this.current.parent;
           } else {
             this.unexpectedClose(token);
@@ -2098,6 +2057,7 @@
             this.current.raws.semicolon = this.semicolon;
           }
           this.current.raws.after = (this.current.raws.after || "") + this.spaces;
+          this.root.source.end = this.getPosition(this.tokenizer.position());
         }
         freeSemicolon(token) {
           this.spaces += token[1];
@@ -2113,21 +2073,116 @@
         getPosition(offset) {
           let pos = this.input.fromOffset(offset);
           return {
-            offset,
+            column: pos.col,
             line: pos.line,
-            column: pos.col
+            offset
           };
         }
         init(node, offset) {
           this.current.push(node);
           node.source = {
-            start: this.getPosition(offset),
-            input: this.input
+            input: this.input,
+            start: this.getPosition(offset)
           };
           node.raws.before = this.spaces;
           this.spaces = "";
           if (node.type !== "comment")
             this.semicolon = false;
+        }
+        other(start) {
+          let end = false;
+          let type = null;
+          let colon = false;
+          let bracket = null;
+          let brackets = [];
+          let customProperty = start[1].startsWith("--");
+          let tokens = [];
+          let token = start;
+          while (token) {
+            type = token[0];
+            tokens.push(token);
+            if (type === "(" || type === "[") {
+              if (!bracket)
+                bracket = token;
+              brackets.push(type === "(" ? ")" : "]");
+            } else if (customProperty && colon && type === "{") {
+              if (!bracket)
+                bracket = token;
+              brackets.push("}");
+            } else if (brackets.length === 0) {
+              if (type === ";") {
+                if (colon) {
+                  this.decl(tokens, customProperty);
+                  return;
+                } else {
+                  break;
+                }
+              } else if (type === "{") {
+                this.rule(tokens);
+                return;
+              } else if (type === "}") {
+                this.tokenizer.back(tokens.pop());
+                end = true;
+                break;
+              } else if (type === ":") {
+                colon = true;
+              }
+            } else if (type === brackets[brackets.length - 1]) {
+              brackets.pop();
+              if (brackets.length === 0)
+                bracket = null;
+            }
+            token = this.tokenizer.nextToken();
+          }
+          if (this.tokenizer.endOfFile())
+            end = true;
+          if (brackets.length > 0)
+            this.unclosedBracket(bracket);
+          if (end && colon) {
+            if (!customProperty) {
+              while (tokens.length) {
+                token = tokens[tokens.length - 1][0];
+                if (token !== "space" && token !== "comment")
+                  break;
+                this.tokenizer.back(tokens.pop());
+              }
+            }
+            this.decl(tokens, customProperty);
+          } else {
+            this.unknownWord(tokens);
+          }
+        }
+        parse() {
+          let token;
+          while (!this.tokenizer.endOfFile()) {
+            token = this.tokenizer.nextToken();
+            switch (token[0]) {
+              case "space":
+                this.spaces += token[1];
+                break;
+              case ";":
+                this.freeSemicolon(token);
+                break;
+              case "}":
+                this.end(token);
+                break;
+              case "comment":
+                this.comment(token);
+                break;
+              case "at-word":
+                this.atrule(token);
+                break;
+              case "{":
+                this.emptyRule(token);
+                break;
+              default:
+                this.other(token);
+                break;
+            }
+          }
+          this.endFile();
+        }
+        precheckMissedSemicolon() {
         }
         raw(node, prop, tokens, customProperty) {
           let token, type;
@@ -2158,9 +2213,17 @@
           }
           if (!clean2) {
             let raw = tokens.reduce((all, i) => all + i[1], "");
-            node.raws[prop] = { value, raw };
+            node.raws[prop] = { raw, value };
           }
           node[prop] = value;
+        }
+        rule(tokens) {
+          tokens.pop();
+          let node = new Rule();
+          this.init(node, tokens[0][2]);
+          node.raws.between = this.spacesAndCommentsFromEnd(tokens);
+          this.raw(node, "selector", tokens);
+          this.current = node;
         }
         spacesAndCommentsFromEnd(tokens) {
           let lastTokenType;
@@ -2173,6 +2236,7 @@
           }
           return spaces;
         }
+        // Errors
         spacesAndCommentsFromStart(tokens) {
           let next;
           let spaces = "";
@@ -2203,44 +2267,15 @@
           tokens.splice(from, tokens.length - from);
           return result;
         }
-        colon(tokens) {
-          let brackets = 0;
-          let token, type, prev;
-          for (let [i, element] of tokens.entries()) {
-            token = element;
-            type = token[0];
-            if (type === "(") {
-              brackets += 1;
-            }
-            if (type === ")") {
-              brackets -= 1;
-            }
-            if (brackets === 0 && type === ":") {
-              if (!prev) {
-                this.doubleColon(token);
-              } else if (prev[0] === "word" && prev[1] === "progid") {
-                continue;
-              } else {
-                return i;
-              }
-            }
-            prev = token;
-          }
-          return false;
+        unclosedBlock() {
+          let pos = this.current.source.start;
+          throw this.input.error("Unclosed block", pos.line, pos.column);
         }
-        // Errors
         unclosedBracket(bracket) {
           throw this.input.error(
             "Unclosed bracket",
             { offset: bracket[2] },
             { offset: bracket[2] + 1 }
-          );
-        }
-        unknownWord(tokens) {
-          throw this.input.error(
-            "Unknown word",
-            { offset: tokens[0][2] },
-            { offset: tokens[0][2] + tokens[0][1].length }
           );
         }
         unexpectedClose(token) {
@@ -2250,15 +2285,11 @@
             { offset: token[2] + 1 }
           );
         }
-        unclosedBlock() {
-          let pos = this.current.source.start;
-          throw this.input.error("Unclosed block", pos.line, pos.column);
-        }
-        doubleColon(token) {
+        unknownWord(tokens) {
           throw this.input.error(
-            "Double colon",
-            { offset: token[2] },
-            { offset: token[2] + token[1].length }
+            "Unknown word",
+            { offset: tokens[0][2] },
+            { offset: tokens[0][2] + tokens[0][1].length }
           );
         }
         unnamedAtrule(node, token) {
@@ -2266,27 +2297,6 @@
             "At-rule without name",
             { offset: token[2] },
             { offset: token[2] + token[1].length }
-          );
-        }
-        precheckMissedSemicolon() {
-        }
-        checkMissedSemicolon(tokens) {
-          let colon = this.colon(tokens);
-          if (colon === false)
-            return;
-          let founded = 0;
-          let token;
-          for (let j = colon - 1; j >= 0; j--) {
-            token = tokens[j];
-            if (token[0] !== "space") {
-              founded += 1;
-              if (founded === 2)
-                break;
-            }
-          }
-          throw this.input.error(
-            "Missed semicolon",
-            token[0] === "word" ? token[3] + 1 : token[2]
           );
         }
       };
@@ -2340,7 +2350,7 @@
       "use strict";
       var { SourceMapConsumer, SourceMapGenerator } = require_source_map();
       var { fileURLToPath, pathToFileURL } = {};
-      var { resolve, isAbsolute } = {};
+      var { isAbsolute, resolve } = {};
       var { nanoid } = require_non_secure();
       var terminalHighlight = require_terminal_highlight();
       var CssSyntaxError = require_css_syntax_error();
@@ -2382,6 +2392,61 @@
           if (this.map)
             this.map.file = this.from;
         }
+        error(message, line2, column, opts = {}) {
+          let result, endLine, endColumn;
+          if (line2 && typeof line2 === "object") {
+            let start = line2;
+            let end = column;
+            if (typeof start.offset === "number") {
+              let pos = this.fromOffset(start.offset);
+              line2 = pos.line;
+              column = pos.col;
+            } else {
+              line2 = start.line;
+              column = start.column;
+            }
+            if (typeof end.offset === "number") {
+              let pos = this.fromOffset(end.offset);
+              endLine = pos.line;
+              endColumn = pos.col;
+            } else {
+              endLine = end.line;
+              endColumn = end.column;
+            }
+          } else if (!column) {
+            let pos = this.fromOffset(line2);
+            line2 = pos.line;
+            column = pos.col;
+          }
+          let origin = this.origin(line2, column, endLine, endColumn);
+          if (origin) {
+            result = new CssSyntaxError(
+              message,
+              origin.endLine === void 0 ? origin.line : { column: origin.column, line: origin.line },
+              origin.endLine === void 0 ? origin.column : { column: origin.endColumn, line: origin.endLine },
+              origin.source,
+              origin.file,
+              opts.plugin
+            );
+          } else {
+            result = new CssSyntaxError(
+              message,
+              endLine === void 0 ? line2 : { column, line: line2 },
+              endLine === void 0 ? column : { column: endColumn, line: endLine },
+              this.css,
+              this.file,
+              opts.plugin
+            );
+          }
+          result.input = { column, endColumn, endLine, line: line2, source: this.css };
+          if (this.file) {
+            if (pathToFileURL) {
+              result.input.url = pathToFileURL(this.file).toString();
+            }
+            result.input.file = this.file;
+          }
+          return result;
+        }
         fromOffset(offset) {
           let lastLine, lineToIndex;
           if (!this[fromOffsetCache]) {
@@ -2416,75 +2481,26 @@
             }
           }
           return {
-            line: min + 1,
-            col: offset - lineToIndex[min] + 1
+            col: offset - lineToIndex[min] + 1,
+            line: min + 1
           };
         }
-        error(message, line2, column, opts = {}) {
-          let result, endLine, endColumn;
-          if (line2 && typeof line2 === "object") {
-            let start = line2;
-            let end = column;
-            if (typeof start.offset === "number") {
-              let pos = this.fromOffset(start.offset);
-              line2 = pos.line;
-              column = pos.col;
-            } else {
-              line2 = start.line;
-              column = start.column;
-            }
-            if (typeof end.offset === "number") {
-              let pos = this.fromOffset(end.offset);
-              endLine = pos.line;
-              endColumn = pos.col;
-            } else {
-              endLine = end.line;
-              endColumn = end.column;
-            }
-          } else if (!column) {
-            let pos = this.fromOffset(line2);
-            line2 = pos.line;
-            column = pos.col;
+        mapResolve(file) {
+          if (/^\w+:\/\//.test(file)) {
+            return file;
           }
-          let origin = this.origin(line2, column, endLine, endColumn);
-          if (origin) {
-            result = new CssSyntaxError(
-              message,
-              origin.endLine === void 0 ? origin.line : { line: origin.line, column: origin.column },
-              origin.endLine === void 0 ? origin.column : { line: origin.endLine, column: origin.endColumn },
-              origin.source,
-              origin.file,
-              opts.plugin
-            );
-          } else {
-            result = new CssSyntaxError(
-              message,
-              endLine === void 0 ? line2 : { line: line2, column },
-              endLine === void 0 ? column : { line: endLine, column: endColumn },
-              this.css,
-              this.file,
-              opts.plugin
-            );
-          }
-          result.input = { line: line2, column, endLine, endColumn, source: this.css };
-          if (this.file) {
-            if (pathToFileURL) {
-              result.input.url = pathToFileURL(this.file).toString();
-            }
-            result.input.file = this.file;
-          }
-          return result;
+          return resolve(this.map.consumer().sourceRoot || this.map.root || ".", file);
         }
         origin(line2, column, endLine, endColumn) {
           if (!this.map)
             return false;
           let consumer = this.map.consumer();
-          let from = consumer.originalPositionFor({ line: line2, column });
+          let from = consumer.originalPositionFor({ column, line: line2 });
           if (!from.source)
             return false;
           let to;
           if (typeof endLine === "number") {
-            to = consumer.originalPositionFor({ line: endLine, column: endColumn });
+            to = consumer.originalPositionFor({ column: endColumn, line: endLine });
           }
           let fromUrl;
           if (isAbsolute(from.source)) {
@@ -2496,11 +2512,11 @@
             );
           }
           let result = {
-            url: fromUrl.toString(),
-            line: from.line,
             column: from.column,
+            endColumn: to && to.column,
             endLine: to && to.line,
-            endColumn: to && to.column
+            line: from.line,
+            url: fromUrl.toString()
           };
           if (fromUrl.protocol === "file:") {
             if (fileURLToPath) {
@@ -2513,15 +2529,6 @@
           if (source)
             result.source = source;
           return result;
-        }
-        mapResolve(file) {
-          if (/^\w+:\/\//.test(file)) {
-            return file;
-          }
-          return resolve(this.map.consumer().sourceRoot || this.map.root || ".", file);
-        }
-        get from() {
-          return this.file || this.id;
         }
         toJSON() {
           let json = {};
@@ -2537,6 +2544,9 @@
             }
           }
           return json;
+        }
+        get from() {
+          return this.file || this.id;
         }
       };
       module.exports = Input;
@@ -3064,8 +3074,8 @@
         toString() {
           if (this.node) {
             return this.node.error(this.text, {
-              plugin: this.plugin,
               index: this.index,
+              plugin: this.plugin,
               word: this.word
             }).message;
           }
@@ -3133,35 +3143,35 @@
       var parse3 = require_parse();
       var Root = require_root();
       var TYPE_TO_CLASS_NAME = {
+        atrule: "AtRule",
+        comment: "Comment",
+        decl: "Declaration",
         document: "Document",
         root: "Root",
-        atrule: "AtRule",
-        rule: "Rule",
-        decl: "Declaration",
-        comment: "Comment"
+        rule: "Rule"
       };
       var PLUGIN_PROPS = {
+        AtRule: true,
+        AtRuleExit: true,
+        Comment: true,
+        CommentExit: true,
+        Declaration: true,
+        DeclarationExit: true,
+        Document: true,
+        DocumentExit: true,
+        Once: true,
+        OnceExit: true,
         postcssPlugin: true,
         prepare: true,
-        Once: true,
-        Document: true,
         Root: true,
-        Declaration: true,
-        Rule: true,
-        AtRule: true,
-        Comment: true,
-        DeclarationExit: true,
-        RuleExit: true,
-        AtRuleExit: true,
-        CommentExit: true,
         RootExit: true,
-        DocumentExit: true,
-        OnceExit: true
+        Rule: true,
+        RuleExit: true
       };
       var NOT_VISITORS = {
+        Once: true,
         postcssPlugin: true,
-        prepare: true,
-        Once: true
+        prepare: true
       };
       var CHILDREN = 0;
       function isPromise(obj) {
@@ -3201,12 +3211,12 @@
           events = getEvents(node);
         }
         return {
-          node,
-          events,
           eventIndex: 0,
-          visitors: [],
+          events,
+          iterator: 0,
+          node,
           visitorIndex: 0,
-          iterator: 0
+          visitors: []
         };
       }
       function cleanMarks(node) {
@@ -3216,14 +3226,14 @@
         return node;
       }
       var postcss = {};
-      var LazyResult = class {
+      var LazyResult = class _LazyResult {
         constructor(processor, css2, opts) {
           this.stringified = false;
           this.processed = false;
           let root;
           if (typeof css2 === "object" && css2 !== null && (css2.type === "root" || css2.type === "document")) {
             root = cleanMarks(css2);
-          } else if (css2 instanceof LazyResult || css2 instanceof Result) {
+          } else if (css2 instanceof _LazyResult || css2 instanceof Result) {
             root = cleanMarks(css2.root);
             if (css2.map) {
               if (typeof opts.map === "undefined")
@@ -3251,7 +3261,7 @@
             }
           }
           this.result = new Result(processor, root, opts);
-          this.helpers = { ...postcss, result: this.result, postcss };
+          this.helpers = { ...postcss, postcss, result: this.result };
           this.plugins = this.processor.plugins.map((plugin) => {
             if (typeof plugin === "object" && plugin.prepare) {
               return { ...plugin, ...plugin.prepare(this.result) };
@@ -3259,52 +3269,6 @@
               return plugin;
             }
           });
-        }
-        get [Symbol.toStringTag]() {
-          return "LazyResult";
-        }
-        get processor() {
-          return this.result.processor;
-        }
-        get opts() {
-          return this.result.opts;
-        }
-        get css() {
-          return this.stringify().css;
-        }
-        get content() {
-          return this.stringify().content;
-        }
-        get map() {
-          return this.stringify().map;
-        }
-        get root() {
-          return this.sync().root;
-        }
-        get messages() {
-          return this.sync().messages;
-        }
-        warnings() {
-          return this.sync().warnings();
-        }
-        toString() {
-          return this.css;
-        }
-        then(onFulfilled, onRejected) {
-          if (false) {
-            if (!("from" in this.opts)) {
-              warnOnce(
-                "Without `from` option PostCSS could generate wrong source map and will not find Browserslist config. Set it to CSS file path or to `undefined` to prevent this warning."
-              );
-            }
-          }
-          return this.async().then(onFulfilled, onRejected);
-        }
-        catch(onRejected) {
-          return this.async().catch(onRejected);
-        }
-        finally(onFinally) {
-          return this.async().then(onFinally, onFinally);
         }
         async() {
           if (this.error)
@@ -3316,118 +3280,11 @@
           }
           return this.processing;
         }
-        sync() {
-          if (this.error)
-            throw this.error;
-          if (this.processed)
-            return this.result;
-          this.processed = true;
-          if (this.processing) {
-            throw this.getAsyncError();
-          }
-          for (let plugin of this.plugins) {
-            let promise = this.runOnRoot(plugin);
-            if (isPromise(promise)) {
-              throw this.getAsyncError();
-            }
-          }
-          this.prepareVisitors();
-          if (this.hasListener) {
-            let root = this.result.root;
-            while (!root[isClean]) {
-              root[isClean] = true;
-              this.walkSync(root);
-            }
-            if (this.listeners.OnceExit) {
-              if (root.type === "document") {
-                for (let subRoot of root.nodes) {
-                  this.visitSync(this.listeners.OnceExit, subRoot);
-                }
-              } else {
-                this.visitSync(this.listeners.OnceExit, root);
-              }
-            }
-          }
-          return this.result;
+        catch(onRejected) {
+          return this.async().catch(onRejected);
         }
-        stringify() {
-          if (this.error)
-            throw this.error;
-          if (this.stringified)
-            return this.result;
-          this.stringified = true;
-          this.sync();
-          let opts = this.result.opts;
-          let str = stringify;
-          if (opts.syntax)
-            str = opts.syntax.stringify;
-          if (opts.stringifier)
-            str = opts.stringifier;
-          if (str.stringify)
-            str = str.stringify;
-          let map = new MapGenerator(str, this.result.root, this.result.opts);
-          let data = map.generate();
-          this.result.css = data[0];
-          this.result.map = data[1];
-          return this.result;
-        }
-        walkSync(node) {
-          node[isClean] = true;
-          let events = getEvents(node);
-          for (let event of events) {
-            if (event === CHILDREN) {
-              if (node.nodes) {
-                node.each((child) => {
-                  if (!child[isClean])
-                    this.walkSync(child);
-                });
-              }
-            } else {
-              let visitors = this.listeners[event];
-              if (visitors) {
-                if (this.visitSync(visitors, node.toProxy()))
-                  return;
-              }
-            }
-          }
-        }
-        visitSync(visitors, node) {
-          for (let [plugin, visitor] of visitors) {
-            this.result.lastPlugin = plugin;
-            let promise;
-            try {
-              promise = visitor(node, this.helpers);
-            } catch (e) {
-              throw this.handleError(e, node.proxyOf);
-            }
-            if (node.type !== "root" && node.type !== "document" && !node.parent) {
-              return true;
-            }
-            if (isPromise(promise)) {
-              throw this.getAsyncError();
-            }
-          }
-        }
-        runOnRoot(plugin) {
-          this.result.lastPlugin = plugin;
-          try {
-            if (typeof plugin === "object" && plugin.Once) {
-              if (this.result.root.type === "document") {
-                let roots = this.result.root.nodes.map(
-                  (root) => plugin.Once(root, this.helpers)
-                );
-                if (isPromise(roots[0])) {
-                  return Promise.all(roots);
-                }
-                return roots;
-              }
-              return plugin.Once(this.result.root, this.helpers);
-            } else if (typeof plugin === "function") {
-              return plugin(this.result.root, this.result);
-            }
-          } catch (error) {
-            throw this.handleError(error);
-          }
+        finally(onFinally) {
+          return this.async().then(onFinally, onFinally);
         }
         getAsyncError() {
           throw new Error("Use process(css).then(cb) to work with async plugins");
@@ -3460,6 +3317,43 @@
               console.error(err);
           }
           return error;
+        }
+        prepareVisitors() {
+          this.listeners = {};
+          let add = (plugin, type, cb) => {
+            if (!this.listeners[type])
+              this.listeners[type] = [];
+            this.listeners[type].push([plugin, cb]);
+          };
+          for (let plugin of this.plugins) {
+            if (typeof plugin === "object") {
+              for (let event in plugin) {
+                if (!PLUGIN_PROPS[event] && /^[A-Z]/.test(event)) {
+                  throw new Error(
+                    `Unknown event ${event} in ${plugin.postcssPlugin}. Try to update PostCSS (${this.processor.version} now).`
+                  );
+                }
+                if (!NOT_VISITORS[event]) {
+                  if (typeof plugin[event] === "object") {
+                    for (let filter in plugin[event]) {
+                      if (filter === "*") {
+                        add(plugin, event, plugin[event][filter]);
+                      } else {
+                        add(
+                          plugin,
+                          event + "-" + filter.toLowerCase(),
+                          plugin[event][filter]
+                        );
+                      }
+                    }
+                  } else if (typeof plugin[event] === "function") {
+                    add(plugin, event, plugin[event]);
+                  }
+                }
+              }
+            }
+          }
+          this.hasListener = Object.keys(this.listeners).length > 0;
         }
         async runAsync() {
           this.plugin = 0;
@@ -3513,42 +3407,111 @@
           this.processed = true;
           return this.stringify();
         }
-        prepareVisitors() {
-          this.listeners = {};
-          let add = (plugin, type, cb) => {
-            if (!this.listeners[type])
-              this.listeners[type] = [];
-            this.listeners[type].push([plugin, cb]);
-          };
+        runOnRoot(plugin) {
+          this.result.lastPlugin = plugin;
+          try {
+            if (typeof plugin === "object" && plugin.Once) {
+              if (this.result.root.type === "document") {
+                let roots = this.result.root.nodes.map(
+                  (root) => plugin.Once(root, this.helpers)
+                );
+                if (isPromise(roots[0])) {
+                  return Promise.all(roots);
+                }
+                return roots;
+              }
+              return plugin.Once(this.result.root, this.helpers);
+            } else if (typeof plugin === "function") {
+              return plugin(this.result.root, this.result);
+            }
+          } catch (error) {
+            throw this.handleError(error);
+          }
+        }
+        stringify() {
+          if (this.error)
+            throw this.error;
+          if (this.stringified)
+            return this.result;
+          this.stringified = true;
+          this.sync();
+          let opts = this.result.opts;
+          let str = stringify;
+          if (opts.syntax)
+            str = opts.syntax.stringify;
+          if (opts.stringifier)
+            str = opts.stringifier;
+          if (str.stringify)
+            str = str.stringify;
+          let map = new MapGenerator(str, this.result.root, this.result.opts);
+          let data = map.generate();
+          this.result.css = data[0];
+          this.result.map = data[1];
+          return this.result;
+        }
+        sync() {
+          if (this.error)
+            throw this.error;
+          if (this.processed)
+            return this.result;
+          this.processed = true;
+          if (this.processing) {
+            throw this.getAsyncError();
+          }
           for (let plugin of this.plugins) {
-            if (typeof plugin === "object") {
-              for (let event in plugin) {
-                if (!PLUGIN_PROPS[event] && /^[A-Z]/.test(event)) {
-                  throw new Error(
-                    `Unknown event ${event} in ${plugin.postcssPlugin}. Try to update PostCSS (${this.processor.version} now).`
-                  );
+            let promise = this.runOnRoot(plugin);
+            if (isPromise(promise)) {
+              throw this.getAsyncError();
+            }
+          }
+          this.prepareVisitors();
+          if (this.hasListener) {
+            let root = this.result.root;
+            while (!root[isClean]) {
+              root[isClean] = true;
+              this.walkSync(root);
+            }
+            if (this.listeners.OnceExit) {
+              if (root.type === "document") {
+                for (let subRoot of root.nodes) {
+                  this.visitSync(this.listeners.OnceExit, subRoot);
                 }
-                if (!NOT_VISITORS[event]) {
-                  if (typeof plugin[event] === "object") {
-                    for (let filter in plugin[event]) {
-                      if (filter === "*") {
-                        add(plugin, event, plugin[event][filter]);
-                      } else {
-                        add(
-                          plugin,
-                          event + "-" + filter.toLowerCase(),
-                          plugin[event][filter]
-                        );
-                      }
-                    }
-                  } else if (typeof plugin[event] === "function") {
-                    add(plugin, event, plugin[event]);
-                  }
-                }
+              } else {
+                this.visitSync(this.listeners.OnceExit, root);
               }
             }
           }
-          this.hasListener = Object.keys(this.listeners).length > 0;
+          return this.result;
+        }
+        then(onFulfilled, onRejected) {
+          if (false) {
+            if (!("from" in this.opts)) {
+              warnOnce(
+                "Without `from` option PostCSS could generate wrong source map and will not find Browserslist config. Set it to CSS file path or to `undefined` to prevent this warning."
+              );
+            }
+          }
+          return this.async().then(onFulfilled, onRejected);
+        }
+        toString() {
+          return this.css;
+        }
+        visitSync(visitors, node) {
+          for (let [plugin, visitor] of visitors) {
+            this.result.lastPlugin = plugin;
+            let promise;
+            try {
+              promise = visitor(node, this.helpers);
+            } catch (e) {
+              throw this.handleError(e, node.proxyOf);
+            }
+            if (node.type !== "root" && node.type !== "document" && !node.parent) {
+              return true;
+            }
+            if (isPromise(promise)) {
+              throw this.getAsyncError();
+            }
+          }
         }
         visitTick(stack) {
           let visit = stack[stack.length - 1];
@@ -3602,6 +3565,53 @@
           }
           stack.pop();
         }
+        walkSync(node) {
+          node[isClean] = true;
+          let events = getEvents(node);
+          for (let event of events) {
+            if (event === CHILDREN) {
+              if (node.nodes) {
+                node.each((child) => {
+                  if (!child[isClean])
+                    this.walkSync(child);
+                });
+              }
+            } else {
+              let visitors = this.listeners[event];
+              if (visitors) {
+                if (this.visitSync(visitors, node.toProxy()))
+                  return;
+              }
+            }
+          }
+        }
+        warnings() {
+          return this.sync().warnings();
+        }
+        get content() {
+          return this.stringify().content;
+        }
+        get css() {
+          return this.stringify().css;
+        }
+        get map() {
+          return this.stringify().map;
+        }
+        get messages() {
+          return this.sync().messages;
+        }
+        get opts() {
+          return this.result.opts;
+        }
+        get processor() {
+          return this.result.processor;
+        }
+        get root() {
+          return this.sync().root;
+        }
+        get [Symbol.toStringTag]() {
+          return "LazyResult";
+        }
       };
       LazyResult.registerPostcss = (dependant) => {
         postcss = dependant;
@@ -3649,25 +3659,60 @@
             if (generatedMap) {
               this.result.map = generatedMap;
             }
+          } else {
+            map.clearAnnotation();
+            this.result.css = map.css;
           }
         }
-        get [Symbol.toStringTag]() {
-          return "NoWorkResult";
+        async() {
+          if (this.error)
+            return Promise.reject(this.error);
+          return Promise.resolve(this.result);
         }
-        get processor() {
-          return this.result.processor;
+        catch(onRejected) {
+          return this.async().catch(onRejected);
         }
-        get opts() {
-          return this.result.opts;
+        finally(onFinally) {
+          return this.async().then(onFinally, onFinally);
         }
-        get css() {
-          return this.result.css;
+        sync() {
+          if (this.error)
+            throw this.error;
+          return this.result;
+        }
+        then(onFulfilled, onRejected) {
+          if (false) {
+            if (!("from" in this._opts)) {
+              warnOnce(
+                "Without `from` option PostCSS could generate wrong source map and will not find Browserslist config. Set it to CSS file path or to `undefined` to prevent this warning."
+              );
+            }
+          }
+          return this.async().then(onFulfilled, onRejected);
+        }
+        toString() {
+          return this._css;
+        }
+        warnings() {
+          return [];
         }
         get content() {
           return this.result.css;
         }
+        get css() {
+          return this.result.css;
+        }
         get map() {
           return this.result.map;
+        }
+        get messages() {
+          return [];
+        }
+        get opts() {
+          return this.result.opts;
+        }
+        get processor() {
+          return this.result.processor;
         }
         get root() {
           if (this._root) {
@@ -3687,40 +3732,8 @@
             return root;
           }
         }
-        get messages() {
-          return [];
-        }
-        warnings() {
-          return [];
-        }
-        toString() {
-          return this._css;
-        }
-        then(onFulfilled, onRejected) {
-          if (false) {
-            if (!("from" in this._opts)) {
-              warnOnce(
-                "Without `from` option PostCSS could generate wrong source map and will not find Browserslist config. Set it to CSS file path or to `undefined` to prevent this warning."
-              );
-            }
-          }
-          return this.async().then(onFulfilled, onRejected);
-        }
-        catch(onRejected) {
-          return this.async().catch(onRejected);
-        }
-        finally(onFinally) {
-          return this.async().then(onFinally, onFinally);
-        }
-        async() {
-          if (this.error)
-            return Promise.reject(this.error);
-          return Promise.resolve(this.result);
-        }
-        sync() {
-          if (this.error)
-            throw this.error;
-          return this.result;
+        get [Symbol.toStringTag]() {
+          return "NoWorkResult";
         }
       };
       module.exports = NoWorkResult;
@@ -3738,19 +3751,8 @@
       var Root = require_root();
       var Processor = class {
         constructor(plugins = []) {
-          this.version = "8.4.23";
+          this.version = "8.4.35";
           this.plugins = this.normalize(plugins);
-        }
-        use(plugin) {
-          this.plugins = this.plugins.concat(this.normalize([plugin]));
-          return this;
-        }
-        process(css2, opts = {}) {
-          if (this.plugins.length === 0 && typeof opts.parser === "undefined" && typeof opts.stringifier === "undefined" && typeof opts.syntax === "undefined") {
-            return new NoWorkResult(this, css2, opts);
-          } else {
-            return new LazyResult(this, css2, opts);
-          }
         }
         normalize(plugins) {
           let normalized = [];
@@ -3777,6 +3779,17 @@
             }
           }
           return normalized;
+        }
+        process(css2, opts = {}) {
+          if (!this.plugins.length && !opts.parser && !opts.stringifier && !opts.syntax) {
+            return new NoWorkResult(this, css2, opts);
+          } else {
+            return new LazyResult(this, css2, opts);
+          }
+        }
+        use(plugin) {
+          this.plugins = this.plugins.concat(this.normalize([plugin]));
+          return this;
         }
       };
       module.exports = Processor;
@@ -3976,7 +3989,7 @@
       var HASH = "#".charCodeAt(0);
       var RE_AT_END = /[\t\n\f\r "#'()/;[\\\]{}]/g;
       var RE_WORD_END = /[,\t\n\f\r !"#'():;@[\\\]{}]|\/(?=\*)/g;
-      var RE_BAD_BRACKET = /.[\n"'(/\\]/;
+      var RE_BAD_BRACKET = /.[\r\n"'(/\\]/;
       var RE_HEX_ESCAPE = /[\da-f]/i;
       var RE_NEW_LINE = /[\n\f\r]/g;
       module.exports = function scssTokenize(input, options2 = {}) {
@@ -4210,8 +4223,8 @@
         }
         return {
           back,
-          nextToken,
           endOfFile,
+          nextToken,
           position
         };
       };
@@ -4226,8 +4239,68 @@
       var NestedDeclaration = require_nested_declaration();
       var scssTokenizer = require_scss_tokenize();
       var ScssParser = class extends Parser {
+        atrule(token) {
+          let name = token[1];
+          let prev = token;
+          while (!this.tokenizer.endOfFile()) {
+            let next = this.tokenizer.nextToken();
+            if (next[0] === "word" && next[2] === prev[3] + 1) {
+              name += next[1];
+              prev = next;
+            } else {
+              this.tokenizer.back(next);
+              break;
+            }
+          }
+          super.atrule(["at-word", name, token[2], prev[3]]);
+        }
+        comment(token) {
+          if (token[4] === "inline") {
+            let node = new Comment();
+            this.init(node, token[2]);
+            node.raws.inline = true;
+            let pos = this.input.fromOffset(token[3]);
+            node.source.end = {
+              column: pos.col,
+              line: pos.line,
+              offset: token[3] + 1
+            };
+            let text = token[1].slice(2);
+            if (/^\s*$/.test(text)) {
+              node.text = "";
+              node.raws.left = text;
+              node.raws.right = "";
+            } else {
+              let match = text.match(/^(\s*)([^]*\S)(\s*)$/);
+              let fixed = match[2].replace(/(\*\/|\/\*)/g, "*//*");
+              node.text = fixed;
+              node.raws.left = match[1];
+              node.raws.right = match[3];
+              node.raws.text = match[2];
+            }
+          } else {
+            super.comment(token);
+          }
+        }
         createTokenizer() {
           this.tokenizer = scssTokenizer(this.input);
+        }
+        raw(node, prop, tokens, customProperty) {
+          super.raw(node, prop, tokens, customProperty);
+          if (node.raws[prop]) {
+            let scss2 = node.raws[prop].raw;
+            node.raws[prop].raw = tokens.reduce((all, i) => {
+              if (i[0] === "comment" && i[4] === "inline") {
+                let text = i[1].slice(2).replace(/(\*\/|\/\*)/g, "*//*");
+                return all + "/*" + text + "*/";
+              } else {
+                return all + i[1];
+              }
+            }, "");
+            if (scss2 !== node.raws[prop].raw) {
+              node.raws[prop].scss = scss2;
+            }
+          }
         }
         rule(tokens) {
           let withColon = false;
@@ -4263,10 +4336,18 @@
             }
             if (last[3]) {
               let pos = this.input.fromOffset(last[3]);
-              node.source.end = { offset: last[3], line: pos.line, column: pos.col };
+              node.source.end = {
+                column: pos.col,
+                line: pos.line,
+                offset: last[3] + 1
+              };
             } else {
               let pos = this.input.fromOffset(last[2]);
-              node.source.end = { offset: last[2], line: pos.line, column: pos.col };
+              node.source.end = {
+                column: pos.col,
+                line: pos.line,
+                offset: last[2] + 1
+              };
             }
             while (tokens[0][0] !== "word") {
               node.raws.before += tokens.shift()[1];
@@ -4274,9 +4355,9 @@
             if (tokens[0][2]) {
               let pos = this.input.fromOffset(tokens[0][2]);
               node.source.start = {
-                offset: tokens[0][2],
+                column: pos.col,
                 line: pos.line,
-                column: pos.col
+                offset: tokens[0][2]
               };
             }
             node.prop = "";
@@ -4341,62 +4422,6 @@
             this.current = node;
           }
         }
-        comment(token) {
-          if (token[4] === "inline") {
-            let node = new Comment();
-            this.init(node, token[2]);
-            node.raws.inline = true;
-            let pos = this.input.fromOffset(token[3]);
-            node.source.end = { offset: token[3], line: pos.line, column: pos.col };
-            let text = token[1].slice(2);
-            if (/^\s*$/.test(text)) {
-              node.text = "";
-              node.raws.left = text;
-              node.raws.right = "";
-            } else {
-              let match = text.match(/^(\s*)([^]*\S)(\s*)$/);
-              let fixed = match[2].replace(/(\*\/|\/\*)/g, "*//*");
-              node.text = fixed;
-              node.raws.left = match[1];
-              node.raws.right = match[3];
-              node.raws.text = match[2];
-            }
-          } else {
-            super.comment(token);
-          }
-        }
-        atrule(token) {
-          let name = token[1];
-          let prev = token;
-          while (!this.tokenizer.endOfFile()) {
-            let next = this.tokenizer.nextToken();
-            if (next[0] === "word" && next[2] === prev[3] + 1) {
-              name += next[1];
-              prev = next;
-            } else {
-              this.tokenizer.back(next);
-              break;
-            }
-          }
-          super.atrule(["at-word", name, token[2], prev[3]]);
-        }
-        raw(node, prop, tokens, customProperty) {
-          super.raw(node, prop, tokens, customProperty);
-          if (node.raws[prop]) {
-            let scss2 = node.raws[prop].raw;
-            node.raws[prop].raw = tokens.reduce((all, i) => {
-              if (i[0] === "comment" && i[4] === "inline") {
-                let text = i[1].slice(2).replace(/(\*\/|\/\*)/g, "*//*");
-                return all + "/*" + text + "*/";
-              } else {
-                return all + i[1];
-              }
-            }, "");
-            if (scss2 !== node.raws[prop].raw) {
-              node.raws[prop].scss = scss2;
-            }
-          }
-        }
       };
       module.exports = ScssParser;
     }
@@ -4416,981 +4441,376 @@
     }
   });
 
-  // node_modules/postcss-values-parser/lib/node.js
-  var require_node2 = __commonJS({
-    "node_modules/postcss-values-parser/lib/node.js"(exports, module) {
+  // node_modules/postcss-media-query-parser/dist/nodes/Node.js
+  var require_Node = __commonJS({
+    "node_modules/postcss-media-query-parser/dist/nodes/Node.js"(exports) {
       "use strict";
-      var cloneNode = function(obj, parent) {
-        let cloned = new obj.constructor();
-        for (let i in obj) {
-          if (!obj.hasOwnProperty(i))
-            continue;
-          let value = obj[i], type = typeof value;
-          if (i === "parent" && type === "object") {
-            if (parent)
-              cloned[i] = parent;
-          } else if (i === "source") {
-            cloned[i] = value;
-          } else if (value instanceof Array) {
-            cloned[i] = value.map((j) => cloneNode(j, cloned));
-          } else if (i !== "before" && i !== "after" && i !== "between" && i !== "semicolon") {
-            if (type === "object" && value !== null)
-              value = cloneNode(value);
-            cloned[i] = value;
+      Object.defineProperty(exports, "__esModule", {
+        value: true
+      });
+      function Node(opts) {
+        this.after = opts.after;
+        this.before = opts.before;
+        this.type = opts.type;
+        this.value = opts.value;
+        this.sourceIndex = opts.sourceIndex;
+      }
+      exports.default = Node;
+    }
+  });
+
+  // node_modules/postcss-media-query-parser/dist/nodes/Container.js
+  var require_Container = __commonJS({
+    "node_modules/postcss-media-query-parser/dist/nodes/Container.js"(exports) {
+      "use strict";
+      Object.defineProperty(exports, "__esModule", {
+        value: true
+      });
+      var _Node = require_Node();
+      var _Node2 = _interopRequireDefault(_Node);
+      function _interopRequireDefault(obj) {
+        return obj && obj.__esModule ? obj : { default: obj };
+      }
+      function Container(opts) {
+        var _this = this;
+        this.constructor(opts);
+        this.nodes = opts.nodes;
+        if (this.after === void 0) {
+          this.after = this.nodes.length > 0 ? this.nodes[this.nodes.length - 1].after : "";
+        }
+        if (this.before === void 0) {
+          this.before = this.nodes.length > 0 ? this.nodes[0].before : "";
+        }
+        if (this.sourceIndex === void 0) {
+          this.sourceIndex = this.before.length;
+        }
+        this.nodes.forEach(function(node) {
+          node.parent = _this;
+        });
+      }
+      Container.prototype = Object.create(_Node2.default.prototype);
+      Container.constructor = _Node2.default;
+      Container.prototype.walk = function walk(filter, cb) {
+        var hasFilter = typeof filter === "string" || filter instanceof RegExp;
+        var callback = hasFilter ? cb : filter;
+        var filterReg = typeof filter === "string" ? new RegExp(filter) : filter;
+        for (var i = 0; i < this.nodes.length; i++) {
+          var node = this.nodes[i];
+          var filtered = hasFilter ? filterReg.test(node.type) : true;
+          if (filtered && callback && callback(node, i, this.nodes) === false) {
+            return false;
+          }
+          if (node.nodes && node.walk(filter, cb) === false) {
+            return false;
           }
         }
-        return cloned;
+        return true;
       };
-      module.exports = class Node {
-        constructor(defaults) {
-          defaults = defaults || {};
-          this.raws = { before: "", after: "" };
-          for (let name in defaults) {
-            this[name] = defaults[name];
+      Container.prototype.each = function each() {
+        var cb = arguments.length <= 0 || arguments[0] === void 0 ? function() {
+        } : arguments[0];
+        for (var i = 0; i < this.nodes.length; i++) {
+          var node = this.nodes[i];
+          if (cb(node, i, this.nodes) === false) {
+            return false;
           }
         }
-        remove() {
-          if (this.parent) {
-            this.parent.removeChild(this);
-          }
-          this.parent = void 0;
-          return this;
+        return true;
+      };
+      exports.default = Container;
+    }
+  });
+
+  // node_modules/postcss-media-query-parser/dist/parsers.js
+  var require_parsers = __commonJS({
+    "node_modules/postcss-media-query-parser/dist/parsers.js"(exports) {
+      "use strict";
+      Object.defineProperty(exports, "__esModule", {
+        value: true
+      });
+      exports.parseMediaFeature = parseMediaFeature;
+      exports.parseMediaQuery = parseMediaQuery2;
+      exports.parseMediaList = parseMediaList;
+      var _Node = require_Node();
+      var _Node2 = _interopRequireDefault(_Node);
+      var _Container = require_Container();
+      var _Container2 = _interopRequireDefault(_Container);
+      function _interopRequireDefault(obj) {
+        return obj && obj.__esModule ? obj : { default: obj };
+      }
+      function parseMediaFeature(string) {
+        var index = arguments.length <= 1 || arguments[1] === void 0 ? 0 : arguments[1];
+        var modesEntered = [{
+          mode: "normal",
+          character: null
+        }];
+        var result = [];
+        var lastModeIndex = 0;
+        var mediaFeature = "";
+        var colon = null;
+        var mediaFeatureValue = null;
+        var indexLocal = index;
+        var stringNormalized = string;
+        if (string[0] === "(" && string[string.length - 1] === ")") {
+          stringNormalized = string.substring(1, string.length - 1);
+          indexLocal++;
         }
-        toString() {
-          return [
-            this.raws.before,
-            String(this.value),
-            this.raws.after
-          ].join("");
-        }
-        clone(overrides) {
-          overrides = overrides || {};
-          let cloned = cloneNode(this);
-          for (let name in overrides) {
-            cloned[name] = overrides[name];
-          }
-          return cloned;
-        }
-        cloneBefore(overrides) {
-          overrides = overrides || {};
-          let cloned = this.clone(overrides);
-          this.parent.insertBefore(this, cloned);
-          return cloned;
-        }
-        cloneAfter(overrides) {
-          overrides = overrides || {};
-          let cloned = this.clone(overrides);
-          this.parent.insertAfter(this, cloned);
-          return cloned;
-        }
-        replaceWith() {
-          let nodes = Array.prototype.slice.call(arguments);
-          if (this.parent) {
-            for (let node of nodes) {
-              this.parent.insertBefore(this, node);
-            }
-            this.remove();
-          }
-          return this;
-        }
-        moveTo(container) {
-          this.cleanRaws(this.root() === container.root());
-          this.remove();
-          container.append(this);
-          return this;
-        }
-        moveBefore(node) {
-          this.cleanRaws(this.root() === node.root());
-          this.remove();
-          node.parent.insertBefore(node, this);
-          return this;
-        }
-        moveAfter(node) {
-          this.cleanRaws(this.root() === node.root());
-          this.remove();
-          node.parent.insertAfter(node, this);
-          return this;
-        }
-        next() {
-          let index = this.parent.index(this);
-          return this.parent.nodes[index + 1];
-        }
-        prev() {
-          let index = this.parent.index(this);
-          return this.parent.nodes[index - 1];
-        }
-        toJSON() {
-          let fixed = {};
-          for (let name in this) {
-            if (!this.hasOwnProperty(name))
-              continue;
-            if (name === "parent")
-              continue;
-            let value = this[name];
-            if (value instanceof Array) {
-              fixed[name] = value.map((i) => {
-                if (typeof i === "object" && i.toJSON) {
-                  return i.toJSON();
-                } else {
-                  return i;
-                }
+        for (var i = 0; i < stringNormalized.length; i++) {
+          var character = stringNormalized[i];
+          if (character === "'" || character === '"') {
+            if (modesEntered[lastModeIndex].isCalculationEnabled === true) {
+              modesEntered.push({
+                mode: "string",
+                isCalculationEnabled: false,
+                character
               });
-            } else if (typeof value === "object" && value.toJSON) {
-              fixed[name] = value.toJSON();
-            } else {
-              fixed[name] = value;
+              lastModeIndex++;
+            } else if (modesEntered[lastModeIndex].mode === "string" && modesEntered[lastModeIndex].character === character && stringNormalized[i - 1] !== "\\") {
+              modesEntered.pop();
+              lastModeIndex--;
             }
           }
-          return fixed;
-        }
-        root() {
-          let result = this;
-          while (result.parent)
-            result = result.parent;
-          return result;
-        }
-        cleanRaws(keepBetween) {
-          delete this.raws.before;
-          delete this.raws.after;
-          if (!keepBetween)
-            delete this.raws.between;
-        }
-        positionInside(index) {
-          let string = this.toString(), column = this.source.start.column, line2 = this.source.start.line;
-          for (let i = 0; i < index; i++) {
-            if (string[i] === "\n") {
-              column = 1;
-              line2 += 1;
-            } else {
-              column += 1;
-            }
+          if (character === "{") {
+            modesEntered.push({
+              mode: "interpolation",
+              isCalculationEnabled: true
+            });
+            lastModeIndex++;
+          } else if (character === "}") {
+            modesEntered.pop();
+            lastModeIndex--;
           }
-          return { line: line2, column };
-        }
-        positionBy(opts) {
-          let pos = this.source.start;
-          if (Object(opts).index) {
-            pos = this.positionInside(opts.index);
-          } else if (Object(opts).word) {
-            let index = this.toString().indexOf(opts.word);
-            if (index !== -1)
-              pos = this.positionInside(index);
+          if (modesEntered[lastModeIndex].mode === "normal" && character === ":") {
+            var mediaFeatureValueStr = stringNormalized.substring(i + 1);
+            mediaFeatureValue = {
+              type: "value",
+              before: /^(\s*)/.exec(mediaFeatureValueStr)[1],
+              after: /(\s*)$/.exec(mediaFeatureValueStr)[1],
+              value: mediaFeatureValueStr.trim()
+            };
+            mediaFeatureValue.sourceIndex = mediaFeatureValue.before.length + i + 1 + indexLocal;
+            colon = {
+              type: "colon",
+              sourceIndex: i + indexLocal,
+              after: mediaFeatureValue.before,
+              value: ":"
+            };
+            break;
           }
-          return pos;
+          mediaFeature += character;
         }
-      };
-    }
-  });
-
-  // node_modules/postcss-values-parser/lib/container.js
-  var require_container2 = __commonJS({
-    "node_modules/postcss-values-parser/lib/container.js"(exports, module) {
-      "use strict";
-      var Node = require_node2();
-      var Container = class extends Node {
-        constructor(opts) {
-          super(opts);
-          if (!this.nodes) {
-            this.nodes = [];
-          }
-        }
-        push(child) {
-          child.parent = this;
-          this.nodes.push(child);
-          return this;
-        }
-        each(callback) {
-          if (!this.lastEach)
-            this.lastEach = 0;
-          if (!this.indexes)
-            this.indexes = {};
-          this.lastEach += 1;
-          let id = this.lastEach, index, result;
-          this.indexes[id] = 0;
-          if (!this.nodes)
-            return void 0;
-          while (this.indexes[id] < this.nodes.length) {
-            index = this.indexes[id];
-            result = callback(this.nodes[index], index);
-            if (result === false)
-              break;
-            this.indexes[id] += 1;
-          }
-          delete this.indexes[id];
-          return result;
-        }
-        walk(callback) {
-          return this.each((child, i) => {
-            let result = callback(child, i);
-            if (result !== false && child.walk) {
-              result = child.walk(callback);
-            }
-            return result;
-          });
-        }
-        walkType(type, callback) {
-          if (!type || !callback) {
-            throw new Error("Parameters {type} and {callback} are required.");
-          }
-          const isTypeCallable = typeof type === "function";
-          return this.walk((node, index) => {
-            if (isTypeCallable && node instanceof type || !isTypeCallable && node.type === type) {
-              return callback.call(this, node, index);
-            }
-          });
-        }
-        append(node) {
-          node.parent = this;
-          this.nodes.push(node);
-          return this;
-        }
-        prepend(node) {
-          node.parent = this;
-          this.nodes.unshift(node);
-          return this;
-        }
-        cleanRaws(keepBetween) {
-          super.cleanRaws(keepBetween);
-          if (this.nodes) {
-            for (let node of this.nodes)
-              node.cleanRaws(keepBetween);
-          }
-        }
-        insertAfter(oldNode, newNode) {
-          let oldIndex = this.index(oldNode), index;
-          this.nodes.splice(oldIndex + 1, 0, newNode);
-          for (let id in this.indexes) {
-            index = this.indexes[id];
-            if (oldIndex <= index) {
-              this.indexes[id] = index + this.nodes.length;
-            }
-          }
-          return this;
-        }
-        insertBefore(oldNode, newNode) {
-          let oldIndex = this.index(oldNode), index;
-          this.nodes.splice(oldIndex, 0, newNode);
-          for (let id in this.indexes) {
-            index = this.indexes[id];
-            if (oldIndex <= index) {
-              this.indexes[id] = index + this.nodes.length;
-            }
-          }
-          return this;
-        }
-        removeChild(child) {
-          child = this.index(child);
-          this.nodes[child].parent = void 0;
-          this.nodes.splice(child, 1);
-          let index;
-          for (let id in this.indexes) {
-            index = this.indexes[id];
-            if (index >= child) {
-              this.indexes[id] = index - 1;
-            }
-          }
-          return this;
-        }
-        removeAll() {
-          for (let node of this.nodes)
-            node.parent = void 0;
-          this.nodes = [];
-          return this;
-        }
-        every(condition) {
-          return this.nodes.every(condition);
-        }
-        some(condition) {
-          return this.nodes.some(condition);
-        }
-        index(child) {
-          if (typeof child === "number") {
-            return child;
-          } else {
-            return this.nodes.indexOf(child);
-          }
-        }
-        get first() {
-          if (!this.nodes)
-            return void 0;
-          return this.nodes[0];
-        }
-        get last() {
-          if (!this.nodes)
-            return void 0;
-          return this.nodes[this.nodes.length - 1];
-        }
-        toString() {
-          let result = this.nodes.map(String).join("");
-          if (this.value) {
-            result = this.value + result;
-          }
-          if (this.raws.before) {
-            result = this.raws.before + result;
-          }
-          if (this.raws.after) {
-            result += this.raws.after;
-          }
-          return result;
-        }
-      };
-      Container.registerWalker = (constructor) => {
-        let walkerName = "walk" + constructor.name;
-        if (walkerName.lastIndexOf("s") !== walkerName.length - 1) {
-          walkerName += "s";
-        }
-        if (Container.prototype[walkerName]) {
-          return;
-        }
-        Container.prototype[walkerName] = function(callback) {
-          return this.walkType(constructor, callback);
+        mediaFeature = {
+          type: "media-feature",
+          before: /^(\s*)/.exec(mediaFeature)[1],
+          after: /(\s*)$/.exec(mediaFeature)[1],
+          value: mediaFeature.trim()
         };
-      };
-      module.exports = Container;
-    }
-  });
-
-  // node_modules/postcss-values-parser/lib/root.js
-  var require_root2 = __commonJS({
-    "node_modules/postcss-values-parser/lib/root.js"(exports, module) {
-      "use strict";
-      var Container = require_container2();
-      module.exports = class Root extends Container {
-        constructor(opts) {
-          super(opts);
-          this.type = "root";
+        mediaFeature.sourceIndex = mediaFeature.before.length + indexLocal;
+        result.push(mediaFeature);
+        if (colon !== null) {
+          colon.before = mediaFeature.after;
+          result.push(colon);
         }
-      };
-    }
-  });
-
-  // node_modules/postcss-values-parser/lib/value.js
-  var require_value = __commonJS({
-    "node_modules/postcss-values-parser/lib/value.js"(exports, module) {
-      "use strict";
-      var Container = require_container2();
-      module.exports = class Value extends Container {
-        constructor(opts) {
-          super(opts);
-          this.type = "value";
-          this.unbalanced = 0;
+        if (mediaFeatureValue !== null) {
+          result.push(mediaFeatureValue);
         }
-      };
-    }
-  });
-
-  // node_modules/postcss-values-parser/lib/atword.js
-  var require_atword = __commonJS({
-    "node_modules/postcss-values-parser/lib/atword.js"(exports, module) {
-      "use strict";
-      var Container = require_container2();
-      var AtWord = class extends Container {
-        constructor(opts) {
-          super(opts);
-          this.type = "atword";
+        return result;
+      }
+      function parseMediaQuery2(string) {
+        var index = arguments.length <= 1 || arguments[1] === void 0 ? 0 : arguments[1];
+        var result = [];
+        var localLevel = 0;
+        var insideSomeValue = false;
+        var node = void 0;
+        function resetNode() {
+          return {
+            before: "",
+            after: "",
+            value: ""
+          };
         }
-        toString() {
-          let quote = this.quoted ? this.raws.quote : "";
-          return [
-            this.raws.before,
-            "@",
-            // we can't use String() here because it'll try using itself
-            // as the constructor
-            String.prototype.toString.call(this.value),
-            this.raws.after
-          ].join("");
-        }
-      };
-      Container.registerWalker(AtWord);
-      module.exports = AtWord;
-    }
-  });
-
-  // node_modules/postcss-values-parser/lib/colon.js
-  var require_colon = __commonJS({
-    "node_modules/postcss-values-parser/lib/colon.js"(exports, module) {
-      "use strict";
-      var Container = require_container2();
-      var Node = require_node2();
-      var Colon = class extends Node {
-        constructor(opts) {
-          super(opts);
-          this.type = "colon";
-        }
-      };
-      Container.registerWalker(Colon);
-      module.exports = Colon;
-    }
-  });
-
-  // node_modules/postcss-values-parser/lib/comma.js
-  var require_comma = __commonJS({
-    "node_modules/postcss-values-parser/lib/comma.js"(exports, module) {
-      "use strict";
-      var Container = require_container2();
-      var Node = require_node2();
-      var Comma = class extends Node {
-        constructor(opts) {
-          super(opts);
-          this.type = "comma";
-        }
-      };
-      Container.registerWalker(Comma);
-      module.exports = Comma;
-    }
-  });
-
-  // node_modules/postcss-values-parser/lib/comment.js
-  var require_comment2 = __commonJS({
-    "node_modules/postcss-values-parser/lib/comment.js"(exports, module) {
-      "use strict";
-      var Container = require_container2();
-      var Node = require_node2();
-      var Comment = class extends Node {
-        constructor(opts) {
-          super(opts);
-          this.type = "comment";
-          this.inline = Object(opts).inline || false;
-        }
-        toString() {
-          return [
-            this.raws.before,
-            this.inline ? "//" : "/*",
-            String(this.value),
-            this.inline ? "" : "*/",
-            this.raws.after
-          ].join("");
-        }
-      };
-      Container.registerWalker(Comment);
-      module.exports = Comment;
-    }
-  });
-
-  // node_modules/postcss-values-parser/lib/function.js
-  var require_function = __commonJS({
-    "node_modules/postcss-values-parser/lib/function.js"(exports, module) {
-      "use strict";
-      var Container = require_container2();
-      var FunctionNode = class extends Container {
-        constructor(opts) {
-          super(opts);
-          this.type = "func";
-          this.unbalanced = -1;
-        }
-      };
-      Container.registerWalker(FunctionNode);
-      module.exports = FunctionNode;
-    }
-  });
-
-  // node_modules/postcss-values-parser/lib/number.js
-  var require_number = __commonJS({
-    "node_modules/postcss-values-parser/lib/number.js"(exports, module) {
-      "use strict";
-      var Container = require_container2();
-      var Node = require_node2();
-      var NumberNode = class extends Node {
-        constructor(opts) {
-          super(opts);
-          this.type = "number";
-          this.unit = Object(opts).unit || "";
-        }
-        toString() {
-          return [
-            this.raws.before,
-            String(this.value),
-            this.unit,
-            this.raws.after
-          ].join("");
-        }
-      };
-      Container.registerWalker(NumberNode);
-      module.exports = NumberNode;
-    }
-  });
-
-  // node_modules/postcss-values-parser/lib/operator.js
-  var require_operator = __commonJS({
-    "node_modules/postcss-values-parser/lib/operator.js"(exports, module) {
-      "use strict";
-      var Container = require_container2();
-      var Node = require_node2();
-      var Operator = class extends Node {
-        constructor(opts) {
-          super(opts);
-          this.type = "operator";
-        }
-      };
-      Container.registerWalker(Operator);
-      module.exports = Operator;
-    }
-  });
-
-  // node_modules/postcss-values-parser/lib/paren.js
-  var require_paren = __commonJS({
-    "node_modules/postcss-values-parser/lib/paren.js"(exports, module) {
-      "use strict";
-      var Container = require_container2();
-      var Node = require_node2();
-      var Parenthesis = class extends Node {
-        constructor(opts) {
-          super(opts);
-          this.type = "paren";
-          this.parenType = "";
-        }
-      };
-      Container.registerWalker(Parenthesis);
-      module.exports = Parenthesis;
-    }
-  });
-
-  // node_modules/postcss-values-parser/lib/string.js
-  var require_string = __commonJS({
-    "node_modules/postcss-values-parser/lib/string.js"(exports, module) {
-      "use strict";
-      var Container = require_container2();
-      var Node = require_node2();
-      var StringNode = class extends Node {
-        constructor(opts) {
-          super(opts);
-          this.type = "string";
-        }
-        toString() {
-          let quote = this.quoted ? this.raws.quote : "";
-          return [
-            this.raws.before,
-            quote,
-            // we can't use String() here because it'll try using itself
-            // as the constructor
-            this.value + "",
-            quote,
-            this.raws.after
-          ].join("");
-        }
-      };
-      Container.registerWalker(StringNode);
-      module.exports = StringNode;
-    }
-  });
-
-  // node_modules/postcss-values-parser/lib/word.js
-  var require_word = __commonJS({
-    "node_modules/postcss-values-parser/lib/word.js"(exports, module) {
-      "use strict";
-      var Container = require_container2();
-      var Node = require_node2();
-      var Word = class extends Node {
-        constructor(opts) {
-          super(opts);
-          this.type = "word";
-        }
-      };
-      Container.registerWalker(Word);
-      module.exports = Word;
-    }
-  });
-
-  // node_modules/postcss-values-parser/lib/unicode-range.js
-  var require_unicode_range = __commonJS({
-    "node_modules/postcss-values-parser/lib/unicode-range.js"(exports, module) {
-      "use strict";
-      var Container = require_container2();
-      var Node = require_node2();
-      var UnicodeRange = class extends Node {
-        constructor(opts) {
-          super(opts);
-          this.type = "unicode-range";
-        }
-      };
-      Container.registerWalker(UnicodeRange);
-      module.exports = UnicodeRange;
-    }
-  });
-
-  // node_modules/postcss-values-parser/lib/errors/TokenizeError.js
-  var require_TokenizeError = __commonJS({
-    "node_modules/postcss-values-parser/lib/errors/TokenizeError.js"(exports, module) {
-      "use strict";
-      var TokenizeError = class extends Error {
-        constructor(message) {
-          super(message);
-          this.name = this.constructor.name;
-          this.message = message || "An error ocurred while tokzenizing.";
-          if (typeof Error.captureStackTrace === "function") {
-            Error.captureStackTrace(this, this.constructor);
+        node = resetNode();
+        for (var i = 0; i < string.length; i++) {
+          var character = string[i];
+          if (!insideSomeValue) {
+            if (character.search(/\s/) !== -1) {
+              node.before += character;
+            } else {
+              if (character === "(") {
+                node.type = "media-feature-expression";
+                localLevel++;
+              }
+              node.value = character;
+              node.sourceIndex = index + i;
+              insideSomeValue = true;
+            }
           } else {
-            this.stack = new Error(message).stack;
+            node.value += character;
+            if (character === "{" || character === "(") {
+              localLevel++;
+            }
+            if (character === ")" || character === "}") {
+              localLevel--;
+            }
+          }
+          if (insideSomeValue && localLevel === 0 && (character === ")" || i === string.length - 1 || string[i + 1].search(/\s/) !== -1)) {
+            if (["not", "only", "and"].indexOf(node.value) !== -1) {
+              node.type = "keyword";
+            }
+            if (node.type === "media-feature-expression") {
+              node.nodes = parseMediaFeature(node.value, node.sourceIndex);
+            }
+            result.push(Array.isArray(node.nodes) ? new _Container2.default(node) : new _Node2.default(node));
+            node = resetNode();
+            insideSomeValue = false;
           }
         }
-      };
-      module.exports = TokenizeError;
+        for (var _i = 0; _i < result.length; _i++) {
+          node = result[_i];
+          if (_i > 0) {
+            result[_i - 1].after = node.before;
+          }
+          if (node.type === void 0) {
+            if (_i > 0) {
+              if (result[_i - 1].type === "media-feature-expression") {
+                node.type = "keyword";
+                continue;
+              }
+              if (result[_i - 1].value === "not" || result[_i - 1].value === "only") {
+                node.type = "media-type";
+                continue;
+              }
+              if (result[_i - 1].value === "and") {
+                node.type = "media-feature-expression";
+                continue;
+              }
+              if (result[_i - 1].type === "media-type") {
+                if (!result[_i + 1]) {
+                  node.type = "media-feature-expression";
+                } else {
+                  node.type = result[_i + 1].type === "media-feature-expression" ? "keyword" : "media-feature-expression";
+                }
+              }
+            }
+            if (_i === 0) {
+              if (!result[_i + 1]) {
+                node.type = "media-type";
+                continue;
+              }
+              if (result[_i + 1] && (result[_i + 1].type === "media-feature-expression" || result[_i + 1].type === "keyword")) {
+                node.type = "media-type";
+                continue;
+              }
+              if (result[_i + 2]) {
+                if (result[_i + 2].type === "media-feature-expression") {
+                  node.type = "media-type";
+                  result[_i + 1].type = "keyword";
+                  continue;
+                }
+                if (result[_i + 2].type === "keyword") {
+                  node.type = "keyword";
+                  result[_i + 1].type = "media-type";
+                  continue;
+                }
+              }
+              if (result[_i + 3]) {
+                if (result[_i + 3].type === "media-feature-expression") {
+                  node.type = "keyword";
+                  result[_i + 1].type = "media-type";
+                  result[_i + 2].type = "keyword";
+                  continue;
+                }
+              }
+            }
+          }
+        }
+        return result;
+      }
+      function parseMediaList(string) {
+        var result = [];
+        var interimIndex = 0;
+        var levelLocal = 0;
+        var doesHaveUrl = /^(\s*)url\s*\(/.exec(string);
+        if (doesHaveUrl !== null) {
+          var i = doesHaveUrl[0].length;
+          var parenthesesLv = 1;
+          while (parenthesesLv > 0) {
+            var character = string[i];
+            if (character === "(") {
+              parenthesesLv++;
+            }
+            if (character === ")") {
+              parenthesesLv--;
+            }
+            i++;
+          }
+          result.unshift(new _Node2.default({
+            type: "url",
+            value: string.substring(0, i).trim(),
+            sourceIndex: doesHaveUrl[1].length,
+            before: doesHaveUrl[1],
+            after: /^(\s*)/.exec(string.substring(i))[1]
+          }));
+          interimIndex = i;
+        }
+        for (var _i2 = interimIndex; _i2 < string.length; _i2++) {
+          var _character = string[_i2];
+          if (_character === "(") {
+            levelLocal++;
+          }
+          if (_character === ")") {
+            levelLocal--;
+          }
+          if (levelLocal === 0 && _character === ",") {
+            var _mediaQueryString = string.substring(interimIndex, _i2);
+            var _spaceBefore = /^(\s*)/.exec(_mediaQueryString)[1];
+            result.push(new _Container2.default({
+              type: "media-query",
+              value: _mediaQueryString.trim(),
+              sourceIndex: interimIndex + _spaceBefore.length,
+              nodes: parseMediaQuery2(_mediaQueryString, interimIndex),
+              before: _spaceBefore,
+              after: /(\s*)$/.exec(_mediaQueryString)[1]
+            }));
+            interimIndex = _i2 + 1;
+          }
+        }
+        var mediaQueryString = string.substring(interimIndex);
+        var spaceBefore = /^(\s*)/.exec(mediaQueryString)[1];
+        result.push(new _Container2.default({
+          type: "media-query",
+          value: mediaQueryString.trim(),
+          sourceIndex: interimIndex + spaceBefore.length,
+          nodes: parseMediaQuery2(mediaQueryString, interimIndex),
+          before: spaceBefore,
+          after: /(\s*)$/.exec(mediaQueryString)[1]
+        }));
+        return result;
+      }
     }
   });
 
-  // node_modules/postcss-values-parser/lib/tokenize.js
-  var require_tokenize2 = __commonJS({
-    "node_modules/postcss-values-parser/lib/tokenize.js"(exports, module) {
+  // node_modules/postcss-media-query-parser/dist/index.js
+  var require_dist = __commonJS({
+    "node_modules/postcss-media-query-parser/dist/index.js"(exports) {
       "use strict";
-      var openBracket = "{".charCodeAt(0);
-      var closeBracket = "}".charCodeAt(0);
-      var openParen = "(".charCodeAt(0);
-      var closeParen = ")".charCodeAt(0);
-      var singleQuote = "'".charCodeAt(0);
-      var doubleQuote = '"'.charCodeAt(0);
-      var backslash = "\\".charCodeAt(0);
-      var slash = "/".charCodeAt(0);
-      var period = ".".charCodeAt(0);
-      var comma = ",".charCodeAt(0);
-      var colon = ":".charCodeAt(0);
-      var asterisk = "*".charCodeAt(0);
-      var minus = "-".charCodeAt(0);
-      var plus = "+".charCodeAt(0);
-      var pound = "#".charCodeAt(0);
-      var newline = "\n".charCodeAt(0);
-      var space = " ".charCodeAt(0);
-      var feed = "\f".charCodeAt(0);
-      var tab = "	".charCodeAt(0);
-      var cr = "\r".charCodeAt(0);
-      var at2 = "@".charCodeAt(0);
-      var lowerE = "e".charCodeAt(0);
-      var upperE = "E".charCodeAt(0);
-      var digit0 = "0".charCodeAt(0);
-      var digit9 = "9".charCodeAt(0);
-      var lowerU = "u".charCodeAt(0);
-      var upperU = "U".charCodeAt(0);
-      var atEnd = /[ \n\t\r\{\(\)'"\\;,/]/g;
-      var wordEnd = /[ \n\t\r\(\)\{\}\*:;@!&'"\+\|~>,\[\]\\]|\/(?=\*)/g;
-      var wordEndNum = /[ \n\t\r\(\)\{\}\*:;@!&'"\-\+\|~>,\[\]\\]|\//g;
-      var alphaNum = /^[a-z0-9]/i;
-      var unicodeRange = /^[a-f0-9?\-]/i;
-      var TokenizeError = require_TokenizeError();
-      module.exports = function tokenize(input, options2) {
-        options2 = options2 || {};
-        let tokens = [], css2 = input.valueOf(), length = css2.length, offset = -1, line2 = 1, pos = 0, parentCount = 0, isURLArg = null, code, next, quote, lines, last, content, escape, nextLine, nextOffset, escaped, escapePos, nextChar;
-        function unclosed(what) {
-          let message = `Unclosed ${what} at line: ${line2}, column: ${pos - offset}, token: ${pos}`;
-          throw new TokenizeError(message);
-        }
-        function tokenizeError() {
-          let message = `Syntax error at line: ${line2}, column: ${pos - offset}, token: ${pos}`;
-          throw new TokenizeError(message);
-        }
-        while (pos < length) {
-          code = css2.charCodeAt(pos);
-          if (code === newline) {
-            offset = pos;
-            line2 += 1;
-          }
-          switch (code) {
-            case newline:
-            case space:
-            case tab:
-            case cr:
-            case feed:
-              next = pos;
-              do {
-                next += 1;
-                code = css2.charCodeAt(next);
-                if (code === newline) {
-                  offset = next;
-                  line2 += 1;
-                }
-              } while (code === space || code === newline || code === tab || code === cr || code === feed);
-              tokens.push([
-                "space",
-                css2.slice(pos, next),
-                line2,
-                pos - offset,
-                line2,
-                next - offset,
-                pos
-              ]);
-              pos = next - 1;
-              break;
-            case colon:
-              next = pos + 1;
-              tokens.push([
-                "colon",
-                css2.slice(pos, next),
-                line2,
-                pos - offset,
-                line2,
-                next - offset,
-                pos
-              ]);
-              pos = next - 1;
-              break;
-            case comma:
-              next = pos + 1;
-              tokens.push([
-                "comma",
-                css2.slice(pos, next),
-                line2,
-                pos - offset,
-                line2,
-                next - offset,
-                pos
-              ]);
-              pos = next - 1;
-              break;
-            case openBracket:
-              tokens.push([
-                "{",
-                "{",
-                line2,
-                pos - offset,
-                line2,
-                next - offset,
-                pos
-              ]);
-              break;
-            case closeBracket:
-              tokens.push([
-                "}",
-                "}",
-                line2,
-                pos - offset,
-                line2,
-                next - offset,
-                pos
-              ]);
-              break;
-            case openParen:
-              parentCount++;
-              isURLArg = !isURLArg && parentCount === 1 && tokens.length > 0 && tokens[tokens.length - 1][0] === "word" && tokens[tokens.length - 1][1] === "url";
-              tokens.push([
-                "(",
-                "(",
-                line2,
-                pos - offset,
-                line2,
-                next - offset,
-                pos
-              ]);
-              break;
-            case closeParen:
-              parentCount--;
-              isURLArg = isURLArg && parentCount > 0;
-              tokens.push([
-                ")",
-                ")",
-                line2,
-                pos - offset,
-                line2,
-                next - offset,
-                pos
-              ]);
-              break;
-            case singleQuote:
-            case doubleQuote:
-              quote = code === singleQuote ? "'" : '"';
-              next = pos;
-              do {
-                escaped = false;
-                next = css2.indexOf(quote, next + 1);
-                if (next === -1) {
-                  unclosed("quote", quote);
-                }
-                escapePos = next;
-                while (css2.charCodeAt(escapePos - 1) === backslash) {
-                  escapePos -= 1;
-                  escaped = !escaped;
-                }
-              } while (escaped);
-              tokens.push([
-                "string",
-                css2.slice(pos, next + 1),
-                line2,
-                pos - offset,
-                line2,
-                next - offset,
-                pos
-              ]);
-              pos = next;
-              break;
-            case at2:
-              atEnd.lastIndex = pos + 1;
-              atEnd.test(css2);
-              if (atEnd.lastIndex === 0) {
-                next = css2.length - 1;
-              } else {
-                next = atEnd.lastIndex - 2;
-              }
-              tokens.push([
-                "atword",
-                css2.slice(pos, next + 1),
-                line2,
-                pos - offset,
-                line2,
-                next - offset,
-                pos
-              ]);
-              pos = next;
-              break;
-            case backslash:
-              next = pos;
-              code = css2.charCodeAt(next + 1);
-              if (escape && (code !== slash && code !== space && code !== newline && code !== tab && code !== cr && code !== feed)) {
-                next += 1;
-              }
-              tokens.push([
-                "word",
-                css2.slice(pos, next + 1),
-                line2,
-                pos - offset,
-                line2,
-                next - offset,
-                pos
-              ]);
-              pos = next;
-              break;
-            case plus:
-            case minus:
-            case asterisk:
-              next = pos + 1;
-              nextChar = css2.slice(pos + 1, next + 1);
-              let prevChar = css2.slice(pos - 1, pos);
-              if (code === minus && nextChar.charCodeAt(0) === minus) {
-                next++;
-                tokens.push([
-                  "word",
-                  css2.slice(pos, next),
-                  line2,
-                  pos - offset,
-                  line2,
-                  next - offset,
-                  pos
-                ]);
-                pos = next - 1;
-                break;
-              }
-              tokens.push([
-                "operator",
-                css2.slice(pos, next),
-                line2,
-                pos - offset,
-                line2,
-                next - offset,
-                pos
-              ]);
-              pos = next - 1;
-              break;
-            default:
-              if (code === slash && (css2.charCodeAt(pos + 1) === asterisk || options2.loose && !isURLArg && css2.charCodeAt(pos + 1) === slash)) {
-                const isStandardComment = css2.charCodeAt(pos + 1) === asterisk;
-                if (isStandardComment) {
-                  next = css2.indexOf("*/", pos + 2) + 1;
-                  if (next === 0) {
-                    unclosed("comment", "*/");
-                  }
-                } else {
-                  const newlinePos = css2.indexOf("\n", pos + 2);
-                  next = newlinePos !== -1 ? newlinePos - 1 : length;
-                }
-                content = css2.slice(pos, next + 1);
-                lines = content.split("\n");
-                last = lines.length - 1;
-                if (last > 0) {
-                  nextLine = line2 + last;
-                  nextOffset = next - lines[last].length;
-                } else {
-                  nextLine = line2;
-                  nextOffset = offset;
-                }
-                tokens.push([
-                  "comment",
-                  content,
-                  line2,
-                  pos - offset,
-                  nextLine,
-                  next - nextOffset,
-                  pos
-                ]);
-                offset = nextOffset;
-                line2 = nextLine;
-                pos = next;
-              } else if (code === pound && !alphaNum.test(css2.slice(pos + 1, pos + 2))) {
-                next = pos + 1;
-                tokens.push([
-                  "#",
-                  css2.slice(pos, next),
-                  line2,
-                  pos - offset,
-                  line2,
-                  next - offset,
-                  pos
-                ]);
-                pos = next - 1;
-              } else if ((code === lowerU || code === upperU) && css2.charCodeAt(pos + 1) === plus) {
-                next = pos + 2;
-                do {
-                  next += 1;
-                  code = css2.charCodeAt(next);
-                } while (next < length && unicodeRange.test(css2.slice(next, next + 1)));
-                tokens.push([
-                  "unicoderange",
-                  css2.slice(pos, next),
-                  line2,
-                  pos - offset,
-                  line2,
-                  next - offset,
-                  pos
-                ]);
-                pos = next - 1;
-              } else if (code === slash) {
-                next = pos + 1;
-                tokens.push([
-                  "operator",
-                  css2.slice(pos, next),
-                  line2,
-                  pos - offset,
-                  line2,
-                  next - offset,
-                  pos
-                ]);
-                pos = next - 1;
-              } else {
-                let regex = wordEnd;
-                if (code >= digit0 && code <= digit9) {
-                  regex = wordEndNum;
-                }
-                regex.lastIndex = pos + 1;
-                regex.test(css2);
-                if (regex.lastIndex === 0) {
-                  next = css2.length - 1;
-                } else {
-                  next = regex.lastIndex - 2;
-                }
-                if (regex === wordEndNum || code === period) {
-                  let ncode = css2.charCodeAt(next), ncode1 = css2.charCodeAt(next + 1), ncode2 = css2.charCodeAt(next + 2);
-                  if ((ncode === lowerE || ncode === upperE) && (ncode1 === minus || ncode1 === plus) && (ncode2 >= digit0 && ncode2 <= digit9)) {
-                    wordEndNum.lastIndex = next + 2;
-                    wordEndNum.test(css2);
-                    if (wordEndNum.lastIndex === 0) {
-                      next = css2.length - 1;
-                    } else {
-                      next = wordEndNum.lastIndex - 2;
-                    }
-                  }
-                }
-                tokens.push([
-                  "word",
-                  css2.slice(pos, next + 1),
-                  line2,
-                  pos - offset,
-                  line2,
-                  next - offset,
-                  pos
-                ]);
-                pos = next;
-              }
-              break;
-          }
-          pos++;
-        }
-        return tokens;
-      };
+      Object.defineProperty(exports, "__esModule", {
+        value: true
+      });
+      exports.default = parseMedia;
+      var _Container = require_Container();
+      var _Container2 = _interopRequireDefault(_Container);
+      var _parsers = require_parsers();
+      function _interopRequireDefault(obj) {
+        return obj && obj.__esModule ? obj : { default: obj };
+      }
+      function parseMedia(value) {
+        return new _Container2.default({
+          nodes: (0, _parsers.parseMediaList)(value),
+          type: "media-query-list",
+          value: value.trim()
+        });
+      }
     }
   });
 
@@ -5488,466 +4908,8 @@
     }
   });
 
-  // node_modules/postcss-values-parser/lib/errors/ParserError.js
-  var require_ParserError = __commonJS({
-    "node_modules/postcss-values-parser/lib/errors/ParserError.js"(exports, module) {
-      "use strict";
-      var ParserError = class extends Error {
-        constructor(message) {
-          super(message);
-          this.name = this.constructor.name;
-          this.message = message || "An error ocurred while parsing.";
-          if (typeof Error.captureStackTrace === "function") {
-            Error.captureStackTrace(this, this.constructor);
-          } else {
-            this.stack = new Error(message).stack;
-          }
-        }
-      };
-      module.exports = ParserError;
-    }
-  });
-
-  // node_modules/postcss-values-parser/lib/parser.js
-  var require_parser2 = __commonJS({
-    "node_modules/postcss-values-parser/lib/parser.js"(exports, module) {
-      "use strict";
-      var Root = require_root2();
-      var Value = require_value();
-      var AtWord = require_atword();
-      var Colon = require_colon();
-      var Comma = require_comma();
-      var Comment = require_comment2();
-      var Func = require_function();
-      var Numbr = require_number();
-      var Operator = require_operator();
-      var Paren = require_paren();
-      var Str = require_string();
-      var Word = require_word();
-      var UnicodeRange = require_unicode_range();
-      var tokenize = require_tokenize2();
-      var flatten = require_flatten();
-      var indexesOf = require_indexes_of();
-      var uniq = require_uniq();
-      var ParserError = require_ParserError();
-      function sortAscending(list) {
-        return list.sort((a, b) => a - b);
-      }
-      module.exports = class Parser {
-        constructor(input, options2) {
-          const defaults = { loose: false };
-          this.cache = [];
-          this.input = input;
-          this.options = Object.assign({}, defaults, options2);
-          this.position = 0;
-          this.unbalanced = 0;
-          this.root = new Root();
-          let value = new Value();
-          this.root.append(value);
-          this.current = value;
-          this.tokens = tokenize(input, this.options);
-        }
-        parse() {
-          return this.loop();
-        }
-        colon() {
-          let token = this.currToken;
-          this.newNode(new Colon({
-            value: token[1],
-            source: {
-              start: {
-                line: token[2],
-                column: token[3]
-              },
-              end: {
-                line: token[4],
-                column: token[5]
-              }
-            },
-            sourceIndex: token[6]
-          }));
-          this.position++;
-        }
-        comma() {
-          let token = this.currToken;
-          this.newNode(new Comma({
-            value: token[1],
-            source: {
-              start: {
-                line: token[2],
-                column: token[3]
-              },
-              end: {
-                line: token[4],
-                column: token[5]
-              }
-            },
-            sourceIndex: token[6]
-          }));
-          this.position++;
-        }
-        comment() {
-          let inline = false, value = this.currToken[1].replace(/\/\*|\*\//g, ""), node;
-          if (this.options.loose && value.startsWith("//")) {
-            value = value.substring(2);
-            inline = true;
-          }
-          node = new Comment({
-            value,
-            inline,
-            source: {
-              start: {
-                line: this.currToken[2],
-                column: this.currToken[3]
-              },
-              end: {
-                line: this.currToken[4],
-                column: this.currToken[5]
-              }
-            },
-            sourceIndex: this.currToken[6]
-          });
-          this.newNode(node);
-          this.position++;
-        }
-        error(message, token) {
-          throw new ParserError(message + ` at line: ${token[2]}, column ${token[3]}`);
-        }
-        loop() {
-          while (this.position < this.tokens.length) {
-            this.parseTokens();
-          }
-          if (!this.current.last && this.spaces) {
-            this.current.raws.before += this.spaces;
-          } else if (this.spaces) {
-            this.current.last.raws.after += this.spaces;
-          }
-          this.spaces = "";
-          return this.root;
-        }
-        operator() {
-          let char = this.currToken[1], node;
-          if (char === "+" || char === "-") {
-            if (!this.options.loose) {
-              if (this.position > 0) {
-                if (this.current.type === "func" && this.current.value === "calc") {
-                  if (this.prevToken[0] !== "space" && this.prevToken[0] !== "(") {
-                    this.error("Syntax Error", this.currToken);
-                  } else if (this.nextToken[0] !== "space" && this.nextToken[0] !== "word") {
-                    this.error("Syntax Error", this.currToken);
-                  } else if (this.nextToken[0] === "word" && this.current.last.type !== "operator" && this.current.last.value !== "(") {
-                    this.error("Syntax Error", this.currToken);
-                  }
-                } else if (this.nextToken[0] === "space" || this.nextToken[0] === "operator" || this.prevToken[0] === "operator") {
-                  this.error("Syntax Error", this.currToken);
-                }
-              }
-            }
-            if (!this.options.loose) {
-              if (this.nextToken[0] === "word") {
-                return this.word();
-              }
-            } else {
-              if ((!this.current.nodes.length || this.current.last && this.current.last.type === "operator") && this.nextToken[0] === "word") {
-                return this.word();
-              }
-            }
-          }
-          node = new Operator({
-            value: this.currToken[1],
-            source: {
-              start: {
-                line: this.currToken[2],
-                column: this.currToken[3]
-              },
-              end: {
-                line: this.currToken[2],
-                column: this.currToken[3]
-              }
-            },
-            sourceIndex: this.currToken[4]
-          });
-          this.position++;
-          return this.newNode(node);
-        }
-        parseTokens() {
-          switch (this.currToken[0]) {
-            case "space":
-              this.space();
-              break;
-            case "colon":
-              this.colon();
-              break;
-            case "comma":
-              this.comma();
-              break;
-            case "comment":
-              this.comment();
-              break;
-            case "(":
-              this.parenOpen();
-              break;
-            case ")":
-              this.parenClose();
-              break;
-            case "atword":
-            case "word":
-              this.word();
-              break;
-            case "operator":
-              this.operator();
-              break;
-            case "string":
-              this.string();
-              break;
-            case "unicoderange":
-              this.unicodeRange();
-              break;
-            default:
-              this.word();
-              break;
-          }
-        }
-        parenOpen() {
-          let unbalanced = 1, pos = this.position + 1, token = this.currToken, last;
-          while (pos < this.tokens.length && unbalanced) {
-            let tkn = this.tokens[pos];
-            if (tkn[0] === "(") {
-              unbalanced++;
-            }
-            if (tkn[0] === ")") {
-              unbalanced--;
-            }
-            pos++;
-          }
-          if (unbalanced) {
-            this.error("Expected closing parenthesis", token);
-          }
-          last = this.current.last;
-          if (last && last.type === "func" && last.unbalanced < 0) {
-            last.unbalanced = 0;
-            this.current = last;
-          }
-          this.current.unbalanced++;
-          this.newNode(new Paren({
-            value: token[1],
-            source: {
-              start: {
-                line: token[2],
-                column: token[3]
-              },
-              end: {
-                line: token[4],
-                column: token[5]
-              }
-            },
-            sourceIndex: token[6]
-          }));
-          this.position++;
-          if (this.current.type === "func" && this.current.unbalanced && this.current.value === "url" && this.currToken[0] !== "string" && this.currToken[0] !== ")" && !this.options.loose) {
-            let nextToken = this.nextToken, value = this.currToken[1], start = {
-              line: this.currToken[2],
-              column: this.currToken[3]
-            };
-            while (nextToken && nextToken[0] !== ")" && this.current.unbalanced) {
-              this.position++;
-              value += this.currToken[1];
-              nextToken = this.nextToken;
-            }
-            if (this.position !== this.tokens.length - 1) {
-              this.position++;
-              this.newNode(new Word({
-                value,
-                source: {
-                  start,
-                  end: {
-                    line: this.currToken[4],
-                    column: this.currToken[5]
-                  }
-                },
-                sourceIndex: this.currToken[6]
-              }));
-            }
-          }
-        }
-        parenClose() {
-          let token = this.currToken;
-          this.newNode(new Paren({
-            value: token[1],
-            source: {
-              start: {
-                line: token[2],
-                column: token[3]
-              },
-              end: {
-                line: token[4],
-                column: token[5]
-              }
-            },
-            sourceIndex: token[6]
-          }));
-          this.position++;
-          if (this.position >= this.tokens.length - 1 && !this.current.unbalanced) {
-            return;
-          }
-          this.current.unbalanced--;
-          if (this.current.unbalanced < 0) {
-            this.error("Expected opening parenthesis", token);
-          }
-          if (!this.current.unbalanced && this.cache.length) {
-            this.current = this.cache.pop();
-          }
-        }
-        space() {
-          let token = this.currToken;
-          if (this.position === this.tokens.length - 1 || this.nextToken[0] === "," || this.nextToken[0] === ")") {
-            this.current.last.raws.after += token[1];
-            this.position++;
-          } else {
-            this.spaces = token[1];
-            this.position++;
-          }
-        }
-        unicodeRange() {
-          let token = this.currToken;
-          this.newNode(new UnicodeRange({
-            value: token[1],
-            source: {
-              start: {
-                line: token[2],
-                column: token[3]
-              },
-              end: {
-                line: token[4],
-                column: token[5]
-              }
-            },
-            sourceIndex: token[6]
-          }));
-          this.position++;
-        }
-        splitWord() {
-          let nextToken = this.nextToken, word = this.currToken[1], rNumber = /^[\+\-]?((\d+(\.\d*)?)|(\.\d+))([eE][\+\-]?\d+)?/, rNoFollow = /^(?!\#([a-z0-9]+))[\#\{\}]/gi, hasAt, indices;
-          if (!rNoFollow.test(word)) {
-            while (nextToken && nextToken[0] === "word") {
-              this.position++;
-              let current = this.currToken[1];
-              word += current;
-              nextToken = this.nextToken;
-            }
-          }
-          hasAt = indexesOf(word, "@");
-          indices = sortAscending(uniq(flatten([[0], hasAt])));
-          indices.forEach((ind, i) => {
-            let index = indices[i + 1] || word.length, value = word.slice(ind, index), node;
-            if (~hasAt.indexOf(ind)) {
-              node = new AtWord({
-                value: value.slice(1),
-                source: {
-                  start: {
-                    line: this.currToken[2],
-                    column: this.currToken[3] + ind
-                  },
-                  end: {
-                    line: this.currToken[4],
-                    column: this.currToken[3] + (index - 1)
-                  }
-                },
-                sourceIndex: this.currToken[6] + indices[i]
-              });
-            } else if (rNumber.test(this.currToken[1])) {
-              let unit = value.replace(rNumber, "");
-              node = new Numbr({
-                value: value.replace(unit, ""),
-                source: {
-                  start: {
-                    line: this.currToken[2],
-                    column: this.currToken[3] + ind
-                  },
-                  end: {
-                    line: this.currToken[4],
-                    column: this.currToken[3] + (index - 1)
-                  }
-                },
-                sourceIndex: this.currToken[6] + indices[i],
-                unit
-              });
-            } else {
-              node = new (nextToken && nextToken[0] === "(" ? Func : Word)({
-                value,
-                source: {
-                  start: {
-                    line: this.currToken[2],
-                    column: this.currToken[3] + ind
-                  },
-                  end: {
-                    line: this.currToken[4],
-                    column: this.currToken[3] + (index - 1)
-                  }
-                },
-                sourceIndex: this.currToken[6] + indices[i]
-              });
-              if (node.type === "word") {
-                node.isHex = /^#(.+)/.test(value);
-                node.isColor = /^#([0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(value);
-              } else {
-                this.cache.push(this.current);
-              }
-            }
-            this.newNode(node);
-          });
-          this.position++;
-        }
-        string() {
-          let token = this.currToken, value = this.currToken[1], rQuote = /^(\"|\')/, quoted = rQuote.test(value), quote = "", node;
-          if (quoted) {
-            quote = value.match(rQuote)[0];
-            value = value.slice(1, value.length - 1);
-          }
-          node = new Str({
-            value,
-            source: {
-              start: {
-                line: token[2],
-                column: token[3]
-              },
-              end: {
-                line: token[4],
-                column: token[5]
-              }
-            },
-            sourceIndex: token[6],
-            quoted
-          });
-          node.raws.quote = quote;
-          this.newNode(node);
-          this.position++;
-        }
-        word() {
-          return this.splitWord();
-        }
-        newNode(node) {
-          if (this.spaces) {
-            node.raws.before += this.spaces;
-            this.spaces = "";
-          }
-          return this.current.append(node);
-        }
-        get currToken() {
-          return this.tokens[this.position];
-        }
-        get nextToken() {
-          return this.tokens[this.position + 1];
-        }
-        get prevToken() {
-          return this.tokens[this.position - 1];
-        }
-      };
-    }
-  });
-
   // node_modules/postcss-selector-parser/dist/selectors/node.js
-  var require_node3 = __commonJS({
+  var require_node2 = __commonJS({
     "node_modules/postcss-selector-parser/dist/selectors/node.js"(exports, module) {
       "use strict";
       exports.__esModule = true;
@@ -6059,11 +5021,11 @@
   });
 
   // node_modules/postcss-selector-parser/dist/selectors/container.js
-  var require_container3 = __commonJS({
+  var require_container2 = __commonJS({
     "node_modules/postcss-selector-parser/dist/selectors/container.js"(exports, module) {
       "use strict";
       exports.__esModule = true;
-      var _createClass = function() {
+      var _createClass = /* @__PURE__ */ function() {
         function defineProperties(target, props) {
           for (var i = 0; i < props.length; i++) {
             var descriptor = props[i];
@@ -6082,7 +5044,7 @@
           return Constructor;
         };
       }();
-      var _node = require_node3();
+      var _node = require_node2();
       var _node2 = _interopRequireDefault(_node);
       var _types = require_types();
       var types = _interopRequireWildcard(_types);
@@ -6381,11 +5343,11 @@
   });
 
   // node_modules/postcss-selector-parser/dist/selectors/root.js
-  var require_root3 = __commonJS({
+  var require_root2 = __commonJS({
     "node_modules/postcss-selector-parser/dist/selectors/root.js"(exports, module) {
       "use strict";
       exports.__esModule = true;
-      var _container = require_container3();
+      var _container = require_container2();
       var _container2 = _interopRequireDefault(_container);
       var _types = require_types();
       function _interopRequireDefault(obj) {
@@ -6437,7 +5399,7 @@
     "node_modules/postcss-selector-parser/dist/selectors/selector.js"(exports, module) {
       "use strict";
       exports.__esModule = true;
-      var _container = require_container3();
+      var _container = require_container2();
       var _container2 = _interopRequireDefault(_container);
       var _types = require_types();
       function _interopRequireDefault(obj) {
@@ -6482,7 +5444,7 @@
     "node_modules/postcss-selector-parser/dist/selectors/namespace.js"(exports, module) {
       "use strict";
       exports.__esModule = true;
-      var _createClass = function() {
+      var _createClass = /* @__PURE__ */ function() {
         function defineProperties(target, props) {
           for (var i = 0; i < props.length; i++) {
             var descriptor = props[i];
@@ -6501,7 +5463,7 @@
           return Constructor;
         };
       }();
-      var _node = require_node3();
+      var _node = require_node2();
       var _node2 = _interopRequireDefault(_node);
       function _interopRequireDefault(obj) {
         return obj && obj.__esModule ? obj : { default: obj };
@@ -6597,11 +5559,11 @@
   });
 
   // node_modules/postcss-selector-parser/dist/selectors/comment.js
-  var require_comment3 = __commonJS({
+  var require_comment2 = __commonJS({
     "node_modules/postcss-selector-parser/dist/selectors/comment.js"(exports, module) {
       "use strict";
       exports.__esModule = true;
-      var _node = require_node3();
+      var _node = require_node2();
       var _node2 = _interopRequireDefault(_node);
       var _types = require_types();
       function _interopRequireDefault(obj) {
@@ -6735,11 +5697,11 @@
   });
 
   // node_modules/postcss-selector-parser/dist/selectors/string.js
-  var require_string2 = __commonJS({
+  var require_string = __commonJS({
     "node_modules/postcss-selector-parser/dist/selectors/string.js"(exports, module) {
       "use strict";
       exports.__esModule = true;
-      var _node = require_node3();
+      var _node = require_node2();
       var _node2 = _interopRequireDefault(_node);
       var _types = require_types();
       function _interopRequireDefault(obj) {
@@ -6784,7 +5746,7 @@
     "node_modules/postcss-selector-parser/dist/selectors/pseudo.js"(exports, module) {
       "use strict";
       exports.__esModule = true;
-      var _container = require_container3();
+      var _container = require_container2();
       var _container2 = _interopRequireDefault(_container);
       var _types = require_types();
       function _interopRequireDefault(obj) {
@@ -6941,7 +5903,7 @@
     "node_modules/postcss-selector-parser/dist/selectors/combinator.js"(exports, module) {
       "use strict";
       exports.__esModule = true;
-      var _node = require_node3();
+      var _node = require_node2();
       var _node2 = _interopRequireDefault(_node);
       var _types = require_types();
       function _interopRequireDefault(obj) {
@@ -6986,7 +5948,7 @@
     "node_modules/postcss-selector-parser/dist/selectors/nesting.js"(exports, module) {
       "use strict";
       exports.__esModule = true;
-      var _node = require_node3();
+      var _node = require_node2();
       var _node2 = _interopRequireDefault(_node);
       var _types = require_types();
       function _interopRequireDefault(obj) {
@@ -7043,7 +6005,7 @@
   });
 
   // node_modules/postcss-selector-parser/dist/tokenize.js
-  var require_tokenize3 = __commonJS({
+  var require_tokenize2 = __commonJS({
     "node_modules/postcss-selector-parser/dist/tokenize.js"(exports, module) {
       "use strict";
       exports.__esModule = true;
@@ -7238,11 +6200,11 @@
   });
 
   // node_modules/postcss-selector-parser/dist/parser.js
-  var require_parser3 = __commonJS({
+  var require_parser2 = __commonJS({
     "node_modules/postcss-selector-parser/dist/parser.js"(exports, module) {
       "use strict";
       exports.__esModule = true;
-      var _createClass = function() {
+      var _createClass = /* @__PURE__ */ function() {
         function defineProperties(target, props) {
           for (var i = 0; i < props.length; i++) {
             var descriptor = props[i];
@@ -7267,19 +6229,19 @@
       var _indexesOf2 = _interopRequireDefault(_indexesOf);
       var _uniq = require_uniq();
       var _uniq2 = _interopRequireDefault(_uniq);
-      var _root = require_root3();
+      var _root = require_root2();
       var _root2 = _interopRequireDefault(_root);
       var _selector = require_selector();
       var _selector2 = _interopRequireDefault(_selector);
       var _className = require_className();
       var _className2 = _interopRequireDefault(_className);
-      var _comment = require_comment3();
+      var _comment = require_comment2();
       var _comment2 = _interopRequireDefault(_comment);
       var _id = require_id();
       var _id2 = _interopRequireDefault(_id);
       var _tag = require_tag();
       var _tag2 = _interopRequireDefault(_tag);
-      var _string = require_string2();
+      var _string = require_string();
       var _string2 = _interopRequireDefault(_string);
       var _pseudo = require_pseudo();
       var _pseudo2 = _interopRequireDefault(_pseudo);
@@ -7293,7 +6255,7 @@
       var _nesting2 = _interopRequireDefault(_nesting);
       var _sortAscending = require_sortAscending();
       var _sortAscending2 = _interopRequireDefault(_sortAscending);
-      var _tokenize = require_tokenize3();
+      var _tokenize = require_tokenize2();
       var _tokenize2 = _interopRequireDefault(_tokenize);
       var _types = require_types();
       var types = _interopRequireWildcard(_types);
@@ -7843,7 +6805,7 @@
     "node_modules/postcss-selector-parser/dist/processor.js"(exports, module) {
       "use strict";
       exports.__esModule = true;
-      var _createClass = function() {
+      var _createClass = /* @__PURE__ */ function() {
         function defineProperties(target, props) {
           for (var i = 0; i < props.length; i++) {
             var descriptor = props[i];
@@ -7862,7 +6824,7 @@
           return Constructor;
         };
       }();
-      var _parser = require_parser3();
+      var _parser = require_parser2();
       var _parser2 = _interopRequireDefault(_parser);
       function _interopRequireDefault(obj) {
         return obj && obj.__esModule ? obj : { default: obj };
@@ -7905,376 +6867,1439 @@
     }
   });
 
-  // node_modules/postcss-media-query-parser/dist/nodes/Node.js
-  var require_Node = __commonJS({
-    "node_modules/postcss-media-query-parser/dist/nodes/Node.js"(exports) {
+  // node_modules/postcss-values-parser/lib/node.js
+  var require_node3 = __commonJS({
+    "node_modules/postcss-values-parser/lib/node.js"(exports, module) {
       "use strict";
-      Object.defineProperty(exports, "__esModule", {
-        value: true
-      });
-      function Node(opts) {
-        this.after = opts.after;
-        this.before = opts.before;
-        this.type = opts.type;
-        this.value = opts.value;
-        this.sourceIndex = opts.sourceIndex;
-      }
-      exports.default = Node;
-    }
-  });
-
-  // node_modules/postcss-media-query-parser/dist/nodes/Container.js
-  var require_Container = __commonJS({
-    "node_modules/postcss-media-query-parser/dist/nodes/Container.js"(exports) {
-      "use strict";
-      Object.defineProperty(exports, "__esModule", {
-        value: true
-      });
-      var _Node = require_Node();
-      var _Node2 = _interopRequireDefault(_Node);
-      function _interopRequireDefault(obj) {
-        return obj && obj.__esModule ? obj : { default: obj };
-      }
-      function Container(opts) {
-        var _this = this;
-        this.constructor(opts);
-        this.nodes = opts.nodes;
-        if (this.after === void 0) {
-          this.after = this.nodes.length > 0 ? this.nodes[this.nodes.length - 1].after : "";
-        }
-        if (this.before === void 0) {
-          this.before = this.nodes.length > 0 ? this.nodes[0].before : "";
-        }
-        if (this.sourceIndex === void 0) {
-          this.sourceIndex = this.before.length;
-        }
-        this.nodes.forEach(function(node) {
-          node.parent = _this;
-        });
-      }
-      Container.prototype = Object.create(_Node2.default.prototype);
-      Container.constructor = _Node2.default;
-      Container.prototype.walk = function walk(filter, cb) {
-        var hasFilter = typeof filter === "string" || filter instanceof RegExp;
-        var callback = hasFilter ? cb : filter;
-        var filterReg = typeof filter === "string" ? new RegExp(filter) : filter;
-        for (var i = 0; i < this.nodes.length; i++) {
-          var node = this.nodes[i];
-          var filtered = hasFilter ? filterReg.test(node.type) : true;
-          if (filtered && callback && callback(node, i, this.nodes) === false) {
-            return false;
-          }
-          if (node.nodes && node.walk(filter, cb) === false) {
-            return false;
+      var cloneNode = function(obj, parent) {
+        let cloned = new obj.constructor();
+        for (let i in obj) {
+          if (!obj.hasOwnProperty(i))
+            continue;
+          let value = obj[i], type = typeof value;
+          if (i === "parent" && type === "object") {
+            if (parent)
+              cloned[i] = parent;
+          } else if (i === "source") {
+            cloned[i] = value;
+          } else if (value instanceof Array) {
+            cloned[i] = value.map((j) => cloneNode(j, cloned));
+          } else if (i !== "before" && i !== "after" && i !== "between" && i !== "semicolon") {
+            if (type === "object" && value !== null)
+              value = cloneNode(value);
+            cloned[i] = value;
           }
         }
-        return true;
+        return cloned;
       };
-      Container.prototype.each = function each() {
-        var cb = arguments.length <= 0 || arguments[0] === void 0 ? function() {
-        } : arguments[0];
-        for (var i = 0; i < this.nodes.length; i++) {
-          var node = this.nodes[i];
-          if (cb(node, i, this.nodes) === false) {
-            return false;
+      module.exports = class Node {
+        constructor(defaults) {
+          defaults = defaults || {};
+          this.raws = { before: "", after: "" };
+          for (let name in defaults) {
+            this[name] = defaults[name];
           }
         }
-        return true;
-      };
-      exports.default = Container;
-    }
-  });
-
-  // node_modules/postcss-media-query-parser/dist/parsers.js
-  var require_parsers = __commonJS({
-    "node_modules/postcss-media-query-parser/dist/parsers.js"(exports) {
-      "use strict";
-      Object.defineProperty(exports, "__esModule", {
-        value: true
-      });
-      exports.parseMediaFeature = parseMediaFeature;
-      exports.parseMediaQuery = parseMediaQuery2;
-      exports.parseMediaList = parseMediaList;
-      var _Node = require_Node();
-      var _Node2 = _interopRequireDefault(_Node);
-      var _Container = require_Container();
-      var _Container2 = _interopRequireDefault(_Container);
-      function _interopRequireDefault(obj) {
-        return obj && obj.__esModule ? obj : { default: obj };
-      }
-      function parseMediaFeature(string) {
-        var index = arguments.length <= 1 || arguments[1] === void 0 ? 0 : arguments[1];
-        var modesEntered = [{
-          mode: "normal",
-          character: null
-        }];
-        var result = [];
-        var lastModeIndex = 0;
-        var mediaFeature = "";
-        var colon = null;
-        var mediaFeatureValue = null;
-        var indexLocal = index;
-        var stringNormalized = string;
-        if (string[0] === "(" && string[string.length - 1] === ")") {
-          stringNormalized = string.substring(1, string.length - 1);
-          indexLocal++;
+        remove() {
+          if (this.parent) {
+            this.parent.removeChild(this);
+          }
+          this.parent = void 0;
+          return this;
         }
-        for (var i = 0; i < stringNormalized.length; i++) {
-          var character = stringNormalized[i];
-          if (character === "'" || character === '"') {
-            if (modesEntered[lastModeIndex].isCalculationEnabled === true) {
-              modesEntered.push({
-                mode: "string",
-                isCalculationEnabled: false,
-                character
-              });
-              lastModeIndex++;
-            } else if (modesEntered[lastModeIndex].mode === "string" && modesEntered[lastModeIndex].character === character && stringNormalized[i - 1] !== "\\") {
-              modesEntered.pop();
-              lastModeIndex--;
+        toString() {
+          return [
+            this.raws.before,
+            String(this.value),
+            this.raws.after
+          ].join("");
+        }
+        clone(overrides) {
+          overrides = overrides || {};
+          let cloned = cloneNode(this);
+          for (let name in overrides) {
+            cloned[name] = overrides[name];
+          }
+          return cloned;
+        }
+        cloneBefore(overrides) {
+          overrides = overrides || {};
+          let cloned = this.clone(overrides);
+          this.parent.insertBefore(this, cloned);
+          return cloned;
+        }
+        cloneAfter(overrides) {
+          overrides = overrides || {};
+          let cloned = this.clone(overrides);
+          this.parent.insertAfter(this, cloned);
+          return cloned;
+        }
+        replaceWith() {
+          let nodes = Array.prototype.slice.call(arguments);
+          if (this.parent) {
+            for (let node of nodes) {
+              this.parent.insertBefore(this, node);
             }
+            this.remove();
           }
-          if (character === "{") {
-            modesEntered.push({
-              mode: "interpolation",
-              isCalculationEnabled: true
-            });
-            lastModeIndex++;
-          } else if (character === "}") {
-            modesEntered.pop();
-            lastModeIndex--;
-          }
-          if (modesEntered[lastModeIndex].mode === "normal" && character === ":") {
-            var mediaFeatureValueStr = stringNormalized.substring(i + 1);
-            mediaFeatureValue = {
-              type: "value",
-              before: /^(\s*)/.exec(mediaFeatureValueStr)[1],
-              after: /(\s*)$/.exec(mediaFeatureValueStr)[1],
-              value: mediaFeatureValueStr.trim()
-            };
-            mediaFeatureValue.sourceIndex = mediaFeatureValue.before.length + i + 1 + indexLocal;
-            colon = {
-              type: "colon",
-              sourceIndex: i + indexLocal,
-              after: mediaFeatureValue.before,
-              value: ":"
-            };
-            break;
-          }
-          mediaFeature += character;
+          return this;
         }
-        mediaFeature = {
-          type: "media-feature",
-          before: /^(\s*)/.exec(mediaFeature)[1],
-          after: /(\s*)$/.exec(mediaFeature)[1],
-          value: mediaFeature.trim()
-        };
-        mediaFeature.sourceIndex = mediaFeature.before.length + indexLocal;
-        result.push(mediaFeature);
-        if (colon !== null) {
-          colon.before = mediaFeature.after;
-          result.push(colon);
+        moveTo(container) {
+          this.cleanRaws(this.root() === container.root());
+          this.remove();
+          container.append(this);
+          return this;
         }
-        if (mediaFeatureValue !== null) {
-          result.push(mediaFeatureValue);
+        moveBefore(node) {
+          this.cleanRaws(this.root() === node.root());
+          this.remove();
+          node.parent.insertBefore(node, this);
+          return this;
         }
-        return result;
-      }
-      function parseMediaQuery2(string) {
-        var index = arguments.length <= 1 || arguments[1] === void 0 ? 0 : arguments[1];
-        var result = [];
-        var localLevel = 0;
-        var insideSomeValue = false;
-        var node = void 0;
-        function resetNode() {
-          return {
-            before: "",
-            after: "",
-            value: ""
-          };
+        moveAfter(node) {
+          this.cleanRaws(this.root() === node.root());
+          this.remove();
+          node.parent.insertAfter(node, this);
+          return this;
         }
-        node = resetNode();
-        for (var i = 0; i < string.length; i++) {
-          var character = string[i];
-          if (!insideSomeValue) {
-            if (character.search(/\s/) !== -1) {
-              node.before += character;
-            } else {
-              if (character === "(") {
-                node.type = "media-feature-expression";
-                localLevel++;
-              }
-              node.value = character;
-              node.sourceIndex = index + i;
-              insideSomeValue = true;
-            }
-          } else {
-            node.value += character;
-            if (character === "{" || character === "(") {
-              localLevel++;
-            }
-            if (character === ")" || character === "}") {
-              localLevel--;
-            }
-          }
-          if (insideSomeValue && localLevel === 0 && (character === ")" || i === string.length - 1 || string[i + 1].search(/\s/) !== -1)) {
-            if (["not", "only", "and"].indexOf(node.value) !== -1) {
-              node.type = "keyword";
-            }
-            if (node.type === "media-feature-expression") {
-              node.nodes = parseMediaFeature(node.value, node.sourceIndex);
-            }
-            result.push(Array.isArray(node.nodes) ? new _Container2.default(node) : new _Node2.default(node));
-            node = resetNode();
-            insideSomeValue = false;
-          }
+        next() {
+          let index = this.parent.index(this);
+          return this.parent.nodes[index + 1];
         }
-        for (var _i = 0; _i < result.length; _i++) {
-          node = result[_i];
-          if (_i > 0) {
-            result[_i - 1].after = node.before;
-          }
-          if (node.type === void 0) {
-            if (_i > 0) {
-              if (result[_i - 1].type === "media-feature-expression") {
-                node.type = "keyword";
-                continue;
-              }
-              if (result[_i - 1].value === "not" || result[_i - 1].value === "only") {
-                node.type = "media-type";
-                continue;
-              }
-              if (result[_i - 1].value === "and") {
-                node.type = "media-feature-expression";
-                continue;
-              }
-              if (result[_i - 1].type === "media-type") {
-                if (!result[_i + 1]) {
-                  node.type = "media-feature-expression";
+        prev() {
+          let index = this.parent.index(this);
+          return this.parent.nodes[index - 1];
+        }
+        toJSON() {
+          let fixed = {};
+          for (let name in this) {
+            if (!this.hasOwnProperty(name))
+              continue;
+            if (name === "parent")
+              continue;
+            let value = this[name];
+            if (value instanceof Array) {
+              fixed[name] = value.map((i) => {
+                if (typeof i === "object" && i.toJSON) {
+                  return i.toJSON();
                 } else {
-                  node.type = result[_i + 1].type === "media-feature-expression" ? "keyword" : "media-feature-expression";
+                  return i;
                 }
-              }
-            }
-            if (_i === 0) {
-              if (!result[_i + 1]) {
-                node.type = "media-type";
-                continue;
-              }
-              if (result[_i + 1] && (result[_i + 1].type === "media-feature-expression" || result[_i + 1].type === "keyword")) {
-                node.type = "media-type";
-                continue;
-              }
-              if (result[_i + 2]) {
-                if (result[_i + 2].type === "media-feature-expression") {
-                  node.type = "media-type";
-                  result[_i + 1].type = "keyword";
-                  continue;
-                }
-                if (result[_i + 2].type === "keyword") {
-                  node.type = "keyword";
-                  result[_i + 1].type = "media-type";
-                  continue;
-                }
-              }
-              if (result[_i + 3]) {
-                if (result[_i + 3].type === "media-feature-expression") {
-                  node.type = "keyword";
-                  result[_i + 1].type = "media-type";
-                  result[_i + 2].type = "keyword";
-                  continue;
-                }
-              }
+              });
+            } else if (typeof value === "object" && value.toJSON) {
+              fixed[name] = value.toJSON();
+            } else {
+              fixed[name] = value;
             }
           }
+          return fixed;
         }
-        return result;
-      }
-      function parseMediaList(string) {
-        var result = [];
-        var interimIndex = 0;
-        var levelLocal = 0;
-        var doesHaveUrl = /^(\s*)url\s*\(/.exec(string);
-        if (doesHaveUrl !== null) {
-          var i = doesHaveUrl[0].length;
-          var parenthesesLv = 1;
-          while (parenthesesLv > 0) {
-            var character = string[i];
-            if (character === "(") {
-              parenthesesLv++;
-            }
-            if (character === ")") {
-              parenthesesLv--;
-            }
-            i++;
-          }
-          result.unshift(new _Node2.default({
-            type: "url",
-            value: string.substring(0, i).trim(),
-            sourceIndex: doesHaveUrl[1].length,
-            before: doesHaveUrl[1],
-            after: /^(\s*)/.exec(string.substring(i))[1]
-          }));
-          interimIndex = i;
+        root() {
+          let result = this;
+          while (result.parent)
+            result = result.parent;
+          return result;
         }
-        for (var _i2 = interimIndex; _i2 < string.length; _i2++) {
-          var _character = string[_i2];
-          if (_character === "(") {
-            levelLocal++;
-          }
-          if (_character === ")") {
-            levelLocal--;
-          }
-          if (levelLocal === 0 && _character === ",") {
-            var _mediaQueryString = string.substring(interimIndex, _i2);
-            var _spaceBefore = /^(\s*)/.exec(_mediaQueryString)[1];
-            result.push(new _Container2.default({
-              type: "media-query",
-              value: _mediaQueryString.trim(),
-              sourceIndex: interimIndex + _spaceBefore.length,
-              nodes: parseMediaQuery2(_mediaQueryString, interimIndex),
-              before: _spaceBefore,
-              after: /(\s*)$/.exec(_mediaQueryString)[1]
-            }));
-            interimIndex = _i2 + 1;
-          }
+        cleanRaws(keepBetween) {
+          delete this.raws.before;
+          delete this.raws.after;
+          if (!keepBetween)
+            delete this.raws.between;
         }
-        var mediaQueryString = string.substring(interimIndex);
-        var spaceBefore = /^(\s*)/.exec(mediaQueryString)[1];
-        result.push(new _Container2.default({
-          type: "media-query",
-          value: mediaQueryString.trim(),
-          sourceIndex: interimIndex + spaceBefore.length,
-          nodes: parseMediaQuery2(mediaQueryString, interimIndex),
-          before: spaceBefore,
-          after: /(\s*)$/.exec(mediaQueryString)[1]
-        }));
-        return result;
-      }
+        positionInside(index) {
+          let string = this.toString(), column = this.source.start.column, line2 = this.source.start.line;
+          for (let i = 0; i < index; i++) {
+            if (string[i] === "\n") {
+              column = 1;
+              line2 += 1;
+            } else {
+              column += 1;
+            }
+          }
+          return { line: line2, column };
+        }
+        positionBy(opts) {
+          let pos = this.source.start;
+          if (Object(opts).index) {
+            pos = this.positionInside(opts.index);
+          } else if (Object(opts).word) {
+            let index = this.toString().indexOf(opts.word);
+            if (index !== -1)
+              pos = this.positionInside(index);
+          }
+          return pos;
+        }
+      };
     }
   });
 
-  // node_modules/postcss-media-query-parser/dist/index.js
-  var require_dist = __commonJS({
-    "node_modules/postcss-media-query-parser/dist/index.js"(exports) {
+  // node_modules/postcss-values-parser/lib/container.js
+  var require_container3 = __commonJS({
+    "node_modules/postcss-values-parser/lib/container.js"(exports, module) {
       "use strict";
-      Object.defineProperty(exports, "__esModule", {
-        value: true
-      });
-      exports.default = parseMedia;
-      var _Container = require_Container();
-      var _Container2 = _interopRequireDefault(_Container);
-      var _parsers = require_parsers();
-      function _interopRequireDefault(obj) {
-        return obj && obj.__esModule ? obj : { default: obj };
+      var Node = require_node3();
+      var Container = class extends Node {
+        constructor(opts) {
+          super(opts);
+          if (!this.nodes) {
+            this.nodes = [];
+          }
+        }
+        push(child) {
+          child.parent = this;
+          this.nodes.push(child);
+          return this;
+        }
+        each(callback) {
+          if (!this.lastEach)
+            this.lastEach = 0;
+          if (!this.indexes)
+            this.indexes = {};
+          this.lastEach += 1;
+          let id = this.lastEach, index, result;
+          this.indexes[id] = 0;
+          if (!this.nodes)
+            return void 0;
+          while (this.indexes[id] < this.nodes.length) {
+            index = this.indexes[id];
+            result = callback(this.nodes[index], index);
+            if (result === false)
+              break;
+            this.indexes[id] += 1;
+          }
+          delete this.indexes[id];
+          return result;
+        }
+        walk(callback) {
+          return this.each((child, i) => {
+            let result = callback(child, i);
+            if (result !== false && child.walk) {
+              result = child.walk(callback);
+            }
+            return result;
+          });
+        }
+        walkType(type, callback) {
+          if (!type || !callback) {
+            throw new Error("Parameters {type} and {callback} are required.");
+          }
+          const isTypeCallable = typeof type === "function";
+          return this.walk((node, index) => {
+            if (isTypeCallable && node instanceof type || !isTypeCallable && node.type === type) {
+              return callback.call(this, node, index);
+            }
+          });
+        }
+        append(node) {
+          node.parent = this;
+          this.nodes.push(node);
+          return this;
+        }
+        prepend(node) {
+          node.parent = this;
+          this.nodes.unshift(node);
+          return this;
+        }
+        cleanRaws(keepBetween) {
+          super.cleanRaws(keepBetween);
+          if (this.nodes) {
+            for (let node of this.nodes)
+              node.cleanRaws(keepBetween);
+          }
+        }
+        insertAfter(oldNode, newNode) {
+          let oldIndex = this.index(oldNode), index;
+          this.nodes.splice(oldIndex + 1, 0, newNode);
+          for (let id in this.indexes) {
+            index = this.indexes[id];
+            if (oldIndex <= index) {
+              this.indexes[id] = index + this.nodes.length;
+            }
+          }
+          return this;
+        }
+        insertBefore(oldNode, newNode) {
+          let oldIndex = this.index(oldNode), index;
+          this.nodes.splice(oldIndex, 0, newNode);
+          for (let id in this.indexes) {
+            index = this.indexes[id];
+            if (oldIndex <= index) {
+              this.indexes[id] = index + this.nodes.length;
+            }
+          }
+          return this;
+        }
+        removeChild(child) {
+          child = this.index(child);
+          this.nodes[child].parent = void 0;
+          this.nodes.splice(child, 1);
+          let index;
+          for (let id in this.indexes) {
+            index = this.indexes[id];
+            if (index >= child) {
+              this.indexes[id] = index - 1;
+            }
+          }
+          return this;
+        }
+        removeAll() {
+          for (let node of this.nodes)
+            node.parent = void 0;
+          this.nodes = [];
+          return this;
+        }
+        every(condition) {
+          return this.nodes.every(condition);
+        }
+        some(condition) {
+          return this.nodes.some(condition);
+        }
+        index(child) {
+          if (typeof child === "number") {
+            return child;
+          } else {
+            return this.nodes.indexOf(child);
+          }
+        }
+        get first() {
+          if (!this.nodes)
+            return void 0;
+          return this.nodes[0];
+        }
+        get last() {
+          if (!this.nodes)
+            return void 0;
+          return this.nodes[this.nodes.length - 1];
+        }
+        toString() {
+          let result = this.nodes.map(String).join("");
+          if (this.value) {
+            result = this.value + result;
+          }
+          if (this.raws.before) {
+            result = this.raws.before + result;
+          }
+          if (this.raws.after) {
+            result += this.raws.after;
+          }
+          return result;
+        }
+      };
+      Container.registerWalker = (constructor) => {
+        let walkerName = "walk" + constructor.name;
+        if (walkerName.lastIndexOf("s") !== walkerName.length - 1) {
+          walkerName += "s";
+        }
+        if (Container.prototype[walkerName]) {
+          return;
+        }
+        Container.prototype[walkerName] = function(callback) {
+          return this.walkType(constructor, callback);
+        };
+      };
+      module.exports = Container;
+    }
+  });
+
+  // node_modules/postcss-values-parser/lib/root.js
+  var require_root3 = __commonJS({
+    "node_modules/postcss-values-parser/lib/root.js"(exports, module) {
+      "use strict";
+      var Container = require_container3();
+      module.exports = class Root extends Container {
+        constructor(opts) {
+          super(opts);
+          this.type = "root";
+        }
+      };
+    }
+  });
+
+  // node_modules/postcss-values-parser/lib/value.js
+  var require_value = __commonJS({
+    "node_modules/postcss-values-parser/lib/value.js"(exports, module) {
+      "use strict";
+      var Container = require_container3();
+      module.exports = class Value extends Container {
+        constructor(opts) {
+          super(opts);
+          this.type = "value";
+          this.unbalanced = 0;
+        }
+      };
+    }
+  });
+
+  // node_modules/postcss-values-parser/lib/atword.js
+  var require_atword = __commonJS({
+    "node_modules/postcss-values-parser/lib/atword.js"(exports, module) {
+      "use strict";
+      var Container = require_container3();
+      var AtWord = class extends Container {
+        constructor(opts) {
+          super(opts);
+          this.type = "atword";
+        }
+        toString() {
+          let quote = this.quoted ? this.raws.quote : "";
+          return [
+            this.raws.before,
+            "@",
+            // we can't use String() here because it'll try using itself
+            // as the constructor
+            String.prototype.toString.call(this.value),
+            this.raws.after
+          ].join("");
+        }
+      };
+      Container.registerWalker(AtWord);
+      module.exports = AtWord;
+    }
+  });
+
+  // node_modules/postcss-values-parser/lib/colon.js
+  var require_colon = __commonJS({
+    "node_modules/postcss-values-parser/lib/colon.js"(exports, module) {
+      "use strict";
+      var Container = require_container3();
+      var Node = require_node3();
+      var Colon = class extends Node {
+        constructor(opts) {
+          super(opts);
+          this.type = "colon";
+        }
+      };
+      Container.registerWalker(Colon);
+      module.exports = Colon;
+    }
+  });
+
+  // node_modules/postcss-values-parser/lib/comma.js
+  var require_comma = __commonJS({
+    "node_modules/postcss-values-parser/lib/comma.js"(exports, module) {
+      "use strict";
+      var Container = require_container3();
+      var Node = require_node3();
+      var Comma = class extends Node {
+        constructor(opts) {
+          super(opts);
+          this.type = "comma";
+        }
+      };
+      Container.registerWalker(Comma);
+      module.exports = Comma;
+    }
+  });
+
+  // node_modules/postcss-values-parser/lib/comment.js
+  var require_comment3 = __commonJS({
+    "node_modules/postcss-values-parser/lib/comment.js"(exports, module) {
+      "use strict";
+      var Container = require_container3();
+      var Node = require_node3();
+      var Comment = class extends Node {
+        constructor(opts) {
+          super(opts);
+          this.type = "comment";
+          this.inline = Object(opts).inline || false;
+        }
+        toString() {
+          return [
+            this.raws.before,
+            this.inline ? "//" : "/*",
+            String(this.value),
+            this.inline ? "" : "*/",
+            this.raws.after
+          ].join("");
+        }
+      };
+      Container.registerWalker(Comment);
+      module.exports = Comment;
+    }
+  });
+
+  // node_modules/postcss-values-parser/lib/function.js
+  var require_function = __commonJS({
+    "node_modules/postcss-values-parser/lib/function.js"(exports, module) {
+      "use strict";
+      var Container = require_container3();
+      var FunctionNode = class extends Container {
+        constructor(opts) {
+          super(opts);
+          this.type = "func";
+          this.unbalanced = -1;
+        }
+      };
+      Container.registerWalker(FunctionNode);
+      module.exports = FunctionNode;
+    }
+  });
+
+  // node_modules/postcss-values-parser/lib/number.js
+  var require_number = __commonJS({
+    "node_modules/postcss-values-parser/lib/number.js"(exports, module) {
+      "use strict";
+      var Container = require_container3();
+      var Node = require_node3();
+      var NumberNode = class extends Node {
+        constructor(opts) {
+          super(opts);
+          this.type = "number";
+          this.unit = Object(opts).unit || "";
+        }
+        toString() {
+          return [
+            this.raws.before,
+            String(this.value),
+            this.unit,
+            this.raws.after
+          ].join("");
+        }
+      };
+      Container.registerWalker(NumberNode);
+      module.exports = NumberNode;
+    }
+  });
+
+  // node_modules/postcss-values-parser/lib/operator.js
+  var require_operator = __commonJS({
+    "node_modules/postcss-values-parser/lib/operator.js"(exports, module) {
+      "use strict";
+      var Container = require_container3();
+      var Node = require_node3();
+      var Operator = class extends Node {
+        constructor(opts) {
+          super(opts);
+          this.type = "operator";
+        }
+      };
+      Container.registerWalker(Operator);
+      module.exports = Operator;
+    }
+  });
+
+  // node_modules/postcss-values-parser/lib/paren.js
+  var require_paren = __commonJS({
+    "node_modules/postcss-values-parser/lib/paren.js"(exports, module) {
+      "use strict";
+      var Container = require_container3();
+      var Node = require_node3();
+      var Parenthesis = class extends Node {
+        constructor(opts) {
+          super(opts);
+          this.type = "paren";
+          this.parenType = "";
+        }
+      };
+      Container.registerWalker(Parenthesis);
+      module.exports = Parenthesis;
+    }
+  });
+
+  // node_modules/postcss-values-parser/lib/string.js
+  var require_string2 = __commonJS({
+    "node_modules/postcss-values-parser/lib/string.js"(exports, module) {
+      "use strict";
+      var Container = require_container3();
+      var Node = require_node3();
+      var StringNode = class extends Node {
+        constructor(opts) {
+          super(opts);
+          this.type = "string";
+        }
+        toString() {
+          let quote = this.quoted ? this.raws.quote : "";
+          return [
+            this.raws.before,
+            quote,
+            // we can't use String() here because it'll try using itself
+            // as the constructor
+            this.value + "",
+            quote,
+            this.raws.after
+          ].join("");
+        }
+      };
+      Container.registerWalker(StringNode);
+      module.exports = StringNode;
+    }
+  });
+
+  // node_modules/postcss-values-parser/lib/word.js
+  var require_word = __commonJS({
+    "node_modules/postcss-values-parser/lib/word.js"(exports, module) {
+      "use strict";
+      var Container = require_container3();
+      var Node = require_node3();
+      var Word = class extends Node {
+        constructor(opts) {
+          super(opts);
+          this.type = "word";
+        }
+      };
+      Container.registerWalker(Word);
+      module.exports = Word;
+    }
+  });
+
+  // node_modules/postcss-values-parser/lib/unicode-range.js
+  var require_unicode_range = __commonJS({
+    "node_modules/postcss-values-parser/lib/unicode-range.js"(exports, module) {
+      "use strict";
+      var Container = require_container3();
+      var Node = require_node3();
+      var UnicodeRange = class extends Node {
+        constructor(opts) {
+          super(opts);
+          this.type = "unicode-range";
+        }
+      };
+      Container.registerWalker(UnicodeRange);
+      module.exports = UnicodeRange;
+    }
+  });
+
+  // node_modules/postcss-values-parser/lib/errors/TokenizeError.js
+  var require_TokenizeError = __commonJS({
+    "node_modules/postcss-values-parser/lib/errors/TokenizeError.js"(exports, module) {
+      "use strict";
+      var TokenizeError = class extends Error {
+        constructor(message) {
+          super(message);
+          this.name = this.constructor.name;
+          this.message = message || "An error ocurred while tokzenizing.";
+          if (typeof Error.captureStackTrace === "function") {
+            Error.captureStackTrace(this, this.constructor);
+          } else {
+            this.stack = new Error(message).stack;
+          }
+        }
+      };
+      module.exports = TokenizeError;
+    }
+  });
+
+  // node_modules/postcss-values-parser/lib/tokenize.js
+  var require_tokenize3 = __commonJS({
+    "node_modules/postcss-values-parser/lib/tokenize.js"(exports, module) {
+      "use strict";
+      var openBracket = "{".charCodeAt(0);
+      var closeBracket = "}".charCodeAt(0);
+      var openParen = "(".charCodeAt(0);
+      var closeParen = ")".charCodeAt(0);
+      var singleQuote = "'".charCodeAt(0);
+      var doubleQuote = '"'.charCodeAt(0);
+      var backslash = "\\".charCodeAt(0);
+      var slash = "/".charCodeAt(0);
+      var period = ".".charCodeAt(0);
+      var comma = ",".charCodeAt(0);
+      var colon = ":".charCodeAt(0);
+      var asterisk = "*".charCodeAt(0);
+      var minus = "-".charCodeAt(0);
+      var plus = "+".charCodeAt(0);
+      var pound = "#".charCodeAt(0);
+      var newline = "\n".charCodeAt(0);
+      var space = " ".charCodeAt(0);
+      var feed = "\f".charCodeAt(0);
+      var tab = "	".charCodeAt(0);
+      var cr = "\r".charCodeAt(0);
+      var at2 = "@".charCodeAt(0);
+      var lowerE = "e".charCodeAt(0);
+      var upperE = "E".charCodeAt(0);
+      var digit0 = "0".charCodeAt(0);
+      var digit9 = "9".charCodeAt(0);
+      var lowerU = "u".charCodeAt(0);
+      var upperU = "U".charCodeAt(0);
+      var atEnd = /[ \n\t\r\{\(\)'"\\;,/]/g;
+      var wordEnd = /[ \n\t\r\(\)\{\}\*:;@!&'"\+\|~>,\[\]\\]|\/(?=\*)/g;
+      var wordEndNum = /[ \n\t\r\(\)\{\}\*:;@!&'"\-\+\|~>,\[\]\\]|\//g;
+      var alphaNum = /^[a-z0-9]/i;
+      var unicodeRange = /^[a-f0-9?\-]/i;
+      var TokenizeError = require_TokenizeError();
+      module.exports = function tokenize(input, options2) {
+        options2 = options2 || {};
+        let tokens = [], css2 = input.valueOf(), length = css2.length, offset = -1, line2 = 1, pos = 0, parentCount = 0, isURLArg = null, code, next, quote, lines, last, content, escape, nextLine, nextOffset, escaped, escapePos, nextChar;
+        function unclosed(what) {
+          let message = `Unclosed ${what} at line: ${line2}, column: ${pos - offset}, token: ${pos}`;
+          throw new TokenizeError(message);
+        }
+        function tokenizeError() {
+          let message = `Syntax error at line: ${line2}, column: ${pos - offset}, token: ${pos}`;
+          throw new TokenizeError(message);
+        }
+        while (pos < length) {
+          code = css2.charCodeAt(pos);
+          if (code === newline) {
+            offset = pos;
+            line2 += 1;
+          }
+          switch (code) {
+            case newline:
+            case space:
+            case tab:
+            case cr:
+            case feed:
+              next = pos;
+              do {
+                next += 1;
+                code = css2.charCodeAt(next);
+                if (code === newline) {
+                  offset = next;
+                  line2 += 1;
+                }
+              } while (code === space || code === newline || code === tab || code === cr || code === feed);
+              tokens.push([
+                "space",
+                css2.slice(pos, next),
+                line2,
+                pos - offset,
+                line2,
+                next - offset,
+                pos
+              ]);
+              pos = next - 1;
+              break;
+            case colon:
+              next = pos + 1;
+              tokens.push([
+                "colon",
+                css2.slice(pos, next),
+                line2,
+                pos - offset,
+                line2,
+                next - offset,
+                pos
+              ]);
+              pos = next - 1;
+              break;
+            case comma:
+              next = pos + 1;
+              tokens.push([
+                "comma",
+                css2.slice(pos, next),
+                line2,
+                pos - offset,
+                line2,
+                next - offset,
+                pos
+              ]);
+              pos = next - 1;
+              break;
+            case openBracket:
+              tokens.push([
+                "{",
+                "{",
+                line2,
+                pos - offset,
+                line2,
+                next - offset,
+                pos
+              ]);
+              break;
+            case closeBracket:
+              tokens.push([
+                "}",
+                "}",
+                line2,
+                pos - offset,
+                line2,
+                next - offset,
+                pos
+              ]);
+              break;
+            case openParen:
+              parentCount++;
+              isURLArg = !isURLArg && parentCount === 1 && tokens.length > 0 && tokens[tokens.length - 1][0] === "word" && tokens[tokens.length - 1][1] === "url";
+              tokens.push([
+                "(",
+                "(",
+                line2,
+                pos - offset,
+                line2,
+                next - offset,
+                pos
+              ]);
+              break;
+            case closeParen:
+              parentCount--;
+              isURLArg = isURLArg && parentCount > 0;
+              tokens.push([
+                ")",
+                ")",
+                line2,
+                pos - offset,
+                line2,
+                next - offset,
+                pos
+              ]);
+              break;
+            case singleQuote:
+            case doubleQuote:
+              quote = code === singleQuote ? "'" : '"';
+              next = pos;
+              do {
+                escaped = false;
+                next = css2.indexOf(quote, next + 1);
+                if (next === -1) {
+                  unclosed("quote", quote);
+                }
+                escapePos = next;
+                while (css2.charCodeAt(escapePos - 1) === backslash) {
+                  escapePos -= 1;
+                  escaped = !escaped;
+                }
+              } while (escaped);
+              tokens.push([
+                "string",
+                css2.slice(pos, next + 1),
+                line2,
+                pos - offset,
+                line2,
+                next - offset,
+                pos
+              ]);
+              pos = next;
+              break;
+            case at2:
+              atEnd.lastIndex = pos + 1;
+              atEnd.test(css2);
+              if (atEnd.lastIndex === 0) {
+                next = css2.length - 1;
+              } else {
+                next = atEnd.lastIndex - 2;
+              }
+              tokens.push([
+                "atword",
+                css2.slice(pos, next + 1),
+                line2,
+                pos - offset,
+                line2,
+                next - offset,
+                pos
+              ]);
+              pos = next;
+              break;
+            case backslash:
+              next = pos;
+              code = css2.charCodeAt(next + 1);
+              if (escape && (code !== slash && code !== space && code !== newline && code !== tab && code !== cr && code !== feed)) {
+                next += 1;
+              }
+              tokens.push([
+                "word",
+                css2.slice(pos, next + 1),
+                line2,
+                pos - offset,
+                line2,
+                next - offset,
+                pos
+              ]);
+              pos = next;
+              break;
+            case plus:
+            case minus:
+            case asterisk:
+              next = pos + 1;
+              nextChar = css2.slice(pos + 1, next + 1);
+              let prevChar = css2.slice(pos - 1, pos);
+              if (code === minus && nextChar.charCodeAt(0) === minus) {
+                next++;
+                tokens.push([
+                  "word",
+                  css2.slice(pos, next),
+                  line2,
+                  pos - offset,
+                  line2,
+                  next - offset,
+                  pos
+                ]);
+                pos = next - 1;
+                break;
+              }
+              tokens.push([
+                "operator",
+                css2.slice(pos, next),
+                line2,
+                pos - offset,
+                line2,
+                next - offset,
+                pos
+              ]);
+              pos = next - 1;
+              break;
+            default:
+              if (code === slash && (css2.charCodeAt(pos + 1) === asterisk || options2.loose && !isURLArg && css2.charCodeAt(pos + 1) === slash)) {
+                const isStandardComment = css2.charCodeAt(pos + 1) === asterisk;
+                if (isStandardComment) {
+                  next = css2.indexOf("*/", pos + 2) + 1;
+                  if (next === 0) {
+                    unclosed("comment", "*/");
+                  }
+                } else {
+                  const newlinePos = css2.indexOf("\n", pos + 2);
+                  next = newlinePos !== -1 ? newlinePos - 1 : length;
+                }
+                content = css2.slice(pos, next + 1);
+                lines = content.split("\n");
+                last = lines.length - 1;
+                if (last > 0) {
+                  nextLine = line2 + last;
+                  nextOffset = next - lines[last].length;
+                } else {
+                  nextLine = line2;
+                  nextOffset = offset;
+                }
+                tokens.push([
+                  "comment",
+                  content,
+                  line2,
+                  pos - offset,
+                  nextLine,
+                  next - nextOffset,
+                  pos
+                ]);
+                offset = nextOffset;
+                line2 = nextLine;
+                pos = next;
+              } else if (code === pound && !alphaNum.test(css2.slice(pos + 1, pos + 2))) {
+                next = pos + 1;
+                tokens.push([
+                  "#",
+                  css2.slice(pos, next),
+                  line2,
+                  pos - offset,
+                  line2,
+                  next - offset,
+                  pos
+                ]);
+                pos = next - 1;
+              } else if ((code === lowerU || code === upperU) && css2.charCodeAt(pos + 1) === plus) {
+                next = pos + 2;
+                do {
+                  next += 1;
+                  code = css2.charCodeAt(next);
+                } while (next < length && unicodeRange.test(css2.slice(next, next + 1)));
+                tokens.push([
+                  "unicoderange",
+                  css2.slice(pos, next),
+                  line2,
+                  pos - offset,
+                  line2,
+                  next - offset,
+                  pos
+                ]);
+                pos = next - 1;
+              } else if (code === slash) {
+                next = pos + 1;
+                tokens.push([
+                  "operator",
+                  css2.slice(pos, next),
+                  line2,
+                  pos - offset,
+                  line2,
+                  next - offset,
+                  pos
+                ]);
+                pos = next - 1;
+              } else {
+                let regex = wordEnd;
+                if (code >= digit0 && code <= digit9) {
+                  regex = wordEndNum;
+                }
+                regex.lastIndex = pos + 1;
+                regex.test(css2);
+                if (regex.lastIndex === 0) {
+                  next = css2.length - 1;
+                } else {
+                  next = regex.lastIndex - 2;
+                }
+                if (regex === wordEndNum || code === period) {
+                  let ncode = css2.charCodeAt(next), ncode1 = css2.charCodeAt(next + 1), ncode2 = css2.charCodeAt(next + 2);
+                  if ((ncode === lowerE || ncode === upperE) && (ncode1 === minus || ncode1 === plus) && (ncode2 >= digit0 && ncode2 <= digit9)) {
+                    wordEndNum.lastIndex = next + 2;
+                    wordEndNum.test(css2);
+                    if (wordEndNum.lastIndex === 0) {
+                      next = css2.length - 1;
+                    } else {
+                      next = wordEndNum.lastIndex - 2;
+                    }
+                  }
+                }
+                tokens.push([
+                  "word",
+                  css2.slice(pos, next + 1),
+                  line2,
+                  pos - offset,
+                  line2,
+                  next - offset,
+                  pos
+                ]);
+                pos = next;
+              }
+              break;
+          }
+          pos++;
+        }
+        return tokens;
+      };
+    }
+  });
+
+  // node_modules/postcss-values-parser/lib/errors/ParserError.js
+  var require_ParserError = __commonJS({
+    "node_modules/postcss-values-parser/lib/errors/ParserError.js"(exports, module) {
+      "use strict";
+      var ParserError = class extends Error {
+        constructor(message) {
+          super(message);
+          this.name = this.constructor.name;
+          this.message = message || "An error ocurred while parsing.";
+          if (typeof Error.captureStackTrace === "function") {
+            Error.captureStackTrace(this, this.constructor);
+          } else {
+            this.stack = new Error(message).stack;
+          }
+        }
+      };
+      module.exports = ParserError;
+    }
+  });
+
+  // node_modules/postcss-values-parser/lib/parser.js
+  var require_parser3 = __commonJS({
+    "node_modules/postcss-values-parser/lib/parser.js"(exports, module) {
+      "use strict";
+      var Root = require_root3();
+      var Value = require_value();
+      var AtWord = require_atword();
+      var Colon = require_colon();
+      var Comma = require_comma();
+      var Comment = require_comment3();
+      var Func = require_function();
+      var Numbr = require_number();
+      var Operator = require_operator();
+      var Paren = require_paren();
+      var Str = require_string2();
+      var Word = require_word();
+      var UnicodeRange = require_unicode_range();
+      var tokenize = require_tokenize3();
+      var flatten = require_flatten();
+      var indexesOf = require_indexes_of();
+      var uniq = require_uniq();
+      var ParserError = require_ParserError();
+      function sortAscending(list) {
+        return list.sort((a, b) => a - b);
       }
-      function parseMedia(value) {
-        return new _Container2.default({
-          nodes: (0, _parsers.parseMediaList)(value),
-          type: "media-query-list",
-          value: value.trim()
-        });
-      }
+      module.exports = class Parser {
+        constructor(input, options2) {
+          const defaults = { loose: false };
+          this.cache = [];
+          this.input = input;
+          this.options = Object.assign({}, defaults, options2);
+          this.position = 0;
+          this.unbalanced = 0;
+          this.root = new Root();
+          let value = new Value();
+          this.root.append(value);
+          this.current = value;
+          this.tokens = tokenize(input, this.options);
+        }
+        parse() {
+          return this.loop();
+        }
+        colon() {
+          let token = this.currToken;
+          this.newNode(new Colon({
+            value: token[1],
+            source: {
+              start: {
+                line: token[2],
+                column: token[3]
+              },
+              end: {
+                line: token[4],
+                column: token[5]
+              }
+            },
+            sourceIndex: token[6]
+          }));
+          this.position++;
+        }
+        comma() {
+          let token = this.currToken;
+          this.newNode(new Comma({
+            value: token[1],
+            source: {
+              start: {
+                line: token[2],
+                column: token[3]
+              },
+              end: {
+                line: token[4],
+                column: token[5]
+              }
+            },
+            sourceIndex: token[6]
+          }));
+          this.position++;
+        }
+        comment() {
+          let inline = false, value = this.currToken[1].replace(/\/\*|\*\//g, ""), node;
+          if (this.options.loose && value.startsWith("//")) {
+            value = value.substring(2);
+            inline = true;
+          }
+          node = new Comment({
+            value,
+            inline,
+            source: {
+              start: {
+                line: this.currToken[2],
+                column: this.currToken[3]
+              },
+              end: {
+                line: this.currToken[4],
+                column: this.currToken[5]
+              }
+            },
+            sourceIndex: this.currToken[6]
+          });
+          this.newNode(node);
+          this.position++;
+        }
+        error(message, token) {
+          throw new ParserError(message + ` at line: ${token[2]}, column ${token[3]}`);
+        }
+        loop() {
+          while (this.position < this.tokens.length) {
+            this.parseTokens();
+          }
+          if (!this.current.last && this.spaces) {
+            this.current.raws.before += this.spaces;
+          } else if (this.spaces) {
+            this.current.last.raws.after += this.spaces;
+          }
+          this.spaces = "";
+          return this.root;
+        }
+        operator() {
+          let char = this.currToken[1], node;
+          if (char === "+" || char === "-") {
+            if (!this.options.loose) {
+              if (this.position > 0) {
+                if (this.current.type === "func" && this.current.value === "calc") {
+                  if (this.prevToken[0] !== "space" && this.prevToken[0] !== "(") {
+                    this.error("Syntax Error", this.currToken);
+                  } else if (this.nextToken[0] !== "space" && this.nextToken[0] !== "word") {
+                    this.error("Syntax Error", this.currToken);
+                  } else if (this.nextToken[0] === "word" && this.current.last.type !== "operator" && this.current.last.value !== "(") {
+                    this.error("Syntax Error", this.currToken);
+                  }
+                } else if (this.nextToken[0] === "space" || this.nextToken[0] === "operator" || this.prevToken[0] === "operator") {
+                  this.error("Syntax Error", this.currToken);
+                }
+              }
+            }
+            if (!this.options.loose) {
+              if (this.nextToken[0] === "word") {
+                return this.word();
+              }
+            } else {
+              if ((!this.current.nodes.length || this.current.last && this.current.last.type === "operator") && this.nextToken[0] === "word") {
+                return this.word();
+              }
+            }
+          }
+          node = new Operator({
+            value: this.currToken[1],
+            source: {
+              start: {
+                line: this.currToken[2],
+                column: this.currToken[3]
+              },
+              end: {
+                line: this.currToken[2],
+                column: this.currToken[3]
+              }
+            },
+            sourceIndex: this.currToken[4]
+          });
+          this.position++;
+          return this.newNode(node);
+        }
+        parseTokens() {
+          switch (this.currToken[0]) {
+            case "space":
+              this.space();
+              break;
+            case "colon":
+              this.colon();
+              break;
+            case "comma":
+              this.comma();
+              break;
+            case "comment":
+              this.comment();
+              break;
+            case "(":
+              this.parenOpen();
+              break;
+            case ")":
+              this.parenClose();
+              break;
+            case "atword":
+            case "word":
+              this.word();
+              break;
+            case "operator":
+              this.operator();
+              break;
+            case "string":
+              this.string();
+              break;
+            case "unicoderange":
+              this.unicodeRange();
+              break;
+            default:
+              this.word();
+              break;
+          }
+        }
+        parenOpen() {
+          let unbalanced = 1, pos = this.position + 1, token = this.currToken, last;
+          while (pos < this.tokens.length && unbalanced) {
+            let tkn = this.tokens[pos];
+            if (tkn[0] === "(") {
+              unbalanced++;
+            }
+            if (tkn[0] === ")") {
+              unbalanced--;
+            }
+            pos++;
+          }
+          if (unbalanced) {
+            this.error("Expected closing parenthesis", token);
+          }
+          last = this.current.last;
+          if (last && last.type === "func" && last.unbalanced < 0) {
+            last.unbalanced = 0;
+            this.current = last;
+          }
+          this.current.unbalanced++;
+          this.newNode(new Paren({
+            value: token[1],
+            source: {
+              start: {
+                line: token[2],
+                column: token[3]
+              },
+              end: {
+                line: token[4],
+                column: token[5]
+              }
+            },
+            sourceIndex: token[6]
+          }));
+          this.position++;
+          if (this.current.type === "func" && this.current.unbalanced && this.current.value === "url" && this.currToken[0] !== "string" && this.currToken[0] !== ")" && !this.options.loose) {
+            let nextToken = this.nextToken, value = this.currToken[1], start = {
+              line: this.currToken[2],
+              column: this.currToken[3]
+            };
+            while (nextToken && nextToken[0] !== ")" && this.current.unbalanced) {
+              this.position++;
+              value += this.currToken[1];
+              nextToken = this.nextToken;
+            }
+            if (this.position !== this.tokens.length - 1) {
+              this.position++;
+              this.newNode(new Word({
+                value,
+                source: {
+                  start,
+                  end: {
+                    line: this.currToken[4],
+                    column: this.currToken[5]
+                  }
+                },
+                sourceIndex: this.currToken[6]
+              }));
+            }
+          }
+        }
+        parenClose() {
+          let token = this.currToken;
+          this.newNode(new Paren({
+            value: token[1],
+            source: {
+              start: {
+                line: token[2],
+                column: token[3]
+              },
+              end: {
+                line: token[4],
+                column: token[5]
+              }
+            },
+            sourceIndex: token[6]
+          }));
+          this.position++;
+          if (this.position >= this.tokens.length - 1 && !this.current.unbalanced) {
+            return;
+          }
+          this.current.unbalanced--;
+          if (this.current.unbalanced < 0) {
+            this.error("Expected opening parenthesis", token);
+          }
+          if (!this.current.unbalanced && this.cache.length) {
+            this.current = this.cache.pop();
+          }
+        }
+        space() {
+          let token = this.currToken;
+          if (this.position === this.tokens.length - 1 || this.nextToken[0] === "," || this.nextToken[0] === ")") {
+            this.current.last.raws.after += token[1];
+            this.position++;
+          } else {
+            this.spaces = token[1];
+            this.position++;
+          }
+        }
+        unicodeRange() {
+          let token = this.currToken;
+          this.newNode(new UnicodeRange({
+            value: token[1],
+            source: {
+              start: {
+                line: token[2],
+                column: token[3]
+              },
+              end: {
+                line: token[4],
+                column: token[5]
+              }
+            },
+            sourceIndex: token[6]
+          }));
+          this.position++;
+        }
+        splitWord() {
+          let nextToken = this.nextToken, word = this.currToken[1], rNumber = /^[\+\-]?((\d+(\.\d*)?)|(\.\d+))([eE][\+\-]?\d+)?/, rNoFollow = /^(?!\#([a-z0-9]+))[\#\{\}]/gi, hasAt, indices;
+          if (!rNoFollow.test(word)) {
+            while (nextToken && nextToken[0] === "word") {
+              this.position++;
+              let current = this.currToken[1];
+              word += current;
+              nextToken = this.nextToken;
+            }
+          }
+          hasAt = indexesOf(word, "@");
+          indices = sortAscending(uniq(flatten([[0], hasAt])));
+          indices.forEach((ind, i) => {
+            let index = indices[i + 1] || word.length, value = word.slice(ind, index), node;
+            if (~hasAt.indexOf(ind)) {
+              node = new AtWord({
+                value: value.slice(1),
+                source: {
+                  start: {
+                    line: this.currToken[2],
+                    column: this.currToken[3] + ind
+                  },
+                  end: {
+                    line: this.currToken[4],
+                    column: this.currToken[3] + (index - 1)
+                  }
+                },
+                sourceIndex: this.currToken[6] + indices[i]
+              });
+            } else if (rNumber.test(this.currToken[1])) {
+              let unit = value.replace(rNumber, "");
+              node = new Numbr({
+                value: value.replace(unit, ""),
+                source: {
+                  start: {
+                    line: this.currToken[2],
+                    column: this.currToken[3] + ind
+                  },
+                  end: {
+                    line: this.currToken[4],
+                    column: this.currToken[3] + (index - 1)
+                  }
+                },
+                sourceIndex: this.currToken[6] + indices[i],
+                unit
+              });
+            } else {
+              node = new (nextToken && nextToken[0] === "(" ? Func : Word)({
+                value,
+                source: {
+                  start: {
+                    line: this.currToken[2],
+                    column: this.currToken[3] + ind
+                  },
+                  end: {
+                    line: this.currToken[4],
+                    column: this.currToken[3] + (index - 1)
+                  }
+                },
+                sourceIndex: this.currToken[6] + indices[i]
+              });
+              if (node.type === "word") {
+                node.isHex = /^#(.+)/.test(value);
+                node.isColor = /^#([0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(value);
+              } else {
+                this.cache.push(this.current);
+              }
+            }
+            this.newNode(node);
+          });
+          this.position++;
+        }
+        string() {
+          let token = this.currToken, value = this.currToken[1], rQuote = /^(\"|\')/, quoted = rQuote.test(value), quote = "", node;
+          if (quoted) {
+            quote = value.match(rQuote)[0];
+            value = value.slice(1, value.length - 1);
+          }
+          node = new Str({
+            value,
+            source: {
+              start: {
+                line: token[2],
+                column: token[3]
+              },
+              end: {
+                line: token[4],
+                column: token[5]
+              }
+            },
+            sourceIndex: token[6],
+            quoted
+          });
+          node.raws.quote = quote;
+          this.newNode(node);
+          this.position++;
+        }
+        word() {
+          return this.splitWord();
+        }
+        newNode(node) {
+          if (this.spaces) {
+            node.raws.before += this.spaces;
+            this.spaces = "";
+          }
+          return this.current.append(node);
+        }
+        get currToken() {
+          return this.tokens[this.position];
+        }
+        get nextToken() {
+          return this.tokens[this.position + 1];
+        }
+        get prevToken() {
+          return this.tokens[this.position - 1];
+        }
+      };
     }
   });
 
@@ -8301,69 +8326,6 @@
     return original.split(pattern).join(replacement);
   };
   var string_replace_all_default = stringReplaceAll;
-
-  // src/utils/get-preferred-quote.js
-  var SINGLE_QUOTE = "'";
-  var DOUBLE_QUOTE = '"';
-  function getPreferredQuote(rawContent, preferredQuoteOrPreferSingleQuote) {
-    const preferred = preferredQuoteOrPreferSingleQuote === true || preferredQuoteOrPreferSingleQuote === SINGLE_QUOTE ? SINGLE_QUOTE : DOUBLE_QUOTE;
-    const alternate = preferred === SINGLE_QUOTE ? DOUBLE_QUOTE : SINGLE_QUOTE;
-    let preferredQuoteCount = 0;
-    let alternateQuoteCount = 0;
-    for (const character of rawContent) {
-      if (character === preferred) {
-        preferredQuoteCount++;
-      } else if (character === alternate) {
-        alternateQuoteCount++;
-      }
-    }
-    return preferredQuoteCount > alternateQuoteCount ? alternate : preferred;
-  }
-  var get_preferred_quote_default = getPreferredQuote;
-
-  // src/utils/make-string.js
-  function makeString(rawText, enclosingQuote, unescapeUnnecessaryEscapes) {
-    const otherQuote = enclosingQuote === '"' ? "'" : '"';
-    const regex = /\\(.)|(["'])/gs;
-    const raw = string_replace_all_default(
-      /* isOptionalObject*/
-      false,
-      rawText,
-      regex,
-      (match, escaped, quote) => {
-        if (escaped === otherQuote) {
-          return escaped;
-        }
-        if (quote === enclosingQuote) {
-          return "\\" + quote;
-        }
-        if (quote) {
-          return quote;
-        }
-        return unescapeUnnecessaryEscapes && /^[^\n\r"'0-7\\bfnrt-vx\u2028\u2029]$/.test(escaped) ? escaped : "\\" + escaped;
-      }
-    );
-    return enclosingQuote + raw + enclosingQuote;
-  }
-  var make_string_default = makeString;
-
-  // src/utils/print-string.js
-  function printString(raw, options2) {
-    const rawContent = raw.slice(1, -1);
-    const enclosingQuote = options2.parser === "json" || options2.parser === "json5" && options2.quoteProps === "preserve" && !options2.singleQuote ? '"' : options2.__isInHtmlAttribute ? "'" : get_preferred_quote_default(rawContent, options2.singleQuote);
-    return make_string_default(
-      rawContent,
-      enclosingQuote,
-      !(options2.parser === "css" || options2.parser === "less" || options2.parser === "scss" || options2.__embeddedInHtml)
-    );
-  }
-  var print_string_default = printString;
-
-  // src/utils/is-non-empty-array.js
-  function isNonEmptyArray(object) {
-    return Array.isArray(object) && object.length > 0;
-  }
-  var is_non_empty_array_default = isNonEmptyArray;
 
   // src/document/constants.js
   var DOC_TYPE_STRING = "string";
@@ -8547,15 +8509,6 @@ Expected it to be ${EXPECTED_TYPE_VALUES}.`;
   var at_default = at;
 
   // src/document/utils.js
-  var getDocParts = (doc) => {
-    if (Array.isArray(doc)) {
-      return doc;
-    }
-    if (doc.type !== DOC_TYPE_FILL) {
-      throw new Error(`Expect doc to be 'array' or '${DOC_TYPE_FILL}'.`);
-    }
-    return doc.parts;
-  };
   function mapDoc(doc, cb) {
     if (typeof doc === "string") {
       return cb(doc);
@@ -8636,6 +8589,75 @@ Expected it to be ${EXPECTED_TYPE_VALUES}.`;
     return mapDoc(doc, removeLinesFn);
   }
 
+  // src/utils/is-non-empty-array.js
+  function isNonEmptyArray(object) {
+    return Array.isArray(object) && object.length > 0;
+  }
+  var is_non_empty_array_default = isNonEmptyArray;
+
+  // src/utils/get-preferred-quote.js
+  var SINGLE_QUOTE = "'";
+  var DOUBLE_QUOTE = '"';
+  function getPreferredQuote(rawContent, preferredQuoteOrPreferSingleQuote) {
+    const preferred = preferredQuoteOrPreferSingleQuote === true || preferredQuoteOrPreferSingleQuote === SINGLE_QUOTE ? SINGLE_QUOTE : DOUBLE_QUOTE;
+    const alternate = preferred === SINGLE_QUOTE ? DOUBLE_QUOTE : SINGLE_QUOTE;
+    let preferredQuoteCount = 0;
+    let alternateQuoteCount = 0;
+    for (const character of rawContent) {
+      if (character === preferred) {
+        preferredQuoteCount++;
+      } else if (character === alternate) {
+        alternateQuoteCount++;
+      }
+    }
+    return preferredQuoteCount > alternateQuoteCount ? alternate : preferred;
+  }
+  var get_preferred_quote_default = getPreferredQuote;
+
+  // src/utils/make-string.js
+  function makeString(rawText, enclosingQuote, unescapeUnnecessaryEscapes) {
+    const otherQuote = enclosingQuote === '"' ? "'" : '"';
+    const regex = /\\(.)|(["'])/gs;
+    const raw = string_replace_all_default(
+      /* isOptionalObject*/
+      false,
+      rawText,
+      regex,
+      (match, escaped, quote) => {
+        if (escaped === otherQuote) {
+          return escaped;
+        }
+        if (quote === enclosingQuote) {
+          return "\\" + quote;
+        }
+        if (quote) {
+          return quote;
+        }
+        return unescapeUnnecessaryEscapes && /^[^\n\r"'0-7\\bfnrt-vx\u2028\u2029]$/.test(escaped) ? escaped : "\\" + escaped;
+      }
+    );
+    return enclosingQuote + raw + enclosingQuote;
+  }
+  var make_string_default = makeString;
+
+  // src/utils/print-string.js
+  function printString(raw, options2) {
+    const rawContent = raw.slice(1, -1);
+    const enclosingQuote = options2.parser === "json" || options2.parser === "jsonc" || // This was added before we have the `jsonc` parser
+    // If `{quoteProps: "preserve"}` and `{singleQuote: false}` (default value),
+    // and `{parser: "json5"}`, double quotes are always used for strings.
+    // This effectively allows using the `json5` parser for “JSON with comments and trailing commas”.
+    // See https://github.com/prettier/prettier/pull/10323
+    // See https://github.com/prettier/prettier/pull/15831#discussion_r1431010636
+    options2.parser === "json5" && options2.quoteProps === "preserve" && !options2.singleQuote ? '"' : options2.__isInHtmlAttribute ? "'" : get_preferred_quote_default(rawContent, options2.singleQuote);
+    return make_string_default(
+      rawContent,
+      enclosingQuote,
+      !(options2.parser === "css" || options2.parser === "less" || options2.parser === "scss" || options2.__embeddedInHtml)
+    );
+  }
+  var print_string_default = printString;
+
   // src/utils/unexpected-node-error.js
   var UnexpectedNodeError = class extends Error {
     name = "UnexpectedNodeError";
@@ -8668,14 +8690,14 @@ Expected it to be ${EXPECTED_TYPE_VALUES}.`;
     "trailingComma",
     "spaces"
   ]);
-  function clean(ast, newObj, parent) {
-    if (is_front_matter_default(ast) && ast.lang === "yaml") {
-      delete newObj.value;
+  function clean(original, cloned, parent) {
+    if (is_front_matter_default(original) && original.lang === "yaml") {
+      delete cloned.value;
     }
-    if (ast.type === "css-comment" && parent.type === "css-root" && parent.nodes.length > 0) {
-      if (parent.nodes[0] === ast || is_front_matter_default(parent.nodes[0]) && parent.nodes[1] === ast) {
-        delete newObj.text;
-        if (/^\*\s*@(?:format|prettier)\s*$/.test(ast.text)) {
+    if (original.type === "css-comment" && parent.type === "css-root" && parent.nodes.length > 0) {
+      if (parent.nodes[0] === original || is_front_matter_default(parent.nodes[0]) && parent.nodes[1] === original) {
+        delete cloned.text;
+        if (/^\*\s*@(?:format|prettier)\s*$/.test(original.text)) {
           return null;
         }
       }
@@ -8684,109 +8706,106 @@ Expected it to be ${EXPECTED_TYPE_VALUES}.`;
         false,
         parent.nodes,
         -1
-      ) === ast) {
+      ) === original) {
         return null;
       }
     }
-    if (ast.type === "value-root") {
-      delete newObj.text;
+    if (original.type === "value-root") {
+      delete cloned.text;
     }
-    if (ast.type === "media-query" || ast.type === "media-query-list" || ast.type === "media-feature-expression") {
-      delete newObj.value;
+    if (original.type === "media-query" || original.type === "media-query-list" || original.type === "media-feature-expression") {
+      delete cloned.value;
     }
-    if (ast.type === "css-rule") {
-      delete newObj.params;
+    if (original.type === "css-rule") {
+      delete cloned.params;
     }
-    if (ast.type === "selector-combinator") {
-      newObj.value = string_replace_all_default(
+    if ((original.type === "media-feature" || original.type === "media-keyword" || original.type === "media-type" || original.type === "media-unknown" || original.type === "media-url" || original.type === "media-value" || original.type === "selector-attribute" || original.type === "selector-string" || original.type === "selector-class" || original.type === "selector-combinator" || original.type === "value-string") && original.value) {
+      cloned.value = cleanCSSStrings(original.value);
+    }
+    if (original.type === "selector-combinator") {
+      cloned.value = string_replace_all_default(
         /* isOptionalObject*/
         false,
-        newObj.value,
+        cloned.value,
         /\s+/g,
         " "
       );
     }
-    if (ast.type === "media-feature") {
-      newObj.value = string_replace_all_default(
+    if (original.type === "media-feature") {
+      cloned.value = string_replace_all_default(
         /* isOptionalObject*/
         false,
-        newObj.value,
+        cloned.value,
         " ",
         ""
       );
     }
-    if (ast.type === "value-word" && (ast.isColor && ast.isHex || ["initial", "inherit", "unset", "revert"].includes(newObj.value.toLowerCase())) || ast.type === "media-feature" || ast.type === "selector-root-invalid" || ast.type === "selector-pseudo") {
-      newObj.value = newObj.value.toLowerCase();
+    if (original.type === "value-word" && (original.isColor && original.isHex || ["initial", "inherit", "unset", "revert"].includes(original.value.toLowerCase())) || original.type === "media-feature" || original.type === "selector-root-invalid" || original.type === "selector-pseudo") {
+      cloned.value = cloned.value.toLowerCase();
     }
-    if (ast.type === "css-decl") {
-      newObj.prop = newObj.prop.toLowerCase();
+    if (original.type === "css-decl") {
+      cloned.prop = original.prop.toLowerCase();
     }
-    if (ast.type === "css-atrule" || ast.type === "css-import") {
-      newObj.name = newObj.name.toLowerCase();
+    if (original.type === "css-atrule" || original.type === "css-import") {
+      cloned.name = original.name.toLowerCase();
     }
-    if (ast.type === "value-number") {
-      newObj.unit = newObj.unit.toLowerCase();
+    if (original.type === "value-number") {
+      cloned.unit = original.unit.toLowerCase();
     }
-    if (ast.type === "value-unknown") {
-      newObj.value = string_replace_all_default(
+    if (original.type === "value-unknown") {
+      cloned.value = string_replace_all_default(
         /* isOptionalObject*/
         false,
-        newObj.value,
+        cloned.value,
         /;$/g,
         ""
       );
     }
-    if ((ast.type === "media-feature" || ast.type === "media-keyword" || ast.type === "media-type" || ast.type === "media-unknown" || ast.type === "media-url" || ast.type === "media-value" || ast.type === "selector-attribute" || ast.type === "selector-string" || ast.type === "selector-class" || ast.type === "selector-combinator" || ast.type === "value-string") && newObj.value) {
-      newObj.value = cleanCSSStrings(newObj.value);
-    }
-    if (ast.type === "selector-attribute") {
-      newObj.attribute = newObj.attribute.trim();
-      if (newObj.namespace && typeof newObj.namespace === "string") {
-        newObj.namespace = newObj.namespace.trim();
-        if (newObj.namespace.length === 0) {
-          newObj.namespace = true;
-        }
+    if (original.type === "selector-attribute") {
+      cloned.attribute = original.attribute.trim();
+      if (original.namespace && typeof original.namespace === "string") {
+        cloned.namespace = original.namespace.trim() || true;
       }
-      if (newObj.value) {
-        newObj.value = string_replace_all_default(
+      if (original.value) {
+        cloned.value = string_replace_all_default(
           /* isOptionalObject*/
           false,
-          newObj.value.trim(),
+          cloned.value.trim(),
           /^["']|["']$/g,
           ""
         );
-        delete newObj.quoted;
+        delete cloned.quoted;
       }
     }
-    if ((ast.type === "media-value" || ast.type === "media-type" || ast.type === "value-number" || ast.type === "selector-root-invalid" || ast.type === "selector-class" || ast.type === "selector-combinator" || ast.type === "selector-tag") && newObj.value) {
-      newObj.value = string_replace_all_default(
+    if ((original.type === "media-value" || original.type === "media-type" || original.type === "value-number" || original.type === "selector-root-invalid" || original.type === "selector-class" || original.type === "selector-combinator" || original.type === "selector-tag") && original.value) {
+      cloned.value = string_replace_all_default(
         /* isOptionalObject*/
         false,
-        newObj.value,
-        /([\d+.Ee-]+)([A-Za-z]*)/g,
+        cloned.value,
+        /([\d+.e-]+)([a-z]*)/gi,
         (match, numStr, unit) => {
           const num = Number(numStr);
           return Number.isNaN(num) ? match : num + unit.toLowerCase();
         }
       );
     }
-    if (ast.type === "selector-tag") {
-      const lowercasedValue = ast.value.toLowerCase();
+    if (original.type === "selector-tag") {
+      const lowercasedValue = cloned.value.toLowerCase();
       if (["from", "to"].includes(lowercasedValue)) {
-        newObj.value = lowercasedValue;
+        cloned.value = lowercasedValue;
       }
     }
-    if (ast.type === "css-atrule" && ast.name.toLowerCase() === "supports") {
-      delete newObj.value;
+    if (original.type === "css-atrule" && original.name.toLowerCase() === "supports") {
+      delete cloned.value;
     }
-    if (ast.type === "selector-unknown") {
-      delete newObj.value;
+    if (original.type === "selector-unknown") {
+      delete cloned.value;
     }
-    if (ast.type === "value-comma_group") {
-      const index = ast.groups.findIndex((node) => node.type === "value-number" && node.unit === "...");
+    if (original.type === "value-comma_group") {
+      const index = original.groups.findIndex((node) => node.type === "value-number" && node.unit === "...");
       if (index !== -1) {
-        newObj.groups[index].unit = "";
-        newObj.groups.splice(index + 1, 0, {
+        cloned.groups[index].unit = "";
+        cloned.groups.splice(index + 1, 0, {
           type: "value-word",
           value: "...",
           isColor: false,
@@ -8794,10 +8813,10 @@ Expected it to be ${EXPECTED_TYPE_VALUES}.`;
         });
       }
     }
-    if (ast.type === "value-comma_group" && ast.groups.some((node) => node.type === "value-atword" && node.value.endsWith("[") || node.type === "value-word" && node.value.startsWith("]"))) {
+    if (original.type === "value-comma_group" && original.groups.some((node) => node.type === "value-atword" && node.value.endsWith("[") || node.type === "value-word" && node.value.startsWith("]"))) {
       return {
         type: "value-atword",
-        value: ast.groups.map((node) => node.value).join(""),
+        value: original.groups.map((node) => node.value).join(""),
         group: {
           open: null,
           close: null,
@@ -8819,7 +8838,7 @@ Expected it to be ${EXPECTED_TYPE_VALUES}.`;
         "'",
         '"'
       ),
-      /\\([^\dA-Fa-f])/g,
+      /\\([^\da-f])/gi,
       "$1"
     );
   }
@@ -8853,6 +8872,333 @@ Expected it to be ${EXPECTED_TYPE_VALUES}.`;
   }
   embed.getVisitorKeys = (node) => node.type === "css-root" ? ["frontMatter"] : [];
   var embed_default = embed;
+
+  // node_modules/to-fast-properties/index.js
+  var fastProto = null;
+  function FastObject(object) {
+    if (fastProto !== null && typeof fastProto.property) {
+      const result = fastProto;
+      fastProto = FastObject.prototype = null;
+      return result;
+    }
+    fastProto = FastObject.prototype = object == null ? /* @__PURE__ */ Object.create(null) : object;
+    return new FastObject();
+  }
+  var inlineCacheCutoff = 10;
+  for (let index = 0; index <= inlineCacheCutoff; index++) {
+    FastObject();
+  }
+  function toFastproperties(object) {
+    return FastObject(object);
+  }
+
+  // src/utils/create-get-visitor-keys.js
+  function createGetVisitorKeys(visitorKeys2, typeProperty = "type") {
+    toFastproperties(visitorKeys2);
+    function getVisitorKeys2(node) {
+      const type = node[typeProperty];
+      if (false) {
+        throw new Error(
+          `Can't get node type, you must pass the wrong typeProperty '${typeProperty}'`
+        );
+      }
+      const keys = visitorKeys2[type];
+      if (!Array.isArray(keys)) {
+        throw Object.assign(new Error(`Missing visitor keys for '${type}'.`), {
+          node
+        });
+      }
+      return keys;
+    }
+    return getVisitorKeys2;
+  }
+  var create_get_visitor_keys_default = createGetVisitorKeys;
+
+  // src/language-css/visitor-keys.js
+  var visitorKeys = {
+    "front-matter": [],
+    "css-root": ["frontMatter", "nodes"],
+    "css-comment": [],
+    "css-rule": ["selector", "nodes"],
+    "css-decl": ["value", "selector", "nodes"],
+    "css-atrule": ["selector", "params", "value", "nodes"],
+    "media-query-list": ["nodes"],
+    "media-query": ["nodes"],
+    "media-type": [],
+    "media-feature-expression": ["nodes"],
+    "media-feature": [],
+    "media-colon": [],
+    "media-value": [],
+    "media-keyword": [],
+    "media-url": [],
+    "media-unknown": [],
+    "selector-root": ["nodes"],
+    "selector-selector": ["nodes"],
+    "selector-comment": [],
+    "selector-string": [],
+    "selector-tag": [],
+    "selector-id": [],
+    "selector-class": [],
+    "selector-attribute": [],
+    "selector-combinator": ["nodes"],
+    "selector-universal": [],
+    "selector-pseudo": ["nodes"],
+    "selector-nesting": [],
+    "selector-unknown": [],
+    "value-value": ["group"],
+    "value-root": ["group"],
+    "value-comment": [],
+    "value-comma_group": ["groups"],
+    "value-paren_group": ["open", "groups", "close"],
+    "value-func": ["group"],
+    "value-paren": [],
+    "value-number": [],
+    "value-operator": [],
+    "value-word": [],
+    "value-colon": [],
+    "value-comma": [],
+    "value-string": [],
+    "value-atword": [],
+    "value-unicode-range": [],
+    "value-unknown": []
+  };
+  var visitor_keys_default = visitorKeys;
+
+  // src/language-css/get-visitor-keys.js
+  var getVisitorKeys = create_get_visitor_keys_default(visitor_keys_default);
+  var get_visitor_keys_default = getVisitorKeys;
+
+  // src/utils/line-column-to-index.js
+  function lineColumnToIndex(lineColumn, text) {
+    let index = 0;
+    for (let i = 0; i < lineColumn.line - 1; ++i) {
+      index = text.indexOf("\n", index) + 1;
+    }
+    return index + lineColumn.column;
+  }
+  var line_column_to_index_default = lineColumnToIndex;
+
+  // src/utils/skip.js
+  function skip(characters) {
+    return (text, startIndex, options2) => {
+      const backwards = Boolean(options2 == null ? void 0 : options2.backwards);
+      if (startIndex === false) {
+        return false;
+      }
+      const { length } = text;
+      let cursor = startIndex;
+      while (cursor >= 0 && cursor < length) {
+        const character = text.charAt(cursor);
+        if (characters instanceof RegExp) {
+          if (!characters.test(character)) {
+            return cursor;
+          }
+        } else if (!characters.includes(character)) {
+          return cursor;
+        }
+        backwards ? cursor-- : cursor++;
+      }
+      if (cursor === -1 || cursor === length) {
+        return cursor;
+      }
+      return false;
+    };
+  }
+  var skipWhitespace = skip(/\s/);
+  var skipSpaces = skip(" 	");
+  var skipToLineEnd = skip(",; 	");
+  var skipEverythingButNewLine = skip(/[^\n\r]/);
+
+  // src/language-css/loc.js
+  function calculateLocStart(node, text) {
+    var _a, _b, _c;
+    if (typeof ((_b = (_a = node.source) == null ? void 0 : _a.start) == null ? void 0 : _b.offset) === "number") {
+      return node.source.start.offset;
+    }
+    if (typeof node.sourceIndex === "number") {
+      return node.sourceIndex;
+    }
+    if ((_c = node.source) == null ? void 0 : _c.start) {
+      return line_column_to_index_default(node.source.start, text);
+    }
+    throw Object.assign(new Error("Can not locate node."), {
+      node
+    });
+  }
+  function calculateLocEnd(node, text) {
+    var _a, _b;
+    if (node.type === "css-comment" && node.inline) {
+      return skipEverythingButNewLine(text, node.source.startOffset);
+    }
+    if (typeof ((_b = (_a = node.source) == null ? void 0 : _a.end) == null ? void 0 : _b.offset) === "number") {
+      return node.source.end.offset;
+    }
+    if (node.source) {
+      if (node.source.end) {
+        return line_column_to_index_default(node.source.end, text);
+      }
+      if (is_non_empty_array_default(node.nodes)) {
+        return calculateLocEnd(at_default(
+          /* isOptionalObject*/
+          false,
+          node.nodes,
+          -1
+        ), text);
+      }
+    }
+    return null;
+  }
+  function calculateLoc(node, text) {
+    if (node.source) {
+      node.source.startOffset = calculateLocStart(node, text);
+      node.source.endOffset = calculateLocEnd(node, text);
+    }
+    for (const key in node) {
+      const child = node[key];
+      if (key === "source" || !child || typeof child !== "object") {
+        continue;
+      }
+      if (child.type === "value-root" || child.type === "value-unknown") {
+        calculateValueNodeLoc(child, getValueRootOffset(node), child.text || child.value);
+      } else {
+        calculateLoc(child, text);
+      }
+    }
+  }
+  function calculateValueNodeLoc(node, rootOffset, text) {
+    if (node.source) {
+      node.source.startOffset = calculateLocStart(node, text) + rootOffset;
+      node.source.endOffset = calculateLocEnd(node, text) + rootOffset;
+    }
+    for (const key in node) {
+      const child = node[key];
+      if (key === "source" || !child || typeof child !== "object") {
+        continue;
+      }
+      calculateValueNodeLoc(child, rootOffset, text);
+    }
+  }
+  function getValueRootOffset(node) {
+    var _a;
+    let result = node.source.startOffset;
+    if (typeof node.prop === "string") {
+      result += node.prop.length;
+    }
+    if (node.type === "css-atrule" && typeof node.name === "string") {
+      result += 1 + node.name.length + node.raws.afterName.match(/^\s*:?\s*/)[0].length;
+    }
+    if (node.type !== "css-atrule" && typeof ((_a = node.raws) == null ? void 0 : _a.between) === "string") {
+      result += node.raws.between.length;
+    }
+    return result;
+  }
+  function replaceQuotesInInlineComments(text) {
+    let state = "initial";
+    let stateToReturnFromQuotes = "initial";
+    let inlineCommentStartIndex;
+    let inlineCommentContainsQuotes = false;
+    const inlineCommentsToReplace = [];
+    for (let i = 0; i < text.length; i++) {
+      const c = text[i];
+      switch (state) {
+        case "initial":
+          if (c === "'") {
+            state = "single-quotes";
+            continue;
+          }
+          if (c === '"') {
+            state = "double-quotes";
+            continue;
+          }
+          if ((c === "u" || c === "U") && text.slice(i, i + 4).toLowerCase() === "url(") {
+            state = "url";
+            i += 3;
+            continue;
+          }
+          if (c === "*" && text[i - 1] === "/") {
+            state = "comment-block";
+            continue;
+          }
+          if (c === "/" && text[i - 1] === "/") {
+            state = "comment-inline";
+            inlineCommentStartIndex = i - 1;
+            continue;
+          }
+          continue;
+        case "single-quotes":
+          if (c === "'" && text[i - 1] !== "\\") {
+            state = stateToReturnFromQuotes;
+            stateToReturnFromQuotes = "initial";
+          }
+          if (c === "\n" || c === "\r") {
+            return text;
+          }
+          continue;
+        case "double-quotes":
+          if (c === '"' && text[i - 1] !== "\\") {
+            state = stateToReturnFromQuotes;
+            stateToReturnFromQuotes = "initial";
+          }
+          if (c === "\n" || c === "\r") {
+            return text;
+          }
+          continue;
+        case "url":
+          if (c === ")") {
+            state = "initial";
+          }
+          if (c === "\n" || c === "\r") {
+            return text;
+          }
+          if (c === "'") {
+            state = "single-quotes";
+            stateToReturnFromQuotes = "url";
+            continue;
+          }
+          if (c === '"') {
+            state = "double-quotes";
+            stateToReturnFromQuotes = "url";
+            continue;
+          }
+          continue;
+        case "comment-block":
+          if (c === "/" && text[i - 1] === "*") {
+            state = "initial";
+          }
+          continue;
+        case "comment-inline":
+          if (c === '"' || c === "'" || c === "*") {
+            inlineCommentContainsQuotes = true;
+          }
+          if (c === "\n" || c === "\r") {
+            if (inlineCommentContainsQuotes) {
+              inlineCommentsToReplace.push([inlineCommentStartIndex, i]);
+            }
+            state = "initial";
+            inlineCommentContainsQuotes = false;
+          }
+          continue;
+      }
+    }
+    for (const [start, end] of inlineCommentsToReplace) {
+      text = text.slice(0, start) + string_replace_all_default(
+        /* isOptionalObject*/
+        false,
+        text.slice(start, end),
+        /["'*]/g,
+        " "
+      ) + text.slice(end);
+    }
+    return text;
+  }
+  function locStart(node) {
+    var _a;
+    return (_a = node.source) == null ? void 0 : _a.startOffset;
+  }
+  function locEnd(node) {
+    var _a;
+    return (_a = node.source) == null ? void 0 : _a.endOffset;
+  }
 
   // src/language-js/pragma.js
   var import_jest_docblock = __toESM(require_build(), 1);
@@ -8970,101 +9316,6 @@ Expected it to be ${EXPECTED_TYPE_VALUES}.`;
     const { frontMatter, content } = parse_default(text);
     return (frontMatter ? frontMatter.raw + "\n\n" : "") + insertPragma(content);
   }
-
-  // node_modules/to-fast-properties/index.js
-  var fastProto = null;
-  function FastObject(object) {
-    if (fastProto !== null && typeof fastProto.property) {
-      const result = fastProto;
-      fastProto = FastObject.prototype = null;
-      return result;
-    }
-    fastProto = FastObject.prototype = object == null ? /* @__PURE__ */ Object.create(null) : object;
-    return new FastObject();
-  }
-  var inlineCacheCutoff = 10;
-  for (let index = 0; index <= inlineCacheCutoff; index++) {
-    FastObject();
-  }
-  function toFastproperties(object) {
-    return FastObject(object);
-  }
-
-  // src/utils/create-get-visitor-keys.js
-  function createGetVisitorKeys(visitorKeys2, typeProperty = "type") {
-    toFastproperties(visitorKeys2);
-    function getVisitorKeys2(node) {
-      const type = node[typeProperty];
-      if (false) {
-        throw new Error(
-          `Can't get node type, you must pass the wrong typeProperty '${typeProperty}'`
-        );
-      }
-      const keys = visitorKeys2[type];
-      if (!Array.isArray(keys)) {
-        throw Object.assign(new Error(`Missing visitor keys for '${type}'.`), {
-          node
-        });
-      }
-      return keys;
-    }
-    return getVisitorKeys2;
-  }
-  var create_get_visitor_keys_default = createGetVisitorKeys;
-
-  // src/language-css/visitor-keys.js
-  var visitorKeys = {
-    "front-matter": [],
-    "css-root": ["frontMatter", "nodes"],
-    "css-comment": [],
-    "css-rule": ["selector", "nodes"],
-    "css-decl": ["value", "selector", "nodes"],
-    "css-atrule": ["selector", "params", "value", "nodes"],
-    "media-query-list": ["nodes"],
-    "media-query": ["nodes"],
-    "media-type": [],
-    "media-feature-expression": ["nodes"],
-    "media-feature": [],
-    "media-colon": [],
-    "media-value": [],
-    "media-keyword": [],
-    "media-url": [],
-    "media-unknown": [],
-    "selector-root": ["nodes"],
-    "selector-selector": ["nodes"],
-    "selector-comment": [],
-    "selector-string": [],
-    "selector-tag": [],
-    "selector-id": [],
-    "selector-class": [],
-    "selector-attribute": [],
-    "selector-combinator": ["nodes"],
-    "selector-universal": [],
-    "selector-pseudo": ["nodes"],
-    "selector-nesting": [],
-    "selector-unknown": [],
-    "value-value": ["group"],
-    "value-root": ["group"],
-    "value-comment": [],
-    "value-comma_group": ["groups"],
-    "value-paren_group": ["open", "groups", "close"],
-    "value-func": ["group"],
-    "value-paren": [],
-    "value-number": [],
-    "value-operator": [],
-    "value-word": [],
-    "value-colon": [],
-    "value-comma": [],
-    "value-string": [],
-    "value-atword": [],
-    "value-unicode-range": [],
-    "value-unknown": []
-  };
-  var visitor_keys_default = visitorKeys;
-
-  // src/language-css/get-visitor-keys.js
-  var getVisitorKeys = create_get_visitor_keys_default(visitor_keys_default);
-  var get_visitor_keys_default = getVisitorKeys;
 
   // src/language-css/utils/index.js
   var colorAdjusterFunctions = /* @__PURE__ */ new Set([
@@ -9314,240 +9565,188 @@ Expected it to be ${EXPECTED_TYPE_VALUES}.`;
     return node.type === "value-paren_group" && ((_a = node.open) == null ? void 0 : _a.value) === "(" && ((_b = node.close) == null ? void 0 : _b.value) === ")";
   }
 
-  // src/utils/skip.js
-  function skip(characters) {
-    return (text, startIndex, options2) => {
-      const backwards = Boolean(options2 == null ? void 0 : options2.backwards);
-      if (startIndex === false) {
-        return false;
-      }
-      const { length } = text;
-      let cursor = startIndex;
-      while (cursor >= 0 && cursor < length) {
-        const character = text.charAt(cursor);
-        if (characters instanceof RegExp) {
-          if (!characters.test(character)) {
-            return cursor;
-          }
-        } else if (!characters.includes(character)) {
-          return cursor;
+  // src/language-css/print/comma-separated-value-group.js
+  function printCommaSeparatedValueGroup(path, options2, print3) {
+    var _a;
+    const { node } = path;
+    const parentNode = path.parent;
+    const parentParentNode = path.grandparent;
+    const declAncestorProp = getPropOfDeclNode(path);
+    const isGridValue = declAncestorProp && parentNode.type === "value-value" && (declAncestorProp === "grid" || declAncestorProp.startsWith("grid-template"));
+    const atRuleAncestorNode = path.findAncestor(
+      (node2) => node2.type === "css-atrule"
+    );
+    const isControlDirective = atRuleAncestorNode && isSCSSControlDirectiveNode(atRuleAncestorNode, options2);
+    const hasInlineComment = node.groups.some(
+      (node2) => isInlineValueCommentNode(node2)
+    );
+    const printed = path.map(print3, "groups");
+    const parts = [];
+    const insideURLFunction = insideValueFunctionNode(path, "url");
+    let insideSCSSInterpolationInString = false;
+    let didBreak = false;
+    for (let i = 0; i < node.groups.length; ++i) {
+      parts.push(printed[i]);
+      const iPrevNode = node.groups[i - 1];
+      const iNode = node.groups[i];
+      const iNextNode = node.groups[i + 1];
+      const iNextNextNode = node.groups[i + 2];
+      if (insideURLFunction) {
+        if (iNextNode && isAdditionNode(iNextNode) || isAdditionNode(iNode)) {
+          parts.push(" ");
         }
-        backwards ? cursor-- : cursor++;
-      }
-      if (cursor === -1 || cursor === length) {
-        return cursor;
-      }
-      return false;
-    };
-  }
-  var skipWhitespace = skip(/\s/);
-  var skipSpaces = skip(" 	");
-  var skipToLineEnd = skip(",; 	");
-  var skipEverythingButNewLine = skip(/[^\n\r]/);
-
-  // src/utils/line-column-to-index.js
-  function lineColumnToIndex(lineColumn, text) {
-    let index = 0;
-    for (let i = 0; i < lineColumn.line - 1; ++i) {
-      index = text.indexOf("\n", index) + 1;
-    }
-    return index + lineColumn.column;
-  }
-  var line_column_to_index_default = lineColumnToIndex;
-
-  // src/language-css/loc.js
-  function calculateLocStart(node, text) {
-    var _a, _b, _c;
-    if (typeof ((_b = (_a = node.source) == null ? void 0 : _a.start) == null ? void 0 : _b.offset) === "number") {
-      return node.source.start.offset;
-    }
-    if (typeof node.sourceIndex === "number") {
-      return node.sourceIndex;
-    }
-    if ((_c = node.source) == null ? void 0 : _c.start) {
-      return line_column_to_index_default(node.source.start, text);
-    }
-    throw Object.assign(new Error("Can not locate node."), {
-      node
-    });
-  }
-  function calculateLocEnd(node, text) {
-    var _a, _b;
-    if (node.type === "css-comment" && node.inline) {
-      return skipEverythingButNewLine(text, node.source.startOffset);
-    }
-    if (typeof ((_b = (_a = node.source) == null ? void 0 : _a.end) == null ? void 0 : _b.offset) === "number") {
-      return node.source.end.offset + 1;
-    }
-    if (node.source) {
-      if (node.source.end) {
-        return line_column_to_index_default(node.source.end, text);
-      }
-      if (is_non_empty_array_default(node.nodes)) {
-        return calculateLocEnd(at_default(
-          /* isOptionalObject*/
-          false,
-          node.nodes,
-          -1
-        ), text);
-      }
-    }
-    return null;
-  }
-  function calculateLoc(node, text) {
-    if (node.source) {
-      node.source.startOffset = calculateLocStart(node, text);
-      node.source.endOffset = calculateLocEnd(node, text);
-    }
-    for (const key in node) {
-      const child = node[key];
-      if (key === "source" || !child || typeof child !== "object") {
         continue;
       }
-      if (child.type === "value-root" || child.type === "value-unknown") {
-        calculateValueNodeLoc(child, getValueRootOffset(node), child.text || child.value);
-      } else {
-        calculateLoc(child, text);
-      }
-    }
-  }
-  function calculateValueNodeLoc(node, rootOffset, text) {
-    if (node.source) {
-      node.source.startOffset = calculateLocStart(node, text) + rootOffset;
-      node.source.endOffset = calculateLocEnd(node, text) + rootOffset;
-    }
-    for (const key in node) {
-      const child = node[key];
-      if (key === "source" || !child || typeof child !== "object") {
+      if (insideAtRuleNode(path, "forward") && iNode.type === "value-word" && iNode.value && iPrevNode !== void 0 && iPrevNode.type === "value-word" && iPrevNode.value === "as" && iNextNode.type === "value-operator" && iNextNode.value === "*") {
         continue;
       }
-      calculateValueNodeLoc(child, rootOffset, text);
-    }
-  }
-  function getValueRootOffset(node) {
-    var _a;
-    let result = node.source.startOffset;
-    if (typeof node.prop === "string") {
-      result += node.prop.length;
-    }
-    if (node.type === "css-atrule" && typeof node.name === "string") {
-      result += 1 + node.name.length + node.raws.afterName.match(/^\s*:?\s*/)[0].length;
-    }
-    if (node.type !== "css-atrule" && typeof ((_a = node.raws) == null ? void 0 : _a.between) === "string") {
-      result += node.raws.between.length;
-    }
-    return result;
-  }
-  function replaceQuotesInInlineComments(text) {
-    let state = "initial";
-    let stateToReturnFromQuotes = "initial";
-    let inlineCommentStartIndex;
-    let inlineCommentContainsQuotes = false;
-    const inlineCommentsToReplace = [];
-    for (let i = 0; i < text.length; i++) {
-      const c = text[i];
-      switch (state) {
-        case "initial":
-          if (c === "'") {
-            state = "single-quotes";
-            continue;
-          }
-          if (c === '"') {
-            state = "double-quotes";
-            continue;
-          }
-          if ((c === "u" || c === "U") && text.slice(i, i + 4).toLowerCase() === "url(") {
-            state = "url";
-            i += 3;
-            continue;
-          }
-          if (c === "*" && text[i - 1] === "/") {
-            state = "comment-block";
-            continue;
-          }
-          if (c === "/" && text[i - 1] === "/") {
-            state = "comment-inline";
-            inlineCommentStartIndex = i - 1;
-            continue;
-          }
-          continue;
-        case "single-quotes":
-          if (c === "'" && text[i - 1] !== "\\") {
-            state = stateToReturnFromQuotes;
-            stateToReturnFromQuotes = "initial";
-          }
-          if (c === "\n" || c === "\r") {
-            return text;
-          }
-          continue;
-        case "double-quotes":
-          if (c === '"' && text[i - 1] !== "\\") {
-            state = stateToReturnFromQuotes;
-            stateToReturnFromQuotes = "initial";
-          }
-          if (c === "\n" || c === "\r") {
-            return text;
-          }
-          continue;
-        case "url":
-          if (c === ")") {
-            state = "initial";
-          }
-          if (c === "\n" || c === "\r") {
-            return text;
-          }
-          if (c === "'") {
-            state = "single-quotes";
-            stateToReturnFromQuotes = "url";
-            continue;
-          }
-          if (c === '"') {
-            state = "double-quotes";
-            stateToReturnFromQuotes = "url";
-            continue;
-          }
-          continue;
-        case "comment-block":
-          if (c === "/" && text[i - 1] === "*") {
-            state = "initial";
-          }
-          continue;
-        case "comment-inline":
-          if (c === '"' || c === "'" || c === "*") {
-            inlineCommentContainsQuotes = true;
-          }
-          if (c === "\n" || c === "\r") {
-            if (inlineCommentContainsQuotes) {
-              inlineCommentsToReplace.push([inlineCommentStartIndex, i]);
-            }
-            state = "initial";
-            inlineCommentContainsQuotes = false;
-          }
-          continue;
+      if (!iNextNode) {
+        continue;
       }
+      if (iNode.type === "value-word" && iNode.value.endsWith("-") && isAtWordPlaceholderNode(iNextNode)) {
+        continue;
+      }
+      if (iNode.type === "value-string" && iNode.quoted) {
+        const positionOfOpeningInterpolation = iNode.value.lastIndexOf("#{");
+        const positionOfClosingInterpolation = iNode.value.lastIndexOf("}");
+        if (positionOfOpeningInterpolation !== -1 && positionOfClosingInterpolation !== -1) {
+          insideSCSSInterpolationInString = positionOfOpeningInterpolation > positionOfClosingInterpolation;
+        } else if (positionOfOpeningInterpolation !== -1) {
+          insideSCSSInterpolationInString = true;
+        } else if (positionOfClosingInterpolation !== -1) {
+          insideSCSSInterpolationInString = false;
+        }
+      }
+      if (insideSCSSInterpolationInString) {
+        continue;
+      }
+      if (isColonNode(iNode) || isColonNode(iNextNode)) {
+        continue;
+      }
+      if (iNode.type === "value-atword" && (iNode.value === "" || /*
+          @var[ @notVarNested ][notVar]
+          ^^^^^
+          */
+      iNode.value.endsWith("["))) {
+        continue;
+      }
+      if (iNextNode.type === "value-word" && iNextNode.value.startsWith("]")) {
+        continue;
+      }
+      if (iNode.value === "~") {
+        continue;
+      }
+      if (iNode.type !== "value-string" && iNode.value && iNode.value.includes("\\") && iNextNode && iNextNode.type !== "value-comment") {
+        continue;
+      }
+      if ((iPrevNode == null ? void 0 : iPrevNode.value) && iPrevNode.value.indexOf("\\") === iPrevNode.value.length - 1 && iNode.type === "value-operator" && iNode.value === "/") {
+        continue;
+      }
+      if (iNode.value === "\\") {
+        continue;
+      }
+      if (isPostcssSimpleVarNode(iNode, iNextNode)) {
+        continue;
+      }
+      if (isHashNode(iNode) || isLeftCurlyBraceNode(iNode) || isRightCurlyBraceNode(iNextNode) || isLeftCurlyBraceNode(iNextNode) && hasEmptyRawBefore(iNextNode) || isRightCurlyBraceNode(iNode) && hasEmptyRawBefore(iNextNode)) {
+        continue;
+      }
+      if (iNode.value === "--" && isHashNode(iNextNode)) {
+        continue;
+      }
+      const isMathOperator = isMathOperatorNode(iNode);
+      const isNextMathOperator = isMathOperatorNode(iNextNode);
+      if ((isMathOperator && isHashNode(iNextNode) || isNextMathOperator && isRightCurlyBraceNode(iNode)) && hasEmptyRawBefore(iNextNode)) {
+        continue;
+      }
+      if (!iPrevNode && isDivisionNode(iNode)) {
+        continue;
+      }
+      if (insideValueFunctionNode(path, "calc") && (isAdditionNode(iNode) || isAdditionNode(iNextNode) || isSubtractionNode(iNode) || isSubtractionNode(iNextNode)) && hasEmptyRawBefore(iNextNode)) {
+        continue;
+      }
+      const isColorAdjusterNode = (isAdditionNode(iNode) || isSubtractionNode(iNode)) && i === 0 && (iNextNode.type === "value-number" || iNextNode.isHex) && parentParentNode && isColorAdjusterFuncNode(parentParentNode) && !hasEmptyRawBefore(iNextNode);
+      const requireSpaceBeforeOperator = (iNextNextNode == null ? void 0 : iNextNextNode.type) === "value-func" || iNextNextNode && isWordNode(iNextNextNode) || iNode.type === "value-func" || isWordNode(iNode);
+      const requireSpaceAfterOperator = iNextNode.type === "value-func" || isWordNode(iNextNode) || (iPrevNode == null ? void 0 : iPrevNode.type) === "value-func" || iPrevNode && isWordNode(iPrevNode);
+      if (options2.parser === "scss" && isMathOperator && iNode.value === "-" && iNextNode.type === "value-func" && locEnd(iNode) !== locStart(iNextNode)) {
+        parts.push(" ");
+        continue;
+      }
+      if (!(isMultiplicationNode(iNextNode) || isMultiplicationNode(iNode)) && !insideValueFunctionNode(path, "calc") && !isColorAdjusterNode && (isDivisionNode(iNextNode) && !requireSpaceBeforeOperator || isDivisionNode(iNode) && !requireSpaceAfterOperator || isAdditionNode(iNextNode) && !requireSpaceBeforeOperator || isAdditionNode(iNode) && !requireSpaceAfterOperator || isSubtractionNode(iNextNode) || isSubtractionNode(iNode)) && (hasEmptyRawBefore(iNextNode) || isMathOperator && (!iPrevNode || iPrevNode && isMathOperatorNode(iPrevNode)))) {
+        continue;
+      }
+      if ((options2.parser === "scss" || options2.parser === "less") && isMathOperator && iNode.value === "-" && isParenGroupNode(iNextNode) && locEnd(iNode) === locStart(iNextNode.open) && iNextNode.open.value === "(") {
+        continue;
+      }
+      if (isInlineValueCommentNode(iNode)) {
+        if (parentNode.type === "value-paren_group") {
+          parts.push(dedent(hardline));
+          continue;
+        }
+        parts.push(hardline);
+        continue;
+      }
+      if (isControlDirective && (isEqualityOperatorNode(iNextNode) || isRelationalOperatorNode(iNextNode) || isIfElseKeywordNode(iNextNode) || isEachKeywordNode(iNode) || isForKeywordNode(iNode))) {
+        parts.push(" ");
+        continue;
+      }
+      if (atRuleAncestorNode && atRuleAncestorNode.name.toLowerCase() === "namespace") {
+        parts.push(" ");
+        continue;
+      }
+      if (isGridValue) {
+        if (iNode.source && iNextNode.source && iNode.source.start.line !== iNextNode.source.start.line) {
+          parts.push(hardline);
+          didBreak = true;
+        } else {
+          parts.push(" ");
+        }
+        continue;
+      }
+      if (isNextMathOperator) {
+        parts.push(" ");
+        continue;
+      }
+      if ((iNextNode == null ? void 0 : iNextNode.value) === "...") {
+        continue;
+      }
+      if (isAtWordPlaceholderNode(iNode) && isAtWordPlaceholderNode(iNextNode) && locEnd(iNode) === locStart(iNextNode)) {
+        continue;
+      }
+      if (isAtWordPlaceholderNode(iNode) && isParenGroupNode(iNextNode) && locEnd(iNode) === locStart(iNextNode.open)) {
+        parts.push(softline);
+        continue;
+      }
+      if (iNode.value === "with" && isParenGroupNode(iNextNode)) {
+        parts.push(" ");
+        continue;
+      }
+      if (((_a = iNode.value) == null ? void 0 : _a.endsWith("#")) && iNextNode.value === "{" && isParenGroupNode(iNextNode.group)) {
+        continue;
+      }
+      parts.push(line);
     }
-    for (const [start, end] of inlineCommentsToReplace) {
-      text = text.slice(0, start) + string_replace_all_default(
-        /* isOptionalObject*/
-        false,
-        text.slice(start, end),
-        /["'*]/g,
-        " "
-      ) + text.slice(end);
+    if (hasInlineComment) {
+      parts.push(breakParent);
     }
-    return text;
+    if (didBreak) {
+      parts.unshift(hardline);
+    }
+    if (isControlDirective) {
+      return group(indent(parts));
+    }
+    if (insideURLFunctionInImportAtRuleNode(path)) {
+      return group(fill(parts));
+    }
+    return group(indent(fill(parts)));
   }
-  function locStart(node) {
-    var _a;
-    return (_a = node.source) == null ? void 0 : _a.startOffset;
-  }
-  function locEnd(node) {
-    var _a;
-    return (_a = node.source) == null ? void 0 : _a.endOffset;
-  }
+  var comma_separated_value_group_default = printCommaSeparatedValueGroup;
 
   // src/utils/print-number.js
   function printNumber(rawNumber) {
+    if (rawNumber.length === 1) {
+      return rawNumber;
+    }
     return rawNumber.toLowerCase().replace(/^([+-]?[\d.]+e)(?:\+|(-))?0*(?=\d)/, "$1$2").replace(/^([+-]?[\d.]+)e[+-]?0+$/, "$1").replace(/^([+-])?\./, "$10.").replace(/(\.\d+?)0+(?=e|$)/, "$1").replace(/\.(?=e|$)/, "");
   }
   var print_number_default = printNumber;
@@ -9806,10 +10005,10 @@ Expected it to be ${EXPECTED_TYPE_VALUES}.`;
     return css_units_evaluate_default.has(lowercased) ? css_units_evaluate_default.get(lowercased) : unit;
   }
   var STRING_REGEX = /(["'])(?:(?!\1)[^\\]|\\.)*\1/gs;
-  var NUMBER_REGEX = /(?:\d*\.\d+|\d+\.?)(?:[Ee][+-]?\d+)?/g;
-  var STANDARD_UNIT_REGEX = /[A-Za-z]+/g;
-  var WORD_PART_REGEX = /[$@]?[A-Z_a-z\u0080-\uFFFF][\w\u0080-\uFFFF-]*/g;
-  var ADJUST_NUMBERS_REGEX = new RegExp(STRING_REGEX.source + `|(${WORD_PART_REGEX.source})?(${NUMBER_REGEX.source})(${STANDARD_UNIT_REGEX.source})?`, "g");
+  var NUMBER_REGEX = /(?:\d*\.\d+|\d+\.?)(?:e[+-]?\d+)?/gi;
+  var STANDARD_UNIT_REGEX = /[a-z]+/gi;
+  var WORD_PART_REGEX = /[$@]?[_a-z\u0080-\uFFFF][\w\u0080-\uFFFF-]*/gi;
+  var ADJUST_NUMBERS_REGEX = new RegExp(STRING_REGEX.source + `|(${WORD_PART_REGEX.source})?(${NUMBER_REGEX.source})(${STANDARD_UNIT_REGEX.source})?`, "gi");
   function adjustStrings(value, options2) {
     return string_replace_all_default(
       /* isOptionalObject*/
@@ -9839,179 +10038,6 @@ Expected it to be ${EXPECTED_TYPE_VALUES}.`;
     return options2.trailingComma === "es5" || options2.trailingComma === "all";
   }
 
-  // src/language-css/print/comma-separated-value-group.js
-  function printCommaSeparatedValueGroup(path, options2, print3) {
-    var _a;
-    const { node } = path;
-    const parentNode = path.parent;
-    const parentParentNode = path.grandparent;
-    const declAncestorProp = getPropOfDeclNode(path);
-    const isGridValue = declAncestorProp && parentNode.type === "value-value" && (declAncestorProp === "grid" || declAncestorProp.startsWith("grid-template"));
-    const atRuleAncestorNode = path.findAncestor(
-      (node2) => node2.type === "css-atrule"
-    );
-    const isControlDirective = atRuleAncestorNode && isSCSSControlDirectiveNode(atRuleAncestorNode, options2);
-    const hasInlineComment = node.groups.some(
-      (node2) => isInlineValueCommentNode(node2)
-    );
-    const printed = path.map(print3, "groups");
-    const parts = [];
-    const insideURLFunction = insideValueFunctionNode(path, "url");
-    let insideSCSSInterpolationInString = false;
-    let didBreak = false;
-    for (let i = 0; i < node.groups.length; ++i) {
-      parts.push(printed[i]);
-      const iPrevNode = node.groups[i - 1];
-      const iNode = node.groups[i];
-      const iNextNode = node.groups[i + 1];
-      const iNextNextNode = node.groups[i + 2];
-      if (insideURLFunction) {
-        if (iNextNode && isAdditionNode(iNextNode) || isAdditionNode(iNode)) {
-          parts.push(" ");
-        }
-        continue;
-      }
-      if (insideAtRuleNode(path, "forward") && iNode.type === "value-word" && iNode.value && iPrevNode !== void 0 && iPrevNode.type === "value-word" && iPrevNode.value === "as" && iNextNode.type === "value-operator" && iNextNode.value === "*") {
-        continue;
-      }
-      if (!iNextNode) {
-        continue;
-      }
-      if (iNode.type === "value-word" && iNode.value.endsWith("-") && isAtWordPlaceholderNode(iNextNode)) {
-        continue;
-      }
-      if (iNode.type === "value-string" && iNode.quoted) {
-        const positionOfOpeningInterpolation = iNode.value.lastIndexOf("#{");
-        const positionOfClosingInterpolation = iNode.value.lastIndexOf("}");
-        if (positionOfOpeningInterpolation !== -1 && positionOfClosingInterpolation !== -1) {
-          insideSCSSInterpolationInString = positionOfOpeningInterpolation > positionOfClosingInterpolation;
-        } else if (positionOfOpeningInterpolation !== -1) {
-          insideSCSSInterpolationInString = true;
-        } else if (positionOfClosingInterpolation !== -1) {
-          insideSCSSInterpolationInString = false;
-        }
-      }
-      if (insideSCSSInterpolationInString) {
-        continue;
-      }
-      if (isColonNode(iNode) || isColonNode(iNextNode)) {
-        continue;
-      }
-      if (iNode.type === "value-atword" && (iNode.value === "" || /*
-          @var[ @notVarNested ][notVar]
-          ^^^^^
-          */
-      iNode.value.endsWith("["))) {
-        continue;
-      }
-      if (iNextNode.type === "value-word" && iNextNode.value.startsWith("]")) {
-        continue;
-      }
-      if (iNode.value === "~") {
-        continue;
-      }
-      if (iNode.type !== "value-string" && iNode.value && iNode.value.includes("\\") && iNextNode && iNextNode.type !== "value-comment") {
-        continue;
-      }
-      if ((iPrevNode == null ? void 0 : iPrevNode.value) && iPrevNode.value.indexOf("\\") === iPrevNode.value.length - 1 && iNode.type === "value-operator" && iNode.value === "/") {
-        continue;
-      }
-      if (iNode.value === "\\") {
-        continue;
-      }
-      if (isPostcssSimpleVarNode(iNode, iNextNode)) {
-        continue;
-      }
-      if (isHashNode(iNode) || isLeftCurlyBraceNode(iNode) || isRightCurlyBraceNode(iNextNode) || isLeftCurlyBraceNode(iNextNode) && hasEmptyRawBefore(iNextNode) || isRightCurlyBraceNode(iNode) && hasEmptyRawBefore(iNextNode)) {
-        continue;
-      }
-      if (iNode.value === "--" && isHashNode(iNextNode)) {
-        continue;
-      }
-      const isMathOperator = isMathOperatorNode(iNode);
-      const isNextMathOperator = isMathOperatorNode(iNextNode);
-      if ((isMathOperator && isHashNode(iNextNode) || isNextMathOperator && isRightCurlyBraceNode(iNode)) && hasEmptyRawBefore(iNextNode)) {
-        continue;
-      }
-      if (!iPrevNode && isDivisionNode(iNode)) {
-        continue;
-      }
-      if (insideValueFunctionNode(path, "calc") && (isAdditionNode(iNode) || isAdditionNode(iNextNode) || isSubtractionNode(iNode) || isSubtractionNode(iNextNode)) && hasEmptyRawBefore(iNextNode)) {
-        continue;
-      }
-      const isColorAdjusterNode = (isAdditionNode(iNode) || isSubtractionNode(iNode)) && i === 0 && (iNextNode.type === "value-number" || iNextNode.isHex) && parentParentNode && isColorAdjusterFuncNode(parentParentNode) && !hasEmptyRawBefore(iNextNode);
-      const requireSpaceBeforeOperator = (iNextNextNode == null ? void 0 : iNextNextNode.type) === "value-func" || iNextNextNode && isWordNode(iNextNextNode) || iNode.type === "value-func" || isWordNode(iNode);
-      const requireSpaceAfterOperator = iNextNode.type === "value-func" || isWordNode(iNextNode) || (iPrevNode == null ? void 0 : iPrevNode.type) === "value-func" || iPrevNode && isWordNode(iPrevNode);
-      if (!(isMultiplicationNode(iNextNode) || isMultiplicationNode(iNode)) && !insideValueFunctionNode(path, "calc") && !isColorAdjusterNode && (isDivisionNode(iNextNode) && !requireSpaceBeforeOperator || isDivisionNode(iNode) && !requireSpaceAfterOperator || isAdditionNode(iNextNode) && !requireSpaceBeforeOperator || isAdditionNode(iNode) && !requireSpaceAfterOperator || isSubtractionNode(iNextNode) || isSubtractionNode(iNode)) && (hasEmptyRawBefore(iNextNode) || isMathOperator && (!iPrevNode || iPrevNode && isMathOperatorNode(iPrevNode)))) {
-        continue;
-      }
-      if ((options2.parser === "scss" || options2.parser === "less") && isMathOperator && iNode.value === "-" && isParenGroupNode(iNextNode) && locEnd(iNode) === locStart(iNextNode.open) && iNextNode.open.value === "(") {
-        continue;
-      }
-      if (isInlineValueCommentNode(iNode)) {
-        if (parentNode.type === "value-paren_group") {
-          parts.push(dedent(hardline));
-          continue;
-        }
-        parts.push(hardline);
-        continue;
-      }
-      if (isControlDirective && (isEqualityOperatorNode(iNextNode) || isRelationalOperatorNode(iNextNode) || isIfElseKeywordNode(iNextNode) || isEachKeywordNode(iNode) || isForKeywordNode(iNode))) {
-        parts.push(" ");
-        continue;
-      }
-      if (atRuleAncestorNode && atRuleAncestorNode.name.toLowerCase() === "namespace") {
-        parts.push(" ");
-        continue;
-      }
-      if (isGridValue) {
-        if (iNode.source && iNextNode.source && iNode.source.start.line !== iNextNode.source.start.line) {
-          parts.push(hardline);
-          didBreak = true;
-        } else {
-          parts.push(" ");
-        }
-        continue;
-      }
-      if (isNextMathOperator) {
-        parts.push(" ");
-        continue;
-      }
-      if ((iNextNode == null ? void 0 : iNextNode.value) === "...") {
-        continue;
-      }
-      if (isAtWordPlaceholderNode(iNode) && isAtWordPlaceholderNode(iNextNode) && locEnd(iNode) === locStart(iNextNode)) {
-        continue;
-      }
-      if (isAtWordPlaceholderNode(iNode) && isParenGroupNode(iNextNode) && locEnd(iNode) === locStart(iNextNode.open)) {
-        parts.push(softline);
-        continue;
-      }
-      if (iNode.value === "with" && isParenGroupNode(iNextNode)) {
-        parts.push(" ");
-        continue;
-      }
-      if (((_a = iNode.value) == null ? void 0 : _a.endsWith("#")) && iNextNode.value === "{" && isParenGroupNode(iNextNode.group)) {
-        continue;
-      }
-      parts.push(line);
-    }
-    if (hasInlineComment) {
-      parts.push(breakParent);
-    }
-    if (didBreak) {
-      parts.unshift(hardline);
-    }
-    if (isControlDirective) {
-      return group(indent(parts));
-    }
-    if (insideURLFunctionInImportAtRuleNode(path)) {
-      return group(fill(parts));
-    }
-    return group(indent(fill(parts)));
-  }
-  var comma_separated_value_group_default = printCommaSeparatedValueGroup;
-
   // src/utils/skip-newline.js
   function skipNewline(text, startIndex, options2) {
     const backwards = Boolean(options2 == null ? void 0 : options2.backwards);
@@ -10037,6 +10063,18 @@ Expected it to be ${EXPECTED_TYPE_VALUES}.`;
     return startIndex;
   }
   var skip_newline_default = skipNewline;
+
+  // src/utils/has-newline.js
+  function hasNewline(text, startIndex, options2 = {}) {
+    const idx = skipSpaces(
+      text,
+      options2.backwards ? startIndex - 1 : startIndex,
+      options2
+    );
+    const idx2 = skip_newline_default(text, idx, options2);
+    return idx !== idx2;
+  }
+  var has_newline_default = hasNewline;
 
   // src/utils/skip-inline-comment.js
   function skipInlineComment(text, startIndex) {
@@ -10066,18 +10104,6 @@ Expected it to be ${EXPECTED_TYPE_VALUES}.`;
   }
   var skip_trailing_comment_default = skipTrailingComment;
 
-  // src/utils/has-newline.js
-  function hasNewline(text, startIndex, options2 = {}) {
-    const idx = skipSpaces(
-      text,
-      options2.backwards ? startIndex - 1 : startIndex,
-      options2
-    );
-    const idx2 = skip_newline_default(text, idx, options2);
-    return idx !== idx2;
-  }
-  var has_newline_default = hasNewline;
-
   // src/utils/is-next-line-empty.js
   function isNextLineEmpty(text, startIndex) {
     let oldIdx = null;
@@ -10105,7 +10131,7 @@ Expected it to be ${EXPECTED_TYPE_VALUES}.`;
     if (isVarFunctionNode(path.grandparent) && hasComma(path, options2)) {
       return ",";
     }
-    if (path.node.type !== "value-comment" && shouldPrintTrailingComma(options2) && path.callParent(() => isSCSSMapItemNode(path, options2))) {
+    if (path.node.type !== "value-comment" && !(path.node.type === "value-comma_group" && path.node.groups.every((group2) => group2.type === "value-comment")) && shouldPrintTrailingComma(options2) && path.callParent(() => isSCSSMapItemNode(path, options2))) {
       return ifBreak(",");
     }
     return "";
@@ -10134,7 +10160,9 @@ Expected it to be ${EXPECTED_TYPE_VALUES}.`;
       var _a;
       let doc2 = groupDocs[index];
       if (isKeyValuePairNode(child) && child.type === "value-comma_group" && child.groups && child.groups[0].type !== "value-paren_group" && ((_a = child.groups[2]) == null ? void 0 : _a.type) === "value-paren_group") {
-        const parts3 = getDocParts(doc2.contents.contents);
+        const {
+          parts: parts3
+        } = doc2.contents.contents;
         parts3[1] = group(parts3[1]);
         doc2 = group(dedent(doc2));
       }
@@ -10276,7 +10304,7 @@ Expected it to be ${EXPECTED_TYPE_VALUES}.`;
           // If a Less file ends up being parsed with the SCSS parser, Less
           // variable declarations will be parsed as at-rules with names ending
           // with a colon, so keep the original case then.
-          isDetachedRulesetCallNode(node) || node.name.endsWith(":") ? node.name : maybeToLowerCase(node.name),
+          isDetachedRulesetCallNode(node) || node.name.endsWith(":") || isTemplatePlaceholderNode(node) ? node.name : maybeToLowerCase(node.name),
           node.params ? [isDetachedRulesetCallNode(node) ? "" : isTemplatePlaceholderNode(node) ? node.raws.afterName === "" ? "" : node.name.endsWith(":") ? " " : /^\s*\n\s*\n/.test(node.raws.afterName) ? [hardline, hardline] : /^\s*\n/.test(node.raws.afterName) ? hardline : " " : " ", typeof node.params === "string" ? node.params : print3("params")] : "",
           node.selector ? indent([" ", print3("selector")]) : "",
           node.value ? group([" ", print3("value"), isSCSSControlDirectiveNode(node, options2) ? hasParensAroundNode(node) ? " " : line : ""]) : node.name === "else" ? " " : "",
@@ -10441,6 +10469,145 @@ Expected it to be ${EXPECTED_TYPE_VALUES}.`;
   };
   var printer_postcss_default = printer;
 
+  // src/language-css/languages.evaluate.js
+  var languages_evaluate_default = [
+    {
+      "linguistLanguageId": 50,
+      "name": "CSS",
+      "type": "markup",
+      "tmScope": "source.css",
+      "aceMode": "css",
+      "codemirrorMode": "css",
+      "codemirrorMimeType": "text/css",
+      "color": "#563d7c",
+      "extensions": [
+        ".css",
+        ".wxss"
+      ],
+      "parsers": [
+        "css"
+      ],
+      "vscodeLanguageIds": [
+        "css"
+      ]
+    },
+    {
+      "linguistLanguageId": 262764437,
+      "name": "PostCSS",
+      "type": "markup",
+      "color": "#dc3a0c",
+      "tmScope": "source.postcss",
+      "group": "CSS",
+      "extensions": [
+        ".pcss",
+        ".postcss"
+      ],
+      "aceMode": "text",
+      "parsers": [
+        "css"
+      ],
+      "vscodeLanguageIds": [
+        "postcss"
+      ]
+    },
+    {
+      "linguistLanguageId": 198,
+      "name": "Less",
+      "type": "markup",
+      "color": "#1d365d",
+      "aliases": [
+        "less-css"
+      ],
+      "extensions": [
+        ".less"
+      ],
+      "tmScope": "source.css.less",
+      "aceMode": "less",
+      "codemirrorMode": "css",
+      "codemirrorMimeType": "text/css",
+      "parsers": [
+        "less"
+      ],
+      "vscodeLanguageIds": [
+        "less"
+      ]
+    },
+    {
+      "linguistLanguageId": 329,
+      "name": "SCSS",
+      "type": "markup",
+      "color": "#c6538c",
+      "tmScope": "source.css.scss",
+      "aceMode": "scss",
+      "codemirrorMode": "css",
+      "codemirrorMimeType": "text/x-scss",
+      "extensions": [
+        ".scss"
+      ],
+      "parsers": [
+        "scss"
+      ],
+      "vscodeLanguageIds": [
+        "scss"
+      ]
+    }
+  ];
+
+  // src/common/common-options.evaluate.js
+  var common_options_evaluate_default = {
+    "bracketSpacing": {
+      "category": "Common",
+      "type": "boolean",
+      "default": true,
+      "description": "Print spaces between brackets.",
+      "oppositeDescription": "Do not print spaces between brackets."
+    },
+    "singleQuote": {
+      "category": "Common",
+      "type": "boolean",
+      "default": false,
+      "description": "Use single quotes instead of double quotes."
+    },
+    "proseWrap": {
+      "category": "Common",
+      "type": "choice",
+      "default": "preserve",
+      "description": "How to wrap prose.",
+      "choices": [
+        {
+          "value": "always",
+          "description": "Wrap prose if it exceeds the print width."
+        },
+        {
+          "value": "never",
+          "description": "Do not wrap prose."
+        },
+        {
+          "value": "preserve",
+          "description": "Wrap prose as-is."
+        }
+      ]
+    },
+    "bracketSameLine": {
+      "category": "Common",
+      "type": "boolean",
+      "default": false,
+      "description": "Put > of opening tags on the last line instead of on a new line."
+    },
+    "singleAttributePerLine": {
+      "category": "Common",
+      "type": "boolean",
+      "default": false,
+      "description": "Enforce single attribute per line in HTML, Vue and JSX."
+    }
+  };
+
+  // src/language-css/options.js
+  var options = {
+    singleQuote: common_options_evaluate_default.singleQuote
+  };
+  var options_default = options;
+
   // src/language-css/parser-postcss.js
   var parser_postcss_exports = {};
   __export(parser_postcss_exports, {
@@ -10461,27 +10628,77 @@ Expected it to be ${EXPECTED_TYPE_VALUES}.`;
   }
   var parser_create_error_default = createError;
 
-  // src/language-css/utils/is-scss-nested-property-node.js
-  function isSCSSNestedPropertyNode(node, options2) {
-    if (options2.parser !== "scss") {
-      return false;
-    }
-    if (!node.selector) {
-      return false;
-    }
-    return node.selector.replace(/\/\*.*?\*\//, "").replace(/\/\/.*\n/, "").trim().endsWith(":");
-  }
-  var is_scss_nested_property_node_default = isSCSSNestedPropertyNode;
+  // src/language-css/parse/parse-media-query.js
+  var import_postcss_media_query_parser = __toESM(require_dist(), 1);
 
-  // src/language-css/utils/is-module-rule-name.js
-  var moduleRuleNames = /* @__PURE__ */ new Set(["import", "use", "forward"]);
-  function isModuleRuleName(name) {
-    return moduleRuleNames.has(name);
+  // src/language-css/parse/utils.js
+  function addTypePrefix(node, prefix, skipPrefix) {
+    if (node && typeof node === "object") {
+      delete node.parent;
+      for (const key in node) {
+        addTypePrefix(node[key], prefix, skipPrefix);
+        if (key === "type" && typeof node[key] === "string" && !node[key].startsWith(prefix) && (!skipPrefix || !skipPrefix.test(node[key]))) {
+          node[key] = prefix + node[key];
+        }
+      }
+    }
+    return node;
   }
-  var is_module_rule_name_default = isModuleRuleName;
+  function addMissingType(node) {
+    if (node && typeof node === "object") {
+      delete node.parent;
+      for (const key in node) {
+        addMissingType(node[key]);
+      }
+      if (!Array.isArray(node) && node.value && !node.type) {
+        node.type = "unknown";
+      }
+    }
+    return node;
+  }
+
+  // src/language-css/parse/parse-media-query.js
+  var parse2 = import_postcss_media_query_parser.default.default;
+  function parseMediaQuery(params) {
+    let result;
+    try {
+      result = parse2(params);
+    } catch {
+      return {
+        type: "selector-unknown",
+        value: params
+      };
+    }
+    return addTypePrefix(addMissingType(result), "media-");
+  }
+  var parse_media_query_default = parseMediaQuery;
+
+  // src/language-css/parse/parse-selector.js
+  var import_processor = __toESM(require_processor2(), 1);
+  function parseSelector(selector) {
+    if (/\/\/|\/\*/.test(selector)) {
+      return {
+        type: "selector-unknown",
+        value: selector.trim()
+      };
+    }
+    let result;
+    try {
+      new import_processor.default((selectors) => {
+        result = selectors;
+      }).process(selector);
+    } catch {
+      return {
+        type: "selector-unknown",
+        value: selector
+      };
+    }
+    return addTypePrefix(result, "selector-");
+  }
+  var parse_selector_default = parseSelector;
 
   // src/language-css/parse/parse-value.js
-  var import_parser = __toESM(require_parser2(), 1);
+  var import_parser = __toESM(require_parser3(), 1);
 
   // src/language-css/utils/get-value-root.js
   var getValueRoot = (node) => {
@@ -10527,58 +10744,6 @@ Expected it to be ${EXPECTED_TYPE_VALUES}.`;
     );
   }
   var is_scss_variable_default = isSCSSVariable;
-
-  // src/language-css/parse/parse-selector.js
-  var import_processor = __toESM(require_processor2(), 1);
-
-  // src/language-css/parse/utils.js
-  function addTypePrefix(node, prefix, skipPrefix) {
-    if (node && typeof node === "object") {
-      delete node.parent;
-      for (const key in node) {
-        addTypePrefix(node[key], prefix, skipPrefix);
-        if (key === "type" && typeof node[key] === "string" && !node[key].startsWith(prefix) && (!skipPrefix || !skipPrefix.test(node[key]))) {
-          node[key] = prefix + node[key];
-        }
-      }
-    }
-    return node;
-  }
-  function addMissingType(node) {
-    if (node && typeof node === "object") {
-      delete node.parent;
-      for (const key in node) {
-        addMissingType(node[key]);
-      }
-      if (!Array.isArray(node) && node.value && !node.type) {
-        node.type = "unknown";
-      }
-    }
-    return node;
-  }
-
-  // src/language-css/parse/parse-selector.js
-  function parseSelector(selector) {
-    if (/\/\/|\/\*/.test(selector)) {
-      return {
-        type: "selector-unknown",
-        value: selector.trim()
-      };
-    }
-    let result;
-    try {
-      new import_processor.default((selectors) => {
-        result = selectors;
-      }).process(selector);
-    } catch {
-      return {
-        type: "selector-unknown",
-        value: selector
-      };
-    }
-    return addTypePrefix(result, "selector-");
-  }
-  var parse_selector_default = parseSelector;
 
   // src/language-css/parse/parse-value.js
   function parseValueNode(valueNode, options2) {
@@ -10728,22 +10893,24 @@ Expected it to be ${EXPECTED_TYPE_VALUES}.`;
   }
   var parse_value_default = parseValue;
 
-  // src/language-css/parse/parse-media-query.js
-  var import_postcss_media_query_parser = __toESM(require_dist(), 1);
-  var parse2 = import_postcss_media_query_parser.default.default;
-  function parseMediaQuery(params) {
-    let result;
-    try {
-      result = parse2(params);
-    } catch {
-      return {
-        type: "selector-unknown",
-        value: params
-      };
-    }
-    return addTypePrefix(addMissingType(result), "media-");
+  // src/language-css/utils/is-module-rule-name.js
+  var moduleRuleNames = /* @__PURE__ */ new Set(["import", "use", "forward"]);
+  function isModuleRuleName(name) {
+    return moduleRuleNames.has(name);
   }
-  var parse_media_query_default = parseMediaQuery;
+  var is_module_rule_name_default = isModuleRuleName;
+
+  // src/language-css/utils/is-scss-nested-property-node.js
+  function isSCSSNestedPropertyNode(node, options2) {
+    if (options2.parser !== "scss") {
+      return false;
+    }
+    if (!node.selector) {
+      return false;
+    }
+    return node.selector.replace(/\/\*.*?\*\//, "").replace(/\/\/.*\n/, "").trim().endsWith(":");
+  }
+  var is_scss_nested_property_node_default = isSCSSNestedPropertyNode;
 
   // src/language-css/parser-postcss.js
   var DEFAULT_SCSS_DIRECTIVE = /(\s*)(!default).*$/;
@@ -10763,7 +10930,7 @@ Expected it to be ${EXPECTED_TYPE_VALUES}.`;
         let rules;
         if (node.value.trimEnd().endsWith("}")) {
           const textBefore = options2.originalText.slice(0, node.source.start.offset);
-          const nodeText = "a".repeat(node.prop.length) + options2.originalText.slice(node.source.start.offset + node.prop.length, node.source.end.offset + 1);
+          const nodeText = "a".repeat(node.prop.length) + options2.originalText.slice(node.source.start.offset + node.prop.length, node.source.end.offset);
           const fakeContent = string_replace_all_default(
             /* isOptionalObject*/
             false,
@@ -11050,145 +11217,6 @@ Expected it to be ${EXPECTED_TYPE_VALUES}.`;
     ...postCssParser,
     parse: parseScss
   };
-
-  // src/language-css/languages.evaluate.js
-  var languages_evaluate_default = [
-    {
-      "linguistLanguageId": 50,
-      "name": "CSS",
-      "type": "markup",
-      "tmScope": "source.css",
-      "aceMode": "css",
-      "codemirrorMode": "css",
-      "codemirrorMimeType": "text/css",
-      "color": "#563d7c",
-      "extensions": [
-        ".css",
-        ".wxss"
-      ],
-      "parsers": [
-        "css"
-      ],
-      "vscodeLanguageIds": [
-        "css"
-      ]
-    },
-    {
-      "linguistLanguageId": 262764437,
-      "name": "PostCSS",
-      "type": "markup",
-      "color": "#dc3a0c",
-      "tmScope": "source.postcss",
-      "group": "CSS",
-      "extensions": [
-        ".pcss",
-        ".postcss"
-      ],
-      "aceMode": "text",
-      "parsers": [
-        "css"
-      ],
-      "vscodeLanguageIds": [
-        "postcss"
-      ]
-    },
-    {
-      "linguistLanguageId": 198,
-      "name": "Less",
-      "type": "markup",
-      "color": "#1d365d",
-      "aliases": [
-        "less-css"
-      ],
-      "extensions": [
-        ".less"
-      ],
-      "tmScope": "source.css.less",
-      "aceMode": "less",
-      "codemirrorMode": "css",
-      "codemirrorMimeType": "text/css",
-      "parsers": [
-        "less"
-      ],
-      "vscodeLanguageIds": [
-        "less"
-      ]
-    },
-    {
-      "linguistLanguageId": 329,
-      "name": "SCSS",
-      "type": "markup",
-      "color": "#c6538c",
-      "tmScope": "source.css.scss",
-      "aceMode": "scss",
-      "codemirrorMode": "css",
-      "codemirrorMimeType": "text/x-scss",
-      "extensions": [
-        ".scss"
-      ],
-      "parsers": [
-        "scss"
-      ],
-      "vscodeLanguageIds": [
-        "scss"
-      ]
-    }
-  ];
-
-  // src/common/common-options.evaluate.js
-  var common_options_evaluate_default = {
-    "bracketSpacing": {
-      "category": "Common",
-      "type": "boolean",
-      "default": true,
-      "description": "Print spaces between brackets.",
-      "oppositeDescription": "Do not print spaces between brackets."
-    },
-    "singleQuote": {
-      "category": "Common",
-      "type": "boolean",
-      "default": false,
-      "description": "Use single quotes instead of double quotes."
-    },
-    "proseWrap": {
-      "category": "Common",
-      "type": "choice",
-      "default": "preserve",
-      "description": "How to wrap prose.",
-      "choices": [
-        {
-          "value": "always",
-          "description": "Wrap prose if it exceeds the print width."
-        },
-        {
-          "value": "never",
-          "description": "Do not wrap prose."
-        },
-        {
-          "value": "preserve",
-          "description": "Wrap prose as-is."
-        }
-      ]
-    },
-    "bracketSameLine": {
-      "category": "Common",
-      "type": "boolean",
-      "default": false,
-      "description": "Put > of opening tags on the last line instead of on a new line."
-    },
-    "singleAttributePerLine": {
-      "category": "Common",
-      "type": "boolean",
-      "default": false,
-      "description": "Enforce single attribute per line in HTML, Vue and JSX."
-    }
-  };
-
-  // src/language-css/options.js
-  var options = {
-    singleQuote: common_options_evaluate_default.singleQuote
-  };
-  var options_default = options;
 
   // src/language-css/index.js
   var printers = {

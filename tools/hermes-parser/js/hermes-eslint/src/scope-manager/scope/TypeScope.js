@@ -20,8 +20,11 @@ import type {
   DeclareInterface,
   DeclareClass,
   DeclareComponent,
+  DeclareHook,
   FunctionTypeAnnotation,
+  HookTypeAnnotation,
   TypeAlias,
+  ObjectTypeMappedTypeProperty,
   OpaqueType,
   InterfaceDeclaration,
 } from 'hermes-estree';
@@ -42,8 +45,11 @@ class TypeScope extends ScopeBase<
   | DeclareInterface
   | DeclareClass
   | DeclareComponent
+  | DeclareHook
   | FunctionTypeAnnotation
+  | HookTypeAnnotation
   | TypeAlias
+  | ObjectTypeMappedTypeProperty
   | OpaqueType
   | InterfaceDeclaration,
   Scope,

@@ -6,13 +6,13 @@
 <PROJECT_ROOT>/.*/node_modules
 <PROJECT_ROOT>/flow-api-translator/__tests__/flowDefToTSDef/fixtures
 <PROJECT_ROOT>/flow-api-translator/__tests__/flowToJS/fixtures
+<PROJECT_ROOT>/prettier-hermes-v2-backport
 
 [options]
 name=hermes-parser
 emoji=true
 file_watcher=watchman
 lazy_mode=true
-exact_by_default=true
 module.system=node
 munge_underscores=true
 ; Yarn workspaces hoist packages to the top level node_modules, causing module resolution errors if
@@ -23,13 +23,11 @@ module.name_mapper='^hermes-eslint$' -> '<PROJECT_ROOT>/hermes-eslint/src/index.
 module.name_mapper='^hermes-transform$' -> '<PROJECT_ROOT>/hermes-transform/src/index.js'
 module.name_mapper='^prettier-plugin-hermes-parser$' -> '<PROJECT_ROOT>/prettier-plugin-hermes-parser/src/index.js'
 
+component_syntax=true
 enums=true
-conditional_type=true
-mapped_type=true
-type_guards=true
 
 [version]
-^0.211.0
+^0.267.0
 
 [lints]
 untyped-type-import=error

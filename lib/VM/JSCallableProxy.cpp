@@ -42,23 +42,13 @@ void JSCallableProxyBuildMeta(const GCCell *cell, Metadata::Builder &mb) {
 PseudoHandle<JSCallableProxy> JSCallableProxy::create(Runtime &runtime) {
   auto *cproxy = runtime.makeAFixed<JSCallableProxy>(
       runtime,
-      Handle<JSObject>::vmcast(&runtime.objectPrototype),
+      HandleRootOwner::makeNullHandle<JSObject>(),
       runtime.getHiddenClassForPrototype(
-          runtime.objectPrototypeRawPtr,
-          JSObject::numOverlapSlots<JSCallableProxy>()));
+          nullptr, JSObject::numOverlapSlots<JSCallableProxy>()));
 
   cproxy->flags_.proxyObject = true;
 
   return JSObjectInit::initToPseudoHandle(runtime, cproxy);
-}
-
-CallResult<HermesValue> JSCallableProxy::create(
-    Runtime &runtime,
-    Handle<JSObject> prototype) {
-  assert(
-      prototype.get() == runtime.objectPrototypeRawPtr &&
-      "JSCallableProxy::create() can only be used with object prototype");
-  return create(runtime).getHermesValue();
 }
 
 void JSCallableProxy::setTargetAndHandler(
@@ -80,6 +70,7 @@ CallResult<bool> JSCallableProxy::isConstructor(Runtime &runtime) {
 
 CallResult<HermesValue>
 JSCallableProxy::_proxyNativeCall(void *, Runtime &runtime, NativeArgs) {
+  GCScope gcScope(runtime);
   // We don't use NativeArgs; the implementations just read the current
   // stack frame directly.
   StackFramePtr callerFrame = runtime.getCurrentFrame();
@@ -89,8 +80,10 @@ JSCallableProxy::_proxyNativeCall(void *, Runtime &runtime, NativeArgs) {
   // this isn't a member, so it can't see it.  It doesn't seem to be
   // worth tweaking the abstractions to avoid the small overhead in
   // this case.
-  Handle<JSObject> target =
-      runtime.makeHandle(detail::slots(*selfHandle).target);
+  // Make sure to retrieve the target and handler before any JS can execute.
+  auto &slots = detail::slots(*selfHandle);
+  Handle<JSObject> target = runtime.makeHandle(slots.target);
+  Handle<JSObject> handler = runtime.makeHandle(slots.handler);
   Predefined::Str trapName = callerFrame->isConstructorCall()
       ? Predefined::construct
       : Predefined::apply;
@@ -145,7 +138,7 @@ JSCallableProxy::_proxyNativeCall(void *, Runtime &runtime, NativeArgs) {
     CallResult<PseudoHandle<>> newObjRes = Callable::executeCall3(
         *trapRes,
         runtime,
-        runtime.makeHandle(detail::slots(*selfHandle).handler),
+        handler,
         target.getHermesValue(),
         argArray.getHermesValue(),
         callerFrame.getNewTargetRef());
@@ -163,7 +156,7 @@ JSCallableProxy::_proxyNativeCall(void *, Runtime &runtime, NativeArgs) {
     auto res = Callable::executeCall3(
         *trapRes,
         runtime,
-        runtime.makeHandle(detail::slots(*selfHandle).handler),
+        handler,
         target.getHermesValue(),
         callerFrame.getThisArgRef(),
         argArray.getHermesValue());
