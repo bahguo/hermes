@@ -62,6 +62,6 @@ Hermes is [MIT licensed](./LICENSE).
 
 ### Bytecode analysis
 
-lucasbaizer2 [hasmer](https://github.com/lucasbaizer2/hasmer)
-P1sec [hermes-dec](https://github.com/P1sec/hermes-dec)
-bongtrop [hbctool](https://github.com/bongtrop/hbctool)
+- lucasbaizer2 [hasmer](https://github.com/lucasbaizer2/hasmer)
+- P1sec [hermes-dec](https://github.com/P1sec/hermes-dec)
+- bongtrop [hbctool](https://github.com/bongtrop/hbctool)
